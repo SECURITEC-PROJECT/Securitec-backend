@@ -129,6 +129,22 @@ CREATE TABLE IF NOT EXISTS camera_feeds (
   status VARCHAR(10) NOT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+CREATE TABLE IF NOT EXISTS camera_extractions (
+  id VARCHAR(50) PRIMARY KEY,
+  camera_id VARCHAR(50) NOT NULL,
+  camera_label VARCHAR(100) NOT NULL,
+  requested_by VARCHAR(100) NOT NULL,
+  requested_at VARCHAR(16) NOT NULL,
+  start_time VARCHAR(16) NOT NULL,
+  end_time VARCHAR(16) NOT NULL,
+  reason TEXT NOT NULL,
+  status VARCHAR(20) NOT NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT fk_camera_extractions_camera
+    FOREIGN KEY (camera_id) REFERENCES camera_feeds(id)
+    ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 CREATE TABLE IF NOT EXISTS access_logs (
   id VARCHAR(50) PRIMARY KEY,
   name VARCHAR(100) NOT NULL,

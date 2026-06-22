@@ -9,5 +9,7 @@ router.get('/', rondeController.getRondes);
 router.post('/', rondeController.addRonde);
 router.put('/:id', rondeController.updateRonde);
 router.put('/checkpoint/:cpId', rondeController.updateCheckpoint);
+router.delete('/:id', rondeController.deleteRonde);
+router.delete('/checkpoint/:cpId', rondeController.deleteCheckpoint);
 
 module.exports = router;

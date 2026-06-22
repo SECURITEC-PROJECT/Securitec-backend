@@ -106,8 +106,26 @@ const markAsRead = async (req, res) => {
   }
 };
 
+const removeConsigne = async (req, res) => {
+  const { id } = req.params;
+
+  try {
+    const check = await db.query('SELECT * FROM consignes WHERE id = $1', [id]);
+    if (check.rows.length === 0) {
+      return res.status(404).json({ error: 'Consigne introuvable.' });
+    }
+
+    await db.query('DELETE FROM consignes WHERE id = $1', [id]);
+    return res.json({ message: 'Consigne supprimée avec succès.', id });
+  } catch (err) {
+    console.error('Error removing consigne:', err.message);
+    return res.status(500).json({ error: 'Erreur lors de la suppression de la consigne.' });
+  }
+};
+
 module.exports = {
   getConsignes,
   addConsigne,
   markAsRead,
+  removeConsigne,
 };

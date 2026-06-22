@@ -8,5 +8,6 @@ router.use(authMiddleware);
 router.get('/', vacationController.getVacations);
 router.post('/', vacationController.addVacation);
 router.put('/:id', vacationController.updateVacation);
+router.delete('/:id', vacationController.deleteVacation);
 
 module.exports = router;

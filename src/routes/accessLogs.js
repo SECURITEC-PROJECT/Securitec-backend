@@ -7,5 +7,6 @@ router.use(authMiddleware);
 
 router.get('/', accessLogController.getAccessLogs);
 router.post('/', accessLogController.addAccessLog);
+router.delete('/:id', accessLogController.removeAccessLog);
 
 module.exports = router;

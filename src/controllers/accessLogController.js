@@ -30,7 +30,25 @@ const addAccessLog = async (req, res) => {
   }
 };
 
+const removeAccessLog = async (req, res) => {
+  const { id } = req.params;
+
+  try {
+    const check = await db.query('SELECT * FROM access_logs WHERE id = $1', [id]);
+    if (check.rows.length === 0) {
+      return res.status(404).json({ error: 'Log d\'accès introuvable.' });
+    }
+
+    await db.query('DELETE FROM access_logs WHERE id = $1', [id]);
+    return res.json({ message: 'Log d\'accès supprimé avec succès.', id });
+  } catch (err) {
+    console.error('Error removing access log:', err.message);
+    return res.status(500).json({ error: 'Erreur lors de la suppression du log d\'accès.' });
+  }
+};
+
 module.exports = {
   getAccessLogs,
   addAccessLog,
+  removeAccessLog,
 };

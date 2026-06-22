@@ -8,5 +8,6 @@ router.use(authMiddleware);
 router.get('/', consigneController.getConsignes);
 router.post('/', consigneController.addConsigne);
 router.put('/:id/read', consigneController.markAsRead);
+router.delete('/:id', consigneController.removeConsigne);
 
 module.exports = router;

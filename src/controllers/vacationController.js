@@ -96,8 +96,26 @@ const updateVacation = async (req, res) => {
   }
 };
 
+const deleteVacation = async (req, res) => {
+  const { id } = req.params;
+
+  try {
+    const check = await db.query('SELECT * FROM vacations WHERE id = $1', [id]);
+    if (check.rows.length === 0) {
+      return res.status(404).json({ error: 'Vacation introuvable.' });
+    }
+
+    await db.query('DELETE FROM vacations WHERE id = $1', [id]);
+    return res.json({ message: 'Vacation supprimée avec succès.', id });
+  } catch (err) {
+    console.error('Error deleting vacation:', err.message);
+    return res.status(500).json({ error: 'Erreur lors de la suppression de la vacation.' });
+  }
+};
+
 module.exports = {
   getVacations,
   addVacation,
   updateVacation,
+  deleteVacation,
 };

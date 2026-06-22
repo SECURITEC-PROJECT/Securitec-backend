@@ -156,9 +156,45 @@ const updateCheckpoint = async (req, res) => {
   }
 };
 
+const deleteRonde = async (req, res) => {
+  const { id } = req.params;
+
+  try {
+    const check = await db.query('SELECT * FROM rondes WHERE id = $1', [id]);
+    if (check.rows.length === 0) {
+      return res.status(404).json({ error: 'Ronde introuvable.' });
+    }
+
+    await db.query('DELETE FROM rondes WHERE id = $1', [id]);
+    return res.json({ message: 'Ronde supprimée avec succès.', id });
+  } catch (err) {
+    console.error('Error deleting ronde:', err.message);
+    return res.status(500).json({ error: 'Erreur lors de la suppression de la ronde.' });
+  }
+};
+
+const deleteCheckpoint = async (req, res) => {
+  const { cpId } = req.params;
+
+  try {
+    const check = await db.query('SELECT * FROM checkpoints WHERE id = $1', [cpId]);
+    if (check.rows.length === 0) {
+      return res.status(404).json({ error: 'Point de contrôle introuvable.' });
+    }
+
+    await db.query('DELETE FROM checkpoints WHERE id = $1', [cpId]);
+    return res.json({ message: 'Point de contrôle supprimé avec succès.', id: cpId });
+  } catch (err) {
+    console.error('Error deleting checkpoint:', err.message);
+    return res.status(500).json({ error: 'Erreur lors de la suppression du point de contrôle.' });
+  }
+};
+
 module.exports = {
   getRondes,
   addRonde,
   updateRonde,
   updateCheckpoint,
+  deleteRonde,
+  deleteCheckpoint,
 };
