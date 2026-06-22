@@ -44,34 +44,77 @@ const runQuery = async (executor, text, params = []) => {
   return wrapResult(result);
 };
 
-const bootstrapSupervisorAccount = async (client) => {
-  const username = process.env.BOOTSTRAP_SUPERVISOR_USERNAME;
-  const password = process.env.BOOTSTRAP_SUPERVISOR_PASSWORD;
+const isTruthyEnv = (value) =>
+  ['1', 'true', 'yes', 'on'].includes(String(value || '').trim().toLowerCase());
 
-  if (!username || !password) {
-    return;
-  }
-
+const bootstrapDefaultUsers = async (client) => {
   const userCount = await runQuery(client, 'SELECT COUNT(*) AS count FROM users');
   if (parseInt(userCount.rows[0].count, 10) !== 0) {
     return;
   }
 
-  const id = process.env.BOOTSTRAP_SUPERVISOR_ID || 'U99';
-  const name = process.env.BOOTSTRAP_SUPERVISOR_NAME || username;
-  const role = process.env.BOOTSTRAP_SUPERVISOR_ROLE || 'supervisor';
-  const roleLabel = process.env.BOOTSTRAP_SUPERVISOR_ROLE_LABEL || 'Superviseur site';
-  const vacation = process.env.BOOTSTRAP_SUPERVISOR_VACATION || '24/7';
-  const avatar = process.env.BOOTSTRAP_SUPERVISOR_AVATAR || 'SV';
-  const hashedPassword = bcrypt.hashSync(password, 10);
+  const allowDefaultUsers = process.env.NODE_ENV !== 'production' || isTruthyEnv(process.env.BOOTSTRAP_DEFAULT_USERS);
+  if (!allowDefaultUsers) {
+    return;
+  }
 
-  await runQuery(
-    client,
-    'INSERT INTO users (id, username, password, name, role, role_label, vacation, avatar) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)',
-    [id, username.trim(), hashedPassword, name.trim(), role, roleLabel.trim(), vacation, avatar.trim()]
-  );
+  const defaultUsers = [
+    {
+      id: 'U01',
+      username: process.env.BOOTSTRAP_AGENT1_USERNAME || 'agent1',
+      password: process.env.BOOTSTRAP_AGENT1_PASSWORD || '1234',
+      name: process.env.BOOTSTRAP_AGENT1_NAME || 'KOUASSI Anicet',
+      role: 'agent1',
+      roleLabel: process.env.BOOTSTRAP_AGENT1_ROLE_LABEL || 'Accueil & Administration',
+      vacation: process.env.BOOTSTRAP_AGENT1_VACATION || '06h-18h',
+      avatar: process.env.BOOTSTRAP_AGENT1_AVATAR || '01',
+    },
+    {
+      id: 'U02',
+      username: process.env.BOOTSTRAP_AGENT2_USERNAME || 'agent2',
+      password: process.env.BOOTSTRAP_AGENT2_PASSWORD || '1234',
+      name: process.env.BOOTSTRAP_AGENT2_NAME || 'RABE Olivier',
+      role: 'agent2',
+      roleLabel: process.env.BOOTSTRAP_AGENT2_ROLE_LABEL || 'Contrôle NFC & Rondes',
+      vacation: process.env.BOOTSTRAP_AGENT2_VACATION || '06h-18h',
+      avatar: process.env.BOOTSTRAP_AGENT2_AVATAR || '02',
+    },
+    {
+      id: 'U03',
+      username: process.env.BOOTSTRAP_AGENT3_USERNAME || 'agent3',
+      password: process.env.BOOTSTRAP_AGENT3_PASSWORD || '1234',
+      name: process.env.BOOTSTRAP_AGENT3_NAME || 'ANDRY Soa',
+      role: 'agent3',
+      roleLabel: process.env.BOOTSTRAP_AGENT3_ROLE_LABEL || 'Surveillance & CR',
+      vacation: process.env.BOOTSTRAP_AGENT3_VACATION || '06h-18h',
+      avatar: process.env.BOOTSTRAP_AGENT3_AVATAR || '03',
+    },
+    {
+      id: 'U99',
+      username: process.env.BOOTSTRAP_SUPERVISOR_USERNAME || 'superviseur',
+      password: process.env.BOOTSTRAP_SUPERVISOR_PASSWORD || 'admin',
+      name: process.env.BOOTSTRAP_SUPERVISOR_NAME || 'RAJAONA Patrick',
+      role: 'supervisor',
+      roleLabel: process.env.BOOTSTRAP_SUPERVISOR_ROLE_LABEL || 'Superviseur site',
+      vacation: process.env.BOOTSTRAP_SUPERVISOR_VACATION || '24/7',
+      avatar: process.env.BOOTSTRAP_SUPERVISOR_AVATAR || 'SV',
+    },
+  ];
 
-  console.log('Bootstrap supervisor account created.');
+  const hashedUsers = defaultUsers.map((user) => ({
+    ...user,
+    password: bcrypt.hashSync(user.password, 10),
+  }));
+
+  for (const user of hashedUsers) {
+    await runQuery(
+      client,
+      'INSERT INTO users (id, username, password, name, role, role_label, vacation, avatar) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)',
+      [user.id, user.username, user.password, user.name, user.role, user.roleLabel, user.vacation, user.avatar]
+    );
+  }
+
+  console.log('Development users bootstrapped successfully.');
 };
 
 const initDB = async () => {
@@ -100,7 +143,7 @@ const initDB = async () => {
 
     console.log('MySQL tables verified/created successfully.');
 
-    await bootstrapSupervisorAccount(client);
+    await bootstrapDefaultUsers(client);
   } catch (err) {
     console.error('Error initializing database tables:', err.message);
     throw err;
