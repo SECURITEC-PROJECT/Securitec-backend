@@ -1,10 +1,12 @@
 import "dotenv/config";
+import { setDefaultResultOrder } from "node:dns";
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { createServer } from "node:http";
 import bcrypt from "bcryptjs";
-import pg from "pg";
+import { createNeonPool } from "./config/neonPool.js";
 
-const { Pool } = pg;
+// Évite de sélectionner d'abord IPv6 si le réseau local ne le route pas.
+setDefaultResultOrder("ipv4first");
 const port = Number(process.env.PORT || 5000);
 const jwtSecret = process.env.JWT_SECRET;
 if (!jwtSecret || Buffer.byteLength(jwtSecret) < 32) {
@@ -22,10 +24,16 @@ const loginAttempts = new Map();
 const maxLoginAttempts = 10;
 const loginWindowMs = 15 * 60 * 1000;
 
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-  connectionTimeoutMillis: 5000,
-});
+let poolPromise;
+function getPool() {
+  if (!poolPromise) {
+    poolPromise = createNeonPool().catch((error) => {
+      poolPromise = undefined;
+      throw error;
+    });
+  }
+  return poolPromise;
+}
 
 function json(response, status, body) {
   response.writeHead(status, {
@@ -115,9 +123,18 @@ function publicUser(account) {
   };
 }
 
-pool.on("error", (error) => {
-  console.error("Erreur inattendue du pool PostgreSQL:", error.message);
-});
+function logNetworkCauses(error) {
+  const pending = [error.sourceError || error.cause].filter(Boolean);
+  const seen = new Set();
+  while (pending.length) {
+    const current = pending.shift();
+    if (!current || seen.has(current)) continue;
+    seen.add(current);
+    console.error("Cause réseau:", current.code || current.name || "erreur", current.message || "");
+    if (current.cause) pending.push(current.cause);
+    if (Array.isArray(current.errors)) pending.push(...current.errors);
+  }
+}
 
 const server = createServer(async (request, response) => {
   const origin = request.headers.origin;
@@ -150,6 +167,7 @@ const server = createServer(async (request, response) => {
         return;
       }
 
+      const pool = await getPool();
       const result = await pool.query(
         `SELECT u.id, u.nom, u.identifiant, u.role, u.pin_hache, u.site_id, s.nom AS site_nom
          FROM utilisateur u
@@ -175,7 +193,8 @@ const server = createServer(async (request, response) => {
         json(response, error.status, { error: error.message });
         return;
       }
-      console.error("Échec de la connexion:", error.code || "ERREUR", error.message || "");
+      console.error("Échec de la connexion:", error.code || error.name || "ERREUR", error.message || "");
+      logNetworkCauses(error);
       json(response, 503, { error: "Service de connexion indisponible. Vérifiez la connexion à la base de données." });
     }
     return;
@@ -193,10 +212,11 @@ const server = createServer(async (request, response) => {
 
   if (request.method === "GET" && pathname === `${apiPrefix}/health`) {
     try {
-      await pool.query("SELECT 1");
+      await getPool();
       json(response, 200, { api: "ok", database: "connected" });
     } catch (error) {
-      console.error("Connexion PostgreSQL impossible:", error.code || "ERREUR", error.message || "");
+      console.error("Connexion PostgreSQL impossible:", error.code || error.name || "ERREUR", error.message || "");
+      logNetworkCauses(error);
       json(response, 503, { api: "ok", database: "unavailable" });
     }
     return;
@@ -212,7 +232,7 @@ server.listen(port, () => {
 
 async function shutdown() {
   server.close();
-  await pool.end();
+  if (poolPromise) await poolPromise.then((pool) => pool.end()).catch(() => {});
 }
 
 process.on("SIGINT", () => void shutdown());
