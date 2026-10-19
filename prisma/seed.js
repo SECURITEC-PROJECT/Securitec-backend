@@ -5,6 +5,14 @@ import { createNeonPool } from "../src/config/neonPool.js";
 
 setDefaultResultOrder("ipv4first");
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+// Compte local de démonstration. Remplacez le PIN avant tout usage réel.
+const seedUser = Object.freeze({
+  nom: "Miora",
+  identifiant: "miora",
+  role: 1,
+  pin: "123456",
+  siteId: null,
+});
 
 function logNetworkCauses(error) {
   const pending = [error.sourceError || error.cause, ...(error.errors || [])].filter(Boolean);
@@ -20,25 +28,13 @@ function logNetworkCauses(error) {
 }
 
 async function main() {
-  const nom = process.env.SEED_USER_NAME?.trim();
-  const identifiant = process.env.SEED_USER_IDENTIFIER?.trim();
-  const pin = process.env.SEED_USER_PIN;
-  const roleRaw = process.env.SEED_USER_ROLE;
-  const siteRaw = process.env.SEED_USER_SITE_ID?.trim() || "";
+  const { nom, identifiant, pin, role, siteId } = seedUser;
 
   if (!process.env.DATABASE_URL) throw new Error("DATABASE_URL est absent du fichier .env.");
-  const missing = [
-    ["SEED_USER_NAME", nom],
-    ["SEED_USER_IDENTIFIER", identifiant],
-    ["SEED_USER_ROLE", roleRaw],
-    ["SEED_USER_PIN", pin],
-  ].filter(([, value]) => !value).map(([name]) => name);
-  if (missing.length) throw new Error(`Variable(s) absente(s) dans .env : ${missing.join(", ")}.`);
-
-  const role = Number(roleRaw);
-  if (!Number.isSafeInteger(role)) throw new Error("SEED_USER_ROLE doit être un entier.");
-  if (!/^\d{6}$/.test(pin)) throw new Error("SEED_USER_PIN doit contenir exactement 6 chiffres.");
-  if (siteRaw && !uuidPattern.test(siteRaw)) throw new Error("SEED_USER_SITE_ID doit être un UUID valide ou rester vide.");
+  if (!nom.trim() || !identifiant.trim()) throw new Error("Le nom et l’identifiant du compte seed sont requis.");
+  if (!Number.isSafeInteger(role)) throw new Error("Le rôle du compte seed doit être un entier.");
+  if (!/^\d{6}$/.test(pin)) throw new Error("Le PIN du compte seed doit contenir exactement 6 chiffres.");
+  if (siteId && !uuidPattern.test(siteId)) throw new Error("Le site du compte seed doit être un UUID valide.");
 
   const pinHache = await bcrypt.hash(pin, 12);
   const pool = await createNeonPool();
@@ -52,7 +48,7 @@ async function main() {
            pin_hache = EXCLUDED.pin_hache,
            site_id = EXCLUDED.site_id
        RETURNING id`,
-      [nom, identifiant, role, pinHache, siteRaw || null],
+      [nom.trim(), identifiant.trim(), role, pinHache, siteId],
     );
     console.log(`Utilisateur seed créé ou mis à jour : ${identifiant} (id ${result.rows[0].id}).`);
   } finally {
