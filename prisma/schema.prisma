@@ -39,6 +39,7 @@ model Site {
   suivisCles          SuiviCle[]
   controlesAlcoolemie ControleAlcoolemie[]
   fluxLogistiques     FluxLogistique[]
+  signalementsLogistiques SignalementLogistique[]
   rondes              Ronde[]
 
   @@map("site")
@@ -60,6 +61,7 @@ model Utilisateur {
   suivisCles  SuiviCle[]
   controlesAlcoolemie ControleAlcoolemie[]
   fluxLogistiques FluxLogistique[]
+  signalementsLogistiques SignalementLogistique[]
   rondes          Ronde[]
 
   @@index([siteId], map: "idx_utilisateur_site")
@@ -440,6 +442,32 @@ model FluxLogistique {
 
   @@index([siteId, dateOperation, typeFlux], map: "idx_flux_logistique_site_date")
   @@map("flux_logistique")
+}
+
+model SignalementLogistique {
+  id             String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  creeLe         DateTime    @default(now()) @map("cree_le") @db.Timestamp(6)
+  dateOperation  DateTime    @map("date_operation") @db.Date
+  heure          DateTime    @db.Time(0)
+  typeSignalement String     @map("type_signalement") @db.VarChar(30)
+  camion         String?     @db.VarChar(160)
+  transporteur   String?     @db.VarChar(255)
+  document       String?     @db.VarChar(160)
+  casse          String?     @db.Text
+  manquant       String?     @db.Text
+  vides          String?     @db.Text
+  phn            String?     @db.Text
+  descriptionFaits String?   @map("description_faits") @db.Text
+  personne       String?     @db.VarChar(255)
+  observations   String?     @db.Text
+  mesuresPrises  String?     @map("mesures_prises") @db.Text
+  siteId         String      @map("site_id") @db.Uuid
+  utilisateurId  String      @map("utilisateur_id") @db.Uuid
+  site           Site        @relation(fields: [siteId], references: [id], onDelete: Restrict, map: "fk_signalement_logistique_site")
+  utilisateur    Utilisateur @relation(fields: [utilisateurId], references: [id], onDelete: Restrict, map: "fk_signalement_logistique_utilisateur")
+
+  @@index([siteId, dateOperation, heure], map: "idx_signalement_logistique_site_date")
+  @@map("signalement_logistique")
 }
 
 model Ronde {

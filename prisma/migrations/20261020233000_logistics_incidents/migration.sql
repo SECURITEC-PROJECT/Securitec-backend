@@ -1,0 +1,25 @@
+CREATE TABLE IF NOT EXISTS "signalement_logistique" (
+  "id" UUID NOT NULL DEFAULT gen_random_uuid(),
+  "cree_le" TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  "date_operation" DATE NOT NULL,
+  "heure" TIME(0) NOT NULL,
+  "type_signalement" VARCHAR(30) NOT NULL,
+  "camion" VARCHAR(160),
+  "transporteur" VARCHAR(255),
+  "document" VARCHAR(160),
+  "casse" TEXT,
+  "manquant" TEXT,
+  "vides" TEXT,
+  "phn" TEXT,
+  "description_faits" TEXT,
+  "personne" VARCHAR(255),
+  "observations" TEXT,
+  "mesures_prises" TEXT,
+  "site_id" UUID NOT NULL,
+  "utilisateur_id" UUID NOT NULL,
+  CONSTRAINT "signalement_logistique_pkey" PRIMARY KEY ("id"),
+  CONSTRAINT "signalement_logistique_type_check" CHECK ("type_signalement" IN ('ANOMALIE', 'VIOLATION_PROCEDURE')),
+  CONSTRAINT "fk_signalement_logistique_site" FOREIGN KEY ("site_id") REFERENCES "site"("id") ON DELETE RESTRICT ON UPDATE CASCADE,
+  CONSTRAINT "fk_signalement_logistique_utilisateur" FOREIGN KEY ("utilisateur_id") REFERENCES "utilisateur"("id") ON DELETE RESTRICT ON UPDATE CASCADE
+);
+CREATE INDEX IF NOT EXISTS "idx_signalement_logistique_site_date" ON "signalement_logistique"("site_id", "date_operation" DESC, "heure" DESC);

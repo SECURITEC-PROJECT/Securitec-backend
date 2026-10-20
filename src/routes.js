@@ -5,8 +5,9 @@ import { handleAuth } from "./routes/auth.js";
 import { handleAccessControl } from "./routes/access-control.js";
 import { handleLogistics } from "./routes/logistics.js";
 import { handlePatrols } from "./routes/patrols.js";
+import { handleCameras } from "./routes/cameras.js";
 
-const allowedMethods = "GET, POST, PUT, PATCH, OPTIONS";
+const allowedMethods = "GET, POST, PUT, PATCH, DELETE, OPTIONS";
 
 export async function handleRequest(request, response) {
   const origin = request.headers.origin;
@@ -19,6 +20,10 @@ export async function handleRequest(request, response) {
   if (request.method === "OPTIONS") return response.writeHead(204).end();
 
   const pathname = new URL(request.url || "/", "http://" + (request.headers.host || "localhost")).pathname;
+  if (pathname === apiPrefix + "/cameras" || pathname.startsWith(apiPrefix + "/cameras/") || pathname === apiPrefix + "/camera-zones") {
+    await handleCameras(request, response, pathname);
+    return;
+  }
   if (pathname === apiPrefix + "/logistics" || pathname.startsWith(apiPrefix + "/logistics/")) {
     await handleLogistics(request, response, pathname);
     return;
