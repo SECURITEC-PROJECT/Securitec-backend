@@ -1,0 +1,308 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum TypeSite {
+  USINE
+  AGENCE
+
+  @@map("type_site")
+}
+
+enum ShiftAgent {
+  JOUR
+  NUIT
+
+  @@map("shift_agent")
+}
+
+model Site {
+  id                 String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  nom                String        @db.VarChar(255)
+  adresse            String        @db.Text
+  horairesOuverture  String?       @map("horaires_ouverture") @db.VarChar(255)
+  typeSite           TypeSite      @default(USINE) @map("type_site")
+  utilisateurs       Utilisateur[]
+  visiteurs          Visiteur[]
+  zones              Zone[]
+  postes             Poste[]
+  comptesRendus      CompteRendu[]
+
+  @@map("site")
+}
+
+model Utilisateur {
+  id            String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  nom           String        @db.VarChar(255)
+  identifiant   String        @unique @db.VarChar(100)
+  role          Int
+  pinHache      String        @map("pin_hache") @db.VarChar(255)
+  siteId        String?       @map("site_id") @db.Uuid
+  site          Site?         @relation(fields: [siteId], references: [id], onDelete: SetNull, map: "fk_utilisateur_site")
+  consignes     Consigne[]
+  badges        Badge[]
+  vacations     Vacation[]
+  audits        AuditCompteRendu[]
+
+  @@index([siteId], map: "idx_utilisateur_site")
+  @@map("utilisateur")
+}
+
+model Consigne {
+  id            String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  message       String      @db.Text
+  cible         String      @db.VarChar(255)
+  urgence       Int
+  validite      DateTime    @db.Timestamp(6)
+  utilisateurId String      @map("utilisateur_id") @db.Uuid
+  utilisateur   Utilisateur @relation(fields: [utilisateurId], references: [id], onDelete: Cascade, map: "fk_consigne_utilisateur")
+
+  @@index([utilisateurId], map: "idx_consigne_utilisateur")
+  @@map("consigne")
+}
+
+model Badge {
+  id            String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  uidNfc        String         @unique @map("uid_nfc") @db.VarChar(255)
+  couleur       String?        @db.VarChar(50)
+  statut        Int
+  validite      DateTime       @db.Timestamp(6)
+  utilisateurId String?        @map("utilisateur_id") @db.Uuid
+  utilisateur   Utilisateur?   @relation(fields: [utilisateurId], references: [id], onDelete: SetNull, map: "fk_badge_utilisateur")
+  visiteur      Visiteur?
+  passages      Passage[]
+  lectures      LectureBadge[]
+
+  @@index([utilisateurId], map: "idx_badge_utilisateur")
+  @@map("badge")
+}
+
+model Visiteur {
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  identite    String    @db.VarChar(255)
+  societe     String?   @db.VarChar(255)
+  listeNoire  Boolean   @default(false) @map("liste_noire")
+  siteId      String?   @map("site_id") @db.Uuid
+  badgeId     String?   @unique @map("badge_id") @db.Uuid
+  site        Site?     @relation(fields: [siteId], references: [id], onDelete: SetNull, map: "fk_visiteur_site")
+  badge       Badge?    @relation(fields: [badgeId], references: [id], onDelete: SetNull, map: "fk_visiteur_badge")
+  passages    Passage[]
+
+  @@index([siteId], map: "idx_visiteur_site")
+  @@map("visiteur")
+}
+
+model Passage {
+  id         String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  entree     DateTime  @db.Timestamp(6)
+  sortie     DateTime? @db.Timestamp(6)
+  motif      String?   @db.Text
+  badgeId    String    @map("badge_id") @db.Uuid
+  visiteurId String?   @map("visiteur_id") @db.Uuid
+  badge      Badge     @relation(fields: [badgeId], references: [id], onDelete: Cascade, map: "fk_passage_badge")
+  visiteur   Visiteur? @relation(fields: [visiteurId], references: [id], onDelete: SetNull, map: "fk_passage_visiteur")
+
+  @@index([badgeId], map: "idx_passage_badge")
+  @@map("passage")
+}
+
+model Vacation {
+  id            String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  ouverture     DateTime         @db.Timestamp(6)
+  cloture       DateTime?        @db.Timestamp(6)
+  passation     String?          @db.Text
+  utilisateurId String           @map("utilisateur_id") @db.Uuid
+  utilisateur   Utilisateur     @relation(fields: [utilisateurId], references: [id], onDelete: Cascade, map: "fk_vacation_utilisateur")
+  compteRendu   CompteRendu?
+  evenements    Evenement[]
+  passagesVehicule PassageVehicule[]
+
+  @@index([utilisateurId], map: "idx_vacation_utilisateur")
+  @@map("vacation")
+}
+
+model CompteRendu {
+  id                 String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  observations       String?              @db.Text
+  signature          String?              @db.VarChar(255)
+  pdf                String?              @db.Text
+  statutValidation   String               @map("statut_validation") @db.VarChar(100)
+  vacationId         String               @unique @map("vacation_id") @db.Uuid
+  siteId             String               @map("site_id") @db.Uuid
+  prestataireId      String               @map("prestataire_id") @db.Uuid
+  posteId            String               @map("poste_id") @db.Uuid
+  dateRapport        DateTime             @map("date_rapport") @db.Date
+  debutService       DateTime             @map("debut_service") @db.Time(0)
+  finService         DateTime             @map("fin_service") @db.Time(0)
+  details            Json                 @default("{}") @db.JsonB
+  vacation           Vacation             @relation(fields: [vacationId], references: [id], onDelete: Cascade, map: "fk_compterendu_vacation")
+  site               Site                 @relation(fields: [siteId], references: [id], onDelete: Restrict, map: "fk_compterendu_site")
+  prestataire        Prestataire          @relation(fields: [prestataireId], references: [id], onDelete: Restrict, map: "fk_compterendu_prestataire")
+  poste              Poste                @relation(fields: [posteId], references: [id], onDelete: Restrict, map: "fk_compterendu_poste")
+  agents             CompteRenduAgent[]
+  evenements         Evenement[]
+  audit              AuditCompteRendu[]
+
+  @@unique([siteId, dateRapport], map: "uq_compte_rendu_site_date")
+  @@map("compte_rendu")
+}
+
+model Evenement {
+  id           String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  type         String       @db.VarChar(100)
+  gravite      Int
+  description  String?      @db.Text
+  lienOrigine  String?      @map("lien_origine") @db.VarChar(255)
+  vacationId  String       @map("vacation_id") @db.Uuid
+  compteRenduId String?     @map("compte_rendu_id") @db.Uuid
+  vacation     Vacation     @relation(fields: [vacationId], references: [id], onDelete: Cascade, map: "fk_evenement_vacation")
+  compteRendu  CompteRendu? @relation(fields: [compteRenduId], references: [id], onDelete: SetNull, map: "fk_evenement_compte_rendu")
+
+  @@index([vacationId], map: "idx_evenement_vacation")
+  @@map("evenement")
+}
+
+model Zone {
+  id                   String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  nom                  String    @db.VarChar(255)
+  niveauAccesRequis    Int       @map("niveau_acces_requis")
+  siteId               String    @map("site_id") @db.Uuid
+  site                 Site      @relation(fields: [siteId], references: [id], onDelete: Cascade, map: "fk_zone_site")
+  lecteurs             Lecteur[]
+  cameras              Camera[]
+
+  @@index([siteId], map: "idx_zone_site")
+  @@map("zone")
+}
+
+model Lecteur {
+  id          String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  uidNfc      String          @unique @map("uid_nfc") @db.VarChar(255)
+  emplacement String          @db.VarChar(255)
+  zoneId      String          @map("zone_id") @db.Uuid
+  zone        Zone            @relation(fields: [zoneId], references: [id], onDelete: Cascade, map: "fk_lecteur_zone")
+  lectures    LectureBadge[]
+
+  @@index([zoneId], map: "idx_lecteur_zone")
+  @@map("lecteur")
+}
+
+model LectureBadge {
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  horodatage   DateTime @db.Timestamp(6)
+  decision     String   @db.VarChar(100)
+  autoriser    Boolean
+  badgeId      String   @map("badge_id") @db.Uuid
+  lecteurId    String   @map("lecteur_id") @db.Uuid
+  badge        Badge    @relation(fields: [badgeId], references: [id], onDelete: Cascade, map: "fk_lecture_badge")
+  lecteur      Lecteur  @relation(fields: [lecteurId], references: [id], onDelete: Cascade, map: "fk_lecture_lecteur")
+
+  @@index([badgeId], map: "idx_lecture_badge_badge")
+  @@index([lecteurId], map: "idx_lecture_badge_lecteur")
+  @@map("lecture_badge")
+}
+
+model Camera {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  nom       String   @db.VarChar(255)
+  urlFlux   String   @map("url_flux") @db.Text
+  etat      String   @db.VarChar(100)
+  zoneId    String   @map("zone_id") @db.Uuid
+  zone      Zone     @relation(fields: [zoneId], references: [id], onDelete: Cascade, map: "fk_camera_zone")
+
+  @@index([zoneId], map: "idx_camera_zone")
+  @@map("camera")
+}
+
+model Vehicule {
+  id                String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  immatriculation   String             @unique @db.VarChar(50)
+  type              String             @db.VarChar(100)
+  listeNoire        Boolean            @default(false) @map("liste_noire")
+  passages          PassageVehicule[]
+
+  @@map("vehicule")
+}
+
+model PassageVehicule {
+  id          String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  entree      DateTime   @db.Timestamp(6)
+  sortie      DateTime?  @db.Timestamp(6)
+  photos      String?    @db.Text
+  vehiculeId  String     @map("vehicule_id") @db.Uuid
+  vacationId  String?    @map("vacation_id") @db.Uuid
+  vehicule    Vehicule   @relation(fields: [vehiculeId], references: [id], onDelete: Cascade, map: "fk_passagevehicule_vehicule")
+  vacation    Vacation?  @relation(fields: [vacationId], references: [id], onDelete: SetNull, map: "fk_passagevehicule_vacation")
+
+  @@index([vehiculeId], map: "idx_passage_vehicule_vehicule")
+  @@map("passage_vehicule")
+}
+
+model Prestataire {
+  id             String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  nom            String         @unique @db.VarChar(160)
+  actif          Boolean        @default(true)
+  agents         Agent[]
+  comptesRendus  CompteRendu[]
+
+  @@map("prestataire")
+}
+
+model Poste {
+  id             String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  nom            String         @db.VarChar(160)
+  actif          Boolean        @default(true)
+  siteId         String         @map("site_id") @db.Uuid
+  site           Site           @relation(fields: [siteId], references: [id], onDelete: Cascade, map: "fk_poste_site")
+  comptesRendus  CompteRendu[]
+  agents         CompteRenduAgent[]
+
+  @@unique([siteId, nom], map: "uq_poste_site_nom")
+  @@map("poste")
+}
+
+model Agent {
+  id                 String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  prenom             String             @db.VarChar(100)
+  nom                String             @db.VarChar(100)
+  matricule          String             @unique @db.VarChar(50)
+  actif              Boolean            @default(true)
+  prestataireId      String             @map("prestataire_id") @db.Uuid
+  prestataire        Prestataire        @relation(fields: [prestataireId], references: [id], onDelete: Restrict, map: "fk_agent_prestataire")
+  comptesRendus      CompteRenduAgent[]
+
+  @@map("agent")
+}
+
+model CompteRenduAgent {
+  compteRenduId String      @map("compte_rendu_id") @db.Uuid
+  agentId       String      @map("agent_id") @db.Uuid
+  posteId       String      @map("poste_id") @db.Uuid
+  shift         ShiftAgent
+  compteRendu   CompteRendu @relation(fields: [compteRenduId], references: [id], onDelete: Cascade, map: "fk_cr_agent_compte_rendu")
+  agent         Agent       @relation(fields: [agentId], references: [id], onDelete: Restrict, map: "fk_cr_agent_agent")
+  poste         Poste       @relation(fields: [posteId], references: [id], onDelete: Restrict, map: "fk_cr_agent_poste")
+
+  @@id([compteRenduId, agentId, shift])
+  @@map("compte_rendu_agent")
+}
+
+model AuditCompteRendu {
+  id             String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  compteRenduId  String      @map("compte_rendu_id") @db.Uuid
+  utilisateurId  String      @map("utilisateur_id") @db.Uuid
+  action         String      @db.VarChar(40)
+  avant          Json?       @db.JsonB
+  apres          Json        @db.JsonB
+  creeLe         DateTime    @default(now()) @map("cree_le") @db.Timestamp(6)
+  compteRendu    CompteRendu @relation(fields: [compteRenduId], references: [id], onDelete: Restrict, map: "fk_audit_cr")
+  utilisateur    Utilisateur @relation(fields: [utilisateurId], references: [id], onDelete: Restrict, map: "fk_audit_utilisateur")
+
+  @@index([compteRenduId, creeLe], map: "idx_audit_cr_date")
+  @@map("audit_compte_rendu")
+}
