@@ -18,8 +18,8 @@
     "@prisma/adapter-pg": "7.4.1",
     "@prisma/client": "7.4.1",
     "bcryptjs": "3.0.3",
-    "dotenv": "^17.0.0",
-    "pg": "^8.16.0"
+    "dotenv": "^17.4.2",
+    "pg": "^8.23.1"
   },
   "devDependencies": {
     "prisma": "7.4.1"
