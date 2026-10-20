@@ -1,10 +1,10 @@
 import "dotenv/config";
 import { defineConfig, env } from "prisma/config";
 
-// Prisma Studio uses Neon's pooled URL for reliable dashboard-style queries.
+// Prisma Studio and introspection use Neon's direct connection.
 export default defineConfig({
   schema: "prisma/schema.prisma",
   datasource: {
-    url: env("DATABASE_URL"),
+    url: env("DIRECT_URL"),
   },
 });

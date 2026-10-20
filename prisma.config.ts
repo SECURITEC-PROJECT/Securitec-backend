@@ -8,10 +8,7 @@ export default defineConfig({
     seed: "node prisma/seed.js",
   },
   datasource: {
-    // La CLI de migration utilise la connexion directe Neon.
+    // Prisma Studio et les outils d'administration utilisent la connexion directe.
     url: env("DIRECT_URL"),
-    ...(process.env.SHADOW_DATABASE_URL
-      ? { shadowDatabaseUrl: process.env.SHADOW_DATABASE_URL }
-      : {}),
   },
 });
