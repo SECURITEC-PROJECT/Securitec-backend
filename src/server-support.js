@@ -139,7 +139,7 @@ export async function saveServiceReport(pool, user, body, reportId = null) {
            cr.date_rapport AS "reportDate", cr.debut_service AS "startTime", cr.fin_service AS "endTime",
            s.nom AS "siteName", pr.nom AS "providerName", po.nom AS "postName",
            (SELECT COALESCE(json_agg(json_build_object('name', concat_ws(' ', a.prenom, a.nom), 'matricule', a.matricule, 'shift', ca.shift, 'post', ap.nom)), '[]'::json)
-              FROM compte_rendu_agent ca JOIN agent a ON a.id=ca.agent_id JOIN poste ap ON ap.id=ca.poste_id
+              FROM compte_rendu_agent ca JOIN employe a ON a.id=ca.agent_id JOIN poste ap ON ap.id=ca.poste_id
              WHERE ca.compte_rendu_id=cr.id) AS agents
          FROM compte_rendu cr JOIN vacation v ON v.id=cr.vacation_id
          JOIN site s ON s.id=cr.site_id JOIN prestataire pr ON pr.id=cr.prestataire_id JOIN poste po ON po.id=cr.poste_id
@@ -190,7 +190,7 @@ export async function saveServiceReport(pool, user, body, reportId = null) {
       const firstName = names.length > 1 ? names.slice(0, -1).join(" ") : names[0];
       const lastName = names.length > 1 ? names[names.length - 1] : names[0];
       const agent = await client.query(
-        `INSERT INTO agent (prenom, nom, matricule, prestataire_id) VALUES ($1,$2,$3,$4)
+        `INSERT INTO employe (prenom, nom, matricule, prestataire_id) VALUES ($1,$2,$3,$4)
          ON CONFLICT (matricule) DO UPDATE SET prenom=EXCLUDED.prenom, nom=EXCLUDED.nom, prestataire_id=EXCLUDED.prestataire_id
          RETURNING id`,
         [firstName, lastName, matricule, prestataireId],
@@ -223,7 +223,7 @@ export async function saveServiceReport(pool, user, body, reportId = null) {
       for (const entry of agents) {
         const matricule = text(entry?.matricule, 50);
         if (!matricule) continue;
-        const agent = await client.query("SELECT id FROM agent WHERE matricule=$1", [matricule]);
+        const agent = await client.query("SELECT id FROM employe WHERE matricule=$1", [matricule]);
         const agentPostId = await getOrCreatePost(client, siteId, text(entry?.post, 160) || postName);
         await client.query(
           "INSERT INTO compte_rendu_agent (compte_rendu_id, agent_id, poste_id, shift) VALUES ($1,$2,$3,$4::shift_agent)",

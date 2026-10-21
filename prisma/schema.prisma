@@ -32,7 +32,7 @@ model Site {
   visiteurs          Visiteur[]
   zones              Zone[]
   postes             Poste[]
-  agents             Agent[]
+  employes           Employe[]
   comptesRendus      CompteRendu[]
   vacations          Vacation[]
   passations         Passation[]
@@ -325,7 +325,7 @@ model Prestataire {
   id            String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   nom           String        @unique @db.VarChar(160)
   actif         Boolean       @default(true)
-  agents        Agent[]
+  employes      Employe[]
   comptesRendus CompteRendu[]
 
   @@map("prestataire")
@@ -344,7 +344,7 @@ model Poste {
   @@map("poste")
 }
 
-model Agent {
+model Employe {
   id            String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   prenom        String             @db.VarChar(100)
   nom           String             @db.VarChar(100)
@@ -356,7 +356,7 @@ model Agent {
   site          Site?              @relation(fields: [siteId], references: [id], onDelete: SetNull, map: "fk_agent_site")
   comptesRendus CompteRenduAgent[]
 
-  @@map("agent")
+  @@map("employe")
 }
 
 model CompteRenduAgent {
@@ -365,7 +365,7 @@ model CompteRenduAgent {
   posteId       String      @map("poste_id") @db.Uuid
   shift         ShiftAgent
   compteRendu   CompteRendu @relation(fields: [compteRenduId], references: [id], onDelete: Cascade, map: "fk_cr_agent_compte_rendu")
-  agent         Agent       @relation(fields: [agentId], references: [id], onDelete: Restrict, map: "fk_cr_agent_agent")
+  agent         Employe     @relation(fields: [agentId], references: [id], onDelete: Restrict, map: "fk_cr_agent_agent")
   poste         Poste       @relation(fields: [posteId], references: [id], onDelete: Restrict, map: "fk_cr_agent_poste")
 
   @@id([compteRenduId, agentId, shift])

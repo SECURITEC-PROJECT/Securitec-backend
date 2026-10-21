@@ -35,7 +35,7 @@ export async function handleEmployeeRoutes(request, response, pool, pathname, jw
       const matricule = decodeURIComponent(lookupMatch[1]).trim();
       const result = await pool.query(`SELECT a.id,a.prenom AS "firstName",a.nom AS "lastName",a.matricule,
         p.nom AS provider,s.id AS "siteId",s.nom AS "siteName",COALESCE(s.actif,false) AS "siteActive",a.actif AS active
-        FROM agent a JOIN prestataire p ON p.id=a.prestataire_id
+        FROM employe a JOIN prestataire p ON p.id=a.prestataire_id
         LEFT JOIN site s ON s.id=a.site_id WHERE UPPER(a.matricule)=UPPER($1) LIMIT 1`, [matricule]);
       const employee = result.rows[0];
       if (!employee) throw Object.assign(new Error("Aucun employé trouvé pour ce matricule."), { status: 404 });
@@ -45,7 +45,7 @@ export async function handleEmployeeRoutes(request, response, pool, pathname, jw
     if (pathname === path && request.method === "GET") {
       const result = await pool.query(`SELECT a.id,a.prenom AS "firstName",a.nom AS "lastName",a.matricule,a.actif AS active,
         p.id AS "providerId",p.nom AS provider,a.site_id AS "siteId",s.nom AS "siteName"
-        FROM agent a JOIN prestataire p ON p.id=a.prestataire_id LEFT JOIN site s ON s.id=a.site_id
+        FROM employe a JOIN prestataire p ON p.id=a.prestataire_id LEFT JOIN site s ON s.id=a.site_id
         ORDER BY a.actif DESC,a.nom,a.prenom`);
       json(response, 200, { employees: result.rows }); return true;
     }
@@ -57,7 +57,7 @@ export async function handleEmployeeRoutes(request, response, pool, pathname, jw
         const site = await client.query("SELECT id FROM site WHERE id=$1::uuid AND actif=true", [values.siteId]);
         if (!site.rows[0]) throw Object.assign(new Error("Site introuvable ou archivé."), { status: 404 });
         const provider = await client.query("INSERT INTO prestataire (nom) VALUES ($1) ON CONFLICT (nom) DO UPDATE SET actif=true RETURNING id", [values.provider]);
-        const employee = await client.query(`INSERT INTO agent (prenom,nom,matricule,prestataire_id,site_id) VALUES ($1,$2,$3,$4::uuid,$5::uuid)
+        const employee = await client.query(`INSERT INTO employe (prenom,nom,matricule,prestataire_id,site_id) VALUES ($1,$2,$3,$4::uuid,$5::uuid)
           RETURNING id,prenom AS "firstName",nom AS "lastName",matricule,actif AS active,site_id AS "siteId"`, [values.firstName, values.lastName, values.matricule, provider.rows[0].id, values.siteId]);
         const siteName = await client.query("SELECT nom FROM site WHERE id=$1::uuid", [values.siteId]);
         await client.query("COMMIT");
@@ -74,7 +74,7 @@ export async function handleEmployeeRoutes(request, response, pool, pathname, jw
         const site = await client.query("SELECT id FROM site WHERE id=$1::uuid AND actif=true", [values.siteId]);
         if (!site.rows[0]) throw Object.assign(new Error("Site introuvable ou archivé."), { status: 404 });
         const provider = await client.query("INSERT INTO prestataire (nom) VALUES ($1) ON CONFLICT (nom) DO UPDATE SET actif=true RETURNING id", [values.provider]);
-        const employee = await client.query(`UPDATE agent SET prenom=$1,nom=$2,matricule=$3,prestataire_id=$4::uuid,site_id=$5::uuid WHERE id=$6::uuid
+        const employee = await client.query(`UPDATE employe SET prenom=$1,nom=$2,matricule=$3,prestataire_id=$4::uuid,site_id=$5::uuid WHERE id=$6::uuid
           RETURNING id,prenom AS "firstName",nom AS "lastName",matricule,actif AS active,site_id AS "siteId"`, [values.firstName, values.lastName, values.matricule, provider.rows[0].id, values.siteId, idMatch[1]]);
         if (!employee.rows[0]) throw Object.assign(new Error("Employé introuvable."), { status: 404 });
         const siteName = await client.query("SELECT nom FROM site WHERE id=$1::uuid", [values.siteId]);
@@ -87,7 +87,7 @@ export async function handleEmployeeRoutes(request, response, pool, pathname, jw
     if (idMatch && request.method === "PATCH") {
       const body = await readJson(request);
       if (typeof body.active !== "boolean") throw Object.assign(new Error("État d’employé invalide."), { status: 400 });
-      const result = await pool.query("UPDATE agent SET actif=$1 WHERE id=$2::uuid RETURNING id,actif AS active", [body.active, idMatch[1]]);
+      const result = await pool.query("UPDATE employe SET actif=$1 WHERE id=$2::uuid RETURNING id,actif AS active", [body.active, idMatch[1]]);
       if (!result.rows[0]) throw Object.assign(new Error("Employé introuvable."), { status: 404 });
       json(response, 200, { employee: result.rows[0] }); return true;
     }

@@ -1,0 +1,107 @@
+-- Restore fields required by the runtime API when legacy tables existed in a
+-- partial form before CREATE TABLE IF NOT EXISTS migrations were applied.
+
+ALTER TABLE "camera"
+  ADD COLUMN IF NOT EXISTS "nom" VARCHAR(255) NOT NULL DEFAULT '',
+  ADD COLUMN IF NOT EXISTS "url_flux" TEXT NOT NULL DEFAULT '',
+  ADD COLUMN IF NOT EXISTS "etat" VARCHAR(100) NOT NULL DEFAULT 'EN_SERVICE';
+
+CREATE TABLE IF NOT EXISTS "vehicule" (
+  "id" UUID NOT NULL DEFAULT gen_random_uuid(),
+  "immatriculation" VARCHAR(50) NOT NULL,
+  "type" VARCHAR(100) NOT NULL,
+  "liste_noire" BOOLEAN NOT NULL DEFAULT false,
+  CONSTRAINT "vehicule_pkey" PRIMARY KEY ("id")
+);
+ALTER TABLE "vehicule"
+  ADD COLUMN IF NOT EXISTS "immatriculation" VARCHAR(50),
+  ADD COLUMN IF NOT EXISTS "type" VARCHAR(100),
+  ADD COLUMN IF NOT EXISTS "liste_noire" BOOLEAN NOT NULL DEFAULT false;
+CREATE UNIQUE INDEX IF NOT EXISTS "vehicule_immatriculation_key" ON "vehicule"("immatriculation");
+
+ALTER TABLE "passage_vehicule"
+  ADD COLUMN IF NOT EXISTS "entree" TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  ADD COLUMN IF NOT EXISTS "sortie" TIMESTAMP(6),
+  ADD COLUMN IF NOT EXISTS "photos" TEXT,
+  ADD COLUMN IF NOT EXISTS "vehicule_id" UUID,
+  ADD COLUMN IF NOT EXISTS "transporteur" VARCHAR(255),
+  ADD COLUMN IF NOT EXISTS "conducteur" VARCHAR(255),
+  ADD COLUMN IF NOT EXISTS "passagers" VARCHAR(255),
+  ADD COLUMN IF NOT EXISTS "motif" TEXT,
+  ADD COLUMN IF NOT EXISTS "zone" VARCHAR(255),
+  ADD COLUMN IF NOT EXISTS "operation" VARCHAR(40),
+  ADD COLUMN IF NOT EXISTS "reference" VARCHAR(100),
+  ADD COLUMN IF NOT EXISTS "plomb" VARCHAR(100),
+  ADD COLUMN IF NOT EXISTS "etat_chargement" VARCHAR(40),
+  ADD COLUMN IF NOT EXISTS "controle_conforme" BOOLEAN NOT NULL DEFAULT false,
+  ADD COLUMN IF NOT EXISTS "saisi_par_id" UUID,
+  ADD COLUMN IF NOT EXISTS "sortie_par_id" UUID;
+CREATE INDEX IF NOT EXISTS "idx_passagevehicule_site_date" ON "passage_vehicule"("site_id", "entree");
+
+ALTER TABLE "ronde"
+  ADD COLUMN IF NOT EXISTS "cree_le" TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  ADD COLUMN IF NOT EXISTS "nom_parcours" VARCHAR(160) NOT NULL DEFAULT 'Ronde',
+  ADD COLUMN IF NOT EXISTS "debut" TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  ADD COLUMN IF NOT EXISTS "fin" TIMESTAMP(6),
+  ADD COLUMN IF NOT EXISTS "points" JSONB NOT NULL DEFAULT '[]',
+  ADD COLUMN IF NOT EXISTS "observations" TEXT;
+CREATE INDEX IF NOT EXISTS "idx_ronde_site_debut" ON "ronde"("site_id", "debut");
+
+ALTER TABLE "flux_logistique"
+  ADD COLUMN IF NOT EXISTS "cree_le" TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  ADD COLUMN IF NOT EXISTS "date_operation" DATE NOT NULL DEFAULT CURRENT_DATE,
+  ADD COLUMN IF NOT EXISTS "type_flux" VARCHAR(20) NOT NULL DEFAULT 'DECHARGEMENT',
+  ADD COLUMN IF NOT EXISTS "camion" VARCHAR(160),
+  ADD COLUMN IF NOT EXISTS "transporteur" VARCHAR(255),
+  ADD COLUMN IF NOT EXISTS "document" VARCHAR(160),
+  ADD COLUMN IF NOT EXISTS "plomb" VARCHAR(100),
+  ADD COLUMN IF NOT EXISTS "categorie_stock" VARCHAR(40),
+  ADD COLUMN IF NOT EXISTS "article" VARCHAR(100),
+  ADD COLUMN IF NOT EXISTS "quantite" DECIMAL(12,2);
+CREATE INDEX IF NOT EXISTS "idx_flux_logistique_site_date" ON "flux_logistique"("site_id", "date_operation", "type_flux");
+
+ALTER TABLE "signalement_logistique"
+  ADD COLUMN IF NOT EXISTS "cree_le" TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  ADD COLUMN IF NOT EXISTS "date_operation" DATE NOT NULL DEFAULT CURRENT_DATE,
+  ADD COLUMN IF NOT EXISTS "heure" TIME(0) NOT NULL DEFAULT CURRENT_TIME,
+  ADD COLUMN IF NOT EXISTS "type_signalement" VARCHAR(30) NOT NULL DEFAULT 'ANOMALIE',
+  ADD COLUMN IF NOT EXISTS "camion" VARCHAR(160),
+  ADD COLUMN IF NOT EXISTS "transporteur" VARCHAR(255),
+  ADD COLUMN IF NOT EXISTS "document" VARCHAR(160),
+  ADD COLUMN IF NOT EXISTS "casse" TEXT,
+  ADD COLUMN IF NOT EXISTS "manquant" TEXT,
+  ADD COLUMN IF NOT EXISTS "vides" TEXT,
+  ADD COLUMN IF NOT EXISTS "phn" TEXT,
+  ADD COLUMN IF NOT EXISTS "description_faits" TEXT,
+  ADD COLUMN IF NOT EXISTS "personne" VARCHAR(255),
+  ADD COLUMN IF NOT EXISTS "observations" TEXT,
+  ADD COLUMN IF NOT EXISTS "mesures_prises" TEXT;
+CREATE INDEX IF NOT EXISTS "idx_signalement_logistique_site_date"
+  ON "signalement_logistique"("site_id", "date_operation" DESC, "heure" DESC);
+
+ALTER TABLE "suivi_cle"
+  ADD COLUMN IF NOT EXISTS "cree_le" TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  ADD COLUMN IF NOT EXISTS "date_suivi" DATE NOT NULL DEFAULT CURRENT_DATE,
+  ADD COLUMN IF NOT EXISTS "lieu" VARCHAR(255) NOT NULL DEFAULT '',
+  ADD COLUMN IF NOT EXISTS "perception_matin" TIME(0),
+  ADD COLUMN IF NOT EXISTS "responsable_perception_matin" VARCHAR(255),
+  ADD COLUMN IF NOT EXISTS "reintegration_matin" TIME(0),
+  ADD COLUMN IF NOT EXISTS "responsable_reintegration_matin" VARCHAR(255),
+  ADD COLUMN IF NOT EXISTS "perception_apres_midi" TIME(0),
+  ADD COLUMN IF NOT EXISTS "responsable_perception_apres_midi" VARCHAR(255),
+  ADD COLUMN IF NOT EXISTS "reintegration_apres_midi" TIME(0),
+  ADD COLUMN IF NOT EXISTS "responsable_reintegration_apres_midi" VARCHAR(255),
+  ADD COLUMN IF NOT EXISTS "observations" TEXT;
+CREATE INDEX IF NOT EXISTS "idx_suivi_cle_site_date" ON "suivi_cle"("site_id", "date_suivi");
+
+ALTER TABLE "controle_alcoolemie"
+  ADD COLUMN IF NOT EXISTS "cree_le" TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  ADD COLUMN IF NOT EXISTS "date_controle" DATE NOT NULL DEFAULT CURRENT_DATE,
+  ADD COLUMN IF NOT EXISTS "heure" TIME(0) NOT NULL DEFAULT CURRENT_TIME,
+  ADD COLUMN IF NOT EXISTS "personne" VARCHAR(255) NOT NULL DEFAULT '',
+  ADD COLUMN IF NOT EXISTS "appartenance" VARCHAR(40) NOT NULL DEFAULT 'NON STAR',
+  ADD COLUMN IF NOT EXISTS "demandeur" VARCHAR(255),
+  ADD COLUMN IF NOT EXISTS "type_demande" VARCHAR(80) NOT NULL DEFAULT 'Test ordinaire',
+  ADD COLUMN IF NOT EXISTS "resultat" VARCHAR(20) NOT NULL DEFAULT 'Négatif',
+  ADD COLUMN IF NOT EXISTS "taux_mesure" DECIMAL(5,2);
+CREATE INDEX IF NOT EXISTS "idx_alcoolemie_site_date" ON "controle_alcoolemie"("site_id", "date_controle", "heure");

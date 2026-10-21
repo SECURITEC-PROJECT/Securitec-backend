@@ -16,7 +16,7 @@ export async function handleReports(request, response, pathname) {
              cr.statut_validation AS statut, cr.observations, cr.details, s.nom AS "siteName", p.nom AS "providerName",
              po.nom AS "postName", v.utilisateur_id AS "ownerId",
              (SELECT COALESCE(json_agg(json_build_object('name', concat_ws(' ', a.prenom, a.nom), 'matricule', a.matricule, 'shift', ca.shift, 'post', ap.nom)), '[]'::json)
-                FROM compte_rendu_agent ca JOIN agent a ON a.id=ca.agent_id JOIN poste ap ON ap.id=ca.poste_id
+                FROM compte_rendu_agent ca JOIN employe a ON a.id=ca.agent_id JOIN poste ap ON ap.id=ca.poste_id
                WHERE ca.compte_rendu_id=cr.id) AS agents
            FROM compte_rendu cr JOIN site s ON s.id=cr.site_id
            JOIN prestataire p ON p.id=cr.prestataire_id JOIN poste po ON po.id=cr.poste_id

@@ -54,7 +54,7 @@ export async function createShift(request, response, pool, userId) {
 
     const employeeResult = await pool.query(
       `SELECT a.id,a.nom,a.prenom,a.matricule,p.nom AS prestataire,s.id AS site_id,s.nom AS site_name
-       FROM agent a JOIN prestataire p ON p.id=a.prestataire_id LEFT JOIN site s ON s.id=a.site_id AND s.actif=true
+       FROM employe a JOIN prestataire p ON p.id=a.prestataire_id LEFT JOIN site s ON s.id=a.site_id AND s.actif=true
        WHERE UPPER(a.matricule)=UPPER($1) AND a.actif=true LIMIT 1`, [matricule],
     );
     const employee = employeeResult.rows[0];
