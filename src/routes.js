@@ -6,6 +6,8 @@ import { handleAccessControl } from "./routes/access-control.js";
 import { handleLogistics } from "./routes/logistics.js";
 import { handlePatrols } from "./routes/patrols.js";
 import { handleCameras } from "./routes/cameras.js";
+import { handleVigilance } from "./routes/vigilance.js";
+import { handleMainCourante } from "./routes/main-courante.js";
 
 const allowedMethods = "GET, POST, PUT, PATCH, DELETE, OPTIONS";
 
@@ -30,6 +32,14 @@ export async function handleRequest(request, response) {
   }
   if (pathname === apiPrefix + "/patrols" || pathname.startsWith(apiPrefix + "/patrols/")) {
     await handlePatrols(request, response, pathname);
+    return;
+  }
+  if (pathname === apiPrefix + "/vigilance" || pathname.startsWith(apiPrefix + "/vigilance/")) {
+    await handleVigilance(request, response, pathname);
+    return;
+  }
+  if (pathname === apiPrefix + "/main-courante" || pathname.startsWith(apiPrefix + "/main-courante/")) {
+    await handleMainCourante(request, response, pathname);
     return;
   }
   const accessControlRoute = apiPrefix + "/access-control";
