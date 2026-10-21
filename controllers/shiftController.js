@@ -1,70 +1,60 @@
-import { json, readJson } from "../utils/helpers.js";
+import pool from "../config/db.js";
 
-export async function getShifts(request, response, pool) {
+// Récupérer toutes les prises de poste (table au singulier 'prise_de_poste')
+export async function getShifts(request, response) {
   try {
-    const result = await pool.query(
-      `SELECT id, nom, prenom, prestataire, site_de_travail, checks, notes, started_at, ended_at 
-       FROM prises_de_poste 
-       ORDER BY started_at DESC;`
-    );
-    json(response, 200, result.rows);
+    const query = `
+      SELECT id, matricule, nom, prenom, prestataire, site_de_travail, notes, started_at, ended_at 
+      FROM prise_de_poste 
+      ORDER BY started_at DESC;
+    `;
+    const result = await pool.query(query);
+    return result.rows;
   } catch (error) {
     console.error("Erreur GET /shifts:", error);
-    json(response, 500, { error: "Erreur lors de la récupération des prises de poste." });
+    throw error;
   }
 }
 
-export async function createShift(request, response, pool) {
-  try {
-    const body = await readJson(request);
-    const { nom, prenom, prestataire, site_de_travail, checks, notes } = body;
+// Créer une nouvelle prise de poste
+export async function createShift(data) {
+  const { matricule, nom, prenom, prestataire, site_de_travail, notes } = data;
 
-    if (!nom || !prenom) {
-      return json(response, 400, { error: "Le nom et le prénom sont obligatoires." });
-    }
-
-    const query = `
-      INSERT INTO prises_de_poste (nom, prenom, prestataire, site_de_travail, checks, notes, started_at)
-      VALUES ($1, $2, $3, $4, $5, $6, NOW())
-      RETURNING *;
-    `;
-    const values = [
-      nom.trim(),
-      prenom.trim(),
-      prestataire || 'securitec',
-      site_de_travail || 'Usine Antsirabe',
-      JSON.stringify(checks || {}),
-      notes ? notes.trim() : ''
-    ];
-
-    const result = await pool.query(query, values);
-    json(response, 201, result.rows[0]);
-  } catch (error) {
-    if (error.status) {
-      return json(response, error.status, { error: error.message });
-    }
-    console.error("Erreur POST /shifts:", error);
-    json(response, 500, { error: "Erreur lors de la création de la prise de poste." });
+  if (!matricule || !nom || !prenom) {
+    throw new Error("Le matricule, le nom et le prénom sont obligatoires.");
   }
+
+  const query = `
+    INSERT INTO prise_de_poste (matricule, nom, prenom, prestataire, site_de_travail, notes, started_at)
+    VALUES ($1, $2, $3, $4, $5, $6, NOW())
+    RETURNING *;
+  `;
+  const values = [
+    matricule,
+    nom,
+    prenom,
+    prestataire || "securitec",
+    site_de_travail || "Usine Antsirabe",
+    notes || ""
+  ];
+
+  const result = await pool.query(query, values);
+  return result.rows[0];
 }
 
-export async function endShift(request, response, pool, shiftId) {
-  try {
-    const query = `
-      UPDATE prises_de_poste 
-      SET ended_at = NOW() 
-      WHERE id = $1 
-      RETURNING *;
-    `;
-    const result = await pool.query(query, [shiftId]);
+// Clôturer une prise de poste
+export async function endShift(shiftId) {
+  const query = `
+    UPDATE prise_de_poste 
+    SET ended_at = NOW() 
+    WHERE id = $1 
+    RETURNING *;
+  `;
+  const result = await pool.query(query, [shiftId]);
 
-    if (result.rows.length === 0) {
-      return json(response, 404, { error: "Prise de poste non trouvée." });
-    }
-
-    json(response, 200, result.rows[0]);
-  } catch (error) {
-    console.error("Erreur PUT /shifts/:id/end:", error);
-    json(response, 500, { error: "Erreur lors de la clôture du service." });
+  if (result.rows.length === 0) {
+    return null;
   }
+
+  return result.rows[0];
 }

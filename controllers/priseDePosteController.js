@@ -1,11 +1,10 @@
 const pool = require('../config/db');
 
-// Récupérer toutes les prises de poste
 exports.getAllShifts = async (req, res) => {
   try {
     const query = `
-      SELECT id, nom, prenom, prestataire, site_de_travail, checks, notes, started_at, ended_at 
-      FROM prises_de_poste 
+      SELECT id, matricule, nom, prenom, prestataire, site_de_travail, notes, started_at, ended_at 
+      FROM prise_de_poste 
       ORDER BY started_at DESC;
     `;
     const result = await pool.query(query);
@@ -16,26 +15,25 @@ exports.getAllShifts = async (req, res) => {
   }
 };
 
-// Créer une nouvelle prise de poste
 exports.createShift = async (req, res) => {
-  const { nom, prenom, prestataire, site_de_travail, checks, notes } = req.body;
+  const { matricule, nom, prenom, prestataire, site_de_travail, notes } = req.body;
 
-  if (!nom || !prenom) {
-    return res.status(400).json({ error: 'Le nom et le prénom sont obligatoires.' });
+  if (!matricule || !nom || !prenom) {
+    return res.status(400).json({ error: 'Le matricule, le nom et le prénom sont obligatoires.' });
   }
 
   try {
     const query = `
-      INSERT INTO prises_de_poste (nom, prenom, prestataire, site_de_travail, checks, notes, started_at)
+      INSERT INTO prise_de_poste (matricule, nom, prenom, prestataire, site_de_travail, notes, started_at)
       VALUES ($1, $2, $3, $4, $5, $6, NOW())
       RETURNING *;
     `;
     const values = [
+      matricule,
       nom,
       prenom,
       prestataire || 'securitec',
       site_de_travail || 'Usine Antsirabe',
-      JSON.stringify(checks || {}),
       notes || ''
     ];
 
@@ -47,13 +45,12 @@ exports.createShift = async (req, res) => {
   }
 };
 
-// Terminer le service
 exports.endShift = async (req, res) => {
   const { id } = req.params;
 
   try {
     const query = `
-      UPDATE prises_de_poste 
+      UPDATE prise_de_poste 
       SET ended_at = NOW() 
       WHERE id = $1 
       RETURNING *;
