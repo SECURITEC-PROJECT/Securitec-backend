@@ -24,21 +24,24 @@ function cleanText(value, maxLength = 255) {
   return typeof value === "string" ? value.trim().slice(0, maxLength) : "";
 }
 
-async function getUserSiteId(pool, userId) {
+async function getUserSiteId(pool, userId, requestedSiteId) {
   const result = await pool.query(
-    "SELECT site_id FROM utilisateur WHERE id = $1::uuid LIMIT 1",
+    "SELECT site_id, role FROM utilisateur WHERE id = $1::uuid LIMIT 1",
     [userId],
   );
   if (!result.rows[0]) throw Object.assign(new Error("Utilisateur introuvable."), { status: 401 });
-  if (!result.rows[0].site_id) {
-    throw Object.assign(new Error("Associez un site à ce compte avant d'utiliser ce registre."), { status: 400 });
+  if (!result.rows[0].site_id && !(result.rows[0].role === 1 && requestedSiteId)) {
+    throw Object.assign(new Error("Sélectionnez un site avant d'utiliser ce registre."), { status: 400 });
   }
-  return result.rows[0].site_id;
+  const siteId = result.rows[0].role === 1 ? requestedSiteId || result.rows[0].site_id : result.rows[0].site_id;
+  const activeSite = await pool.query("SELECT id FROM site WHERE id = $1::uuid AND actif = true LIMIT 1", [siteId]);
+  if (!activeSite.rows[0]) throw Object.assign(new Error("Site introuvable ou archivé."), { status: 404 });
+  return activeSite.rows[0].id;
 }
 
 export async function getKeyTracking(request, response, pool, userId) {
   try {
-    const siteId = await getUserSiteId(pool, userId);
+    const siteId = await getUserSiteId(pool, userId, new URL(request.url || "/", `http://${request.headers.host || "localhost"}`).searchParams.get("siteId"));
     const result = await pool.query(
       `SELECT k.id, k.date_suivi AS date, k.lieu,
               to_char(k.perception_matin, 'HH24:MI') AS "perceptionMatin",
@@ -82,7 +85,7 @@ export async function createKeyTracking(request, response, pool, userId) {
       return json(response, 400, { error: "Saisissez au moins une heure de perception ou de réintégration." });
     }
     const responsables = responsibleFields.map((field) => cleanText(body[field]) || null);
-    const siteId = await getUserSiteId(pool, userId);
+    const siteId = await getUserSiteId(pool, userId, body.siteId);
     const result = await pool.query(
       `INSERT INTO suivi_cle
          (date_suivi, lieu, perception_matin, reintegration_matin,
@@ -105,7 +108,7 @@ export async function createKeyTracking(request, response, pool, userId) {
 
 export async function getBreathTests(request, response, pool, userId) {
   try {
-    const siteId = await getUserSiteId(pool, userId);
+    const siteId = await getUserSiteId(pool, userId, new URL(request.url || "/", `http://${request.headers.host || "localhost"}`).searchParams.get("siteId"));
     const result = await pool.query(
       `SELECT c.id, c.date_controle AS date, to_char(c.heure, 'HH24:MI') AS heure,
               c.personne, c.appartenance, c.demandeur,
@@ -144,7 +147,7 @@ export async function createBreathTest(request, response, pool, userId) {
       return json(response, 400, { error: "Vérifiez les champs du contrôle d'alcoolémie." });
     }
 
-    const siteId = await getUserSiteId(pool, userId);
+    const siteId = await getUserSiteId(pool, userId, body.siteId);
     const result = await pool.query(
       `INSERT INTO controle_alcoolemie
          (date_controle, heure, personne, appartenance, demandeur, type_demande,
