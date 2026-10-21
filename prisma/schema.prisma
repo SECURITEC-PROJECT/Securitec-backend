@@ -42,6 +42,7 @@ model Site {
   signalementsLogistiques SignalementLogistique[]
   rondes              Ronde[]
   pointsVigilance     PointVigilance[]
+  journalMainCourante MainCourante[]
 
   @@map("site")
 }
@@ -65,6 +66,7 @@ model Utilisateur {
   signalementsLogistiques SignalementLogistique[]
   rondes          Ronde[]
   pointsVigilance PointVigilance[]
+  journalMainCourante MainCourante[]
 
   @@index([siteId], map: "idx_utilisateur_site")
   @@map("utilisateur")
@@ -505,5 +507,27 @@ model PointVigilance {
 
   @@index([siteId, creeLe], map: "idx_point_vigilance_site_date")
   @@map("point_vigilance")
+}
+
+model MainCourante {
+  id               String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  creeLe           DateTime    @default(now()) @map("cree_le") @db.Timestamp(6)
+  typeEntree       String      @map("type_entree") @db.VarChar(40)
+  category         String      @db.VarChar(80)
+  severity         String      @db.VarChar(20)
+  zone             String?     @db.VarChar(255)
+  people           String?     @db.VarChar(255)
+  statutAuteur     String?     @map("statut_auteur") @db.VarChar(80)
+  natureViolation  String?     @map("nature_violation") @db.VarChar(160)
+  description      String      @db.Text
+  mesuresPrises    String?     @map("mesures_prises") @db.Text
+  heure            DateTime    @db.Time(0)
+  siteId           String      @map("site_id") @db.Uuid
+  utilisateurId    String      @map("utilisateur_id") @db.Uuid
+  site             Site        @relation(fields: [siteId], references: [id], onDelete: Restrict, map: "fk_main_courante_site")
+  utilisateur      Utilisateur @relation(fields: [utilisateurId], references: [id], onDelete: Restrict, map: "fk_main_courante_utilisateur")
+
+  @@index([siteId, creeLe], map: "idx_main_courante_site_date")
+  @@map("main_courante")
 }
 
