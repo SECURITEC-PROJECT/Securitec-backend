@@ -26,7 +26,7 @@ const server = createServer(async (request, response) => {
   if (origin && allowedOrigins.has(origin)) {
     response.setHeader("Access-Control-Allow-Origin", origin);
     response.setHeader("Vary", "Origin");
-    response.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, OPTIONS");
+    response.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS");
     response.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
   }
 
