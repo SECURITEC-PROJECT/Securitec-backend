@@ -6,6 +6,7 @@ import { handleHandoverRoutes } from "./handoverRoutes.js";
 import { handleMainCouranteRoutes } from "./mainCouranteRoutes.js";
 import { handlePatrolRoutes } from "./patrolRoutes.js";
 import { handleShiftRoutes } from "./shiftRoutes.js";
+import { handleSiteRoutes } from "./siteRoutes.js";
 import { handleVigilanceRoutes } from "./vigilanceRoutes.js";
 
 const apiPrefix = "/api";
@@ -15,10 +16,11 @@ export async function handleApiRoutes(request, response, pool, jwtSecret) {
   const pathname = urlObj.pathname;
 
   if (await handleAuthRoutes(request, response, pool, pathname, jwtSecret)) return true;
+  if (await handleSiteRoutes(request, response, pool, pathname, jwtSecret)) return true;
   if (await handleShiftRoutes(request, response, pool, pathname, jwtSecret)) return true;
   if (await handleHandoverRoutes(request, response, pool, pathname, jwtSecret)) return true;
   if (await handleControlRoutes(request, response, pool, pathname, jwtSecret)) return true;
-  if (await handleFluxRoutes(request, response, pool, pathname)) return true;
+  if (await handleFluxRoutes(request, response, pool, pathname, jwtSecret)) return true;
   if (await handlePatrolRoutes(request, response, pool, pathname)) return true;
   if (await handleVigilanceRoutes(request, response, pool, pathname)) return true;
   if (await handleMainCouranteRoutes(request, response, pool, pathname)) return true;
