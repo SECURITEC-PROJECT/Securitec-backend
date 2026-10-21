@@ -34,13 +34,11 @@ export async function handleEmployeeRoutes(request, response, pool, pathname, jw
       if (!user) throw Object.assign(new Error("Connectez-vous pour rechercher un employé."), { status: 401 });
       const matricule = decodeURIComponent(lookupMatch[1]).trim();
       const result = await pool.query(`SELECT a.id,a.prenom AS "firstName",a.nom AS "lastName",a.matricule,
-        p.nom AS provider,s.id AS "siteId",s.nom AS "siteName",a.actif AS active
+        p.nom AS provider,s.id AS "siteId",s.nom AS "siteName",COALESCE(s.actif,false) AS "siteActive",a.actif AS active
         FROM agent a JOIN prestataire p ON p.id=a.prestataire_id
         LEFT JOIN site s ON s.id=a.site_id WHERE UPPER(a.matricule)=UPPER($1) LIMIT 1`, [matricule]);
       const employee = result.rows[0];
       if (!employee) throw Object.assign(new Error("Aucun employé trouvé pour ce matricule."), { status: 404 });
-      if (!employee.active) throw Object.assign(new Error("Cet employé est désactivé."), { status: 409 });
-      if (!employee.siteId) throw Object.assign(new Error("Aucun site de travail n’est affecté à cet employé. Complétez sa fiche employé."), { status: 409 });
       json(response, 200, { employee }); return true;
     }
     await authorize(request, pool, jwtSecret);
