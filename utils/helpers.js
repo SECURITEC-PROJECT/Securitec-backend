@@ -6,6 +6,9 @@ export function json(response, status, body) {
     "X-Content-Type-Options": "nosniff",
   });
   response.end(JSON.stringify(body));
+  // Returning a truthy value lets route handlers that use `return json(...)`
+  // signal that they handled the request to the API dispatcher.
+  return true;
 }
 
 export async function readJson(request) {
