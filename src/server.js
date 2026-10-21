@@ -50,7 +50,7 @@ const server = createServer(async (request, response) => {
 
 async function startServer() {
   pool = await createNeonPool();
-  server.listen(port, () => {
+  server.listen(port, "0.0.0.0", () => {
     console.log(`Securitec backend listening on port ${port}`);
     console.log("Health check: /api/health");
   });
