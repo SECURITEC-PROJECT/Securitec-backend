@@ -1,5 +1,6 @@
 import { json, logNetworkCauses } from "../utils/helpers.js";
 import { handleControlRoutes } from "./controlRoutes.js";
+import { handleEntryExitRoutes } from "./entryExitRoutes.js";
 import { handleAuthRoutes } from "./authRoutes.js";
 import { handleFluxRoutes } from "./fluxRoutes.js";
 import { handleHandoverRoutes } from "./handoverRoutes.js";
@@ -17,6 +18,7 @@ export async function handleApiRoutes(request, response, pool, jwtSecret) {
 
   if (await handleAuthRoutes(request, response, pool, pathname, jwtSecret)) return true;
   if (await handleSiteRoutes(request, response, pool, pathname, jwtSecret)) return true;
+  if (await handleEntryExitRoutes(request, response, pool, pathname, jwtSecret)) return true;
   if (await handleShiftRoutes(request, response, pool, pathname, jwtSecret)) return true;
   if (await handleHandoverRoutes(request, response, pool, pathname, jwtSecret)) return true;
   if (await handleControlRoutes(request, response, pool, pathname, jwtSecret)) return true;
