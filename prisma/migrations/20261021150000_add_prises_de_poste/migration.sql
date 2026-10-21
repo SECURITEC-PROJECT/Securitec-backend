@@ -1,0 +1,3 @@
+-- No schema change is required: the active prise de poste API stores shifts
+-- in the existing "vacation" table. Keep this migration as an explicit no-op
+-- so Prisma can record the previously created migration directory.

@@ -1,15 +1,15 @@
 import "dotenv/config";
 import { setDefaultResultOrder } from "node:dns";
 import { createServer } from "node:http";
-import pool from "../config/db.js";
+import { createNeonPool } from "./config/neonPool.js";
 import { handleApiRoutes } from "../routes/apiRoutes.js";
-import { json } from "../utils/helpers.js"; 
+import { json } from "../utils/helpers.js";
 
 setDefaultResultOrder("ipv4first");
 const port = Number(process.env.PORT || 5000);
 const jwtSecret = process.env.JWT_SECRET;
 if (!jwtSecret || Buffer.byteLength(jwtSecret) < 32) {
-  throw new Error("JWT_SECRET doit être défini dans le fichier .env avec au moins 32 caractères.");
+  throw new Error("JWT_SECRET must be set to at least 32 characters.");
 }
 
 const allowedOrigins = new Set(
@@ -19,12 +19,7 @@ const allowedOrigins = new Set(
     .filter(Boolean),
 );
 
-function getPool() {
-  if (!pool) {
-    throw new Error("Le pool de base de données n'est pas initialisé dans config/db.js");
-  }
-  return pool;
-}
+let pool;
 
 const server = createServer(async (request, response) => {
   const origin = request.headers.origin;
@@ -40,26 +35,36 @@ const server = createServer(async (request, response) => {
     return;
   }
 
-  const poolInstance = getPool();
-  const handled = await handleApiRoutes(request, response, poolInstance, jwtSecret);
-
-  if (!handled) {
-    json(response, 404, { error: "Route introuvable" });
+  try {
+    const handled = await handleApiRoutes(request, response, pool, jwtSecret);
+    if (!handled && !response.headersSent && !response.writableEnded) {
+      json(response, 404, { error: "Route not found" });
+    }
+  } catch (error) {
+    console.error("Unhandled API request error:", error.code || error.name, error.message || "");
+    if (!response.headersSent && !response.writableEnded) {
+      json(response, 500, { error: "Erreur interne du serveur." });
+    }
   }
 });
 
-server.listen(port, () => {
-  console.log(`Backend Securitec démarré sur http://localhost:${port}`);
-  console.log(`Vérification API/base : http://localhost:${port}/api/health`);
+async function startServer() {
+  pool = await createNeonPool();
+  server.listen(port, () => {
+    console.log(`Securitec backend listening on port ${port}`);
+    console.log("Health check: /api/health");
+  });
+}
+
+startServer().catch((error) => {
+  console.error("Backend startup or Neon connection failed:", error.message || error);
+  process.exitCode = 1;
 });
 
 async function shutdown() {
   server.close();
   try {
-    const poolInstance = getPool();
-    if (poolInstance && typeof poolInstance.end === "function") {
-      await poolInstance.end();
-    }
+    if (pool && typeof pool.end === "function") await pool.end();
   } catch {}
 }
 
