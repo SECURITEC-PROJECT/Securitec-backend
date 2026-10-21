@@ -1,5 +1,7 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 
+const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
 function signature(input, secret) {
   return createHmac("sha256", secret).update(input).digest("base64url");
 }
@@ -22,7 +24,7 @@ export function verifyAccessToken(token, secret) {
   if (expected.length !== actual.length || !timingSafeEqual(expected, actual)) return null;
   try {
     const payload = JSON.parse(Buffer.from(parts[1], "base64url").toString("utf8"));
-    if (typeof payload.sub !== "string" || typeof payload.exp !== "number" || payload.exp <= Date.now() / 1000) return null;
+    if (typeof payload.sub !== "string" || !uuidPattern.test(payload.sub) || typeof payload.exp !== "number" || payload.exp <= Date.now() / 1000) return null;
     return { id: payload.sub };
   } catch {
     return null;

@@ -2,6 +2,7 @@ import { json, logNetworkCauses } from "../utils/helpers.js";
 import { handleControlRoutes } from "./controlRoutes.js";
 import { handleCameraRoutes } from "./cameraRoutes.js";
 import { handleEntryExitRoutes } from "./entryExitRoutes.js";
+import { handleEmployeeRoutes } from "./employeeRoutes.js";
 import { handleAuthRoutes } from "./authRoutes.js";
 import { handleFluxRoutes } from "./fluxRoutes.js";
 import { handleHandoverRoutes } from "./handoverRoutes.js";
@@ -18,6 +19,7 @@ export async function handleApiRoutes(request, response, pool, jwtSecret) {
   const pathname = urlObj.pathname;
 
   if (await handleAuthRoutes(request, response, pool, pathname, jwtSecret)) return true;
+  if (await handleEmployeeRoutes(request, response, pool, pathname, jwtSecret)) return true;
   if (await handleCameraRoutes(request, response, pool, pathname, jwtSecret)) return true;
   if (await handleSiteRoutes(request, response, pool, pathname, jwtSecret)) return true;
   if (await handleEntryExitRoutes(request, response, pool, pathname, jwtSecret)) return true;
