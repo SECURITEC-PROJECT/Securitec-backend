@@ -3,6 +3,7 @@ import { json, readJson } from "../utils/helpers.js";
 const shiftSelect = `
   SELECT v.id, COALESCE(NULLIF(v.agent_nom, ''), u.nom) AS agent_nom,
          v.prestataire_nom AS prestataire,
+         v.matricule AS matricule,
          COALESCE(s.nom, v.poste_nom, '') AS site_de_travail,
          v.ouverture AS started_at, v.cloture AS ended_at,
          v.checklist AS checks, v.observations AS notes
@@ -17,6 +18,7 @@ function toLegacyShift(row) {
     id: row.id,
     nom,
     prenom: prenomParts.join(" "),
+    matricule: row.matricule || "",
     prestataire: row.prestataire || "",
     site_de_travail: row.site_de_travail || "",
     started_at: row.started_at,
@@ -44,30 +46,32 @@ export async function getShifts(request, response, pool) {
 export async function createShift(request, response, pool, userId) {
   try {
     const body = await readJson(request);
-    const nom = typeof body.nom === "string" ? body.nom.trim() : "";
-    const prenom = typeof body.prenom === "string" ? body.prenom.trim() : "";
-    if (!nom || !prenom) return json(response, 400, { error: "Le nom et le prénom sont obligatoires." });
+    const matricule = typeof body.matricule === "string" ? body.matricule.trim() : "";
+    if (!matricule) return json(response, 400, { error: "Le matricule de l’employé est obligatoire." });
 
-    const userResult = await pool.query("SELECT site_id FROM utilisateur WHERE id = $1::uuid", [userId]);
+    const userResult = await pool.query("SELECT id FROM utilisateur WHERE id = $1::uuid", [userId]);
     if (!userResult.rows[0]) return json(response, 401, { error: "Session utilisateur introuvable." });
 
-    const requestedSite = typeof body.site_de_travail === "string" ? body.site_de_travail.trim() : "";
-    let siteId = userResult.rows[0].site_id;
-    if (requestedSite) {
-      const siteResult = await pool.query("SELECT id FROM site WHERE nom = $1 LIMIT 1", [requestedSite]);
-      if (siteResult.rows[0]) siteId = siteResult.rows[0].id;
-    }
+    const employeeResult = await pool.query(
+      `SELECT a.id,a.nom,a.prenom,a.matricule,p.nom AS prestataire,s.id AS site_id,s.nom AS site_name
+       FROM agent a JOIN prestataire p ON p.id=a.prestataire_id LEFT JOIN site s ON s.id=a.site_id
+       WHERE UPPER(a.matricule)=UPPER($1) AND a.actif=true LIMIT 1`, [matricule],
+    );
+    const employee = employeeResult.rows[0];
+    if (!employee) return json(response, 404, { error: "Aucun employé trouvé pour ce matricule." });
+    if (!employee.site_id) return json(response, 409, { error: "Aucun site de travail n’est affecté à cet employé. Complétez sa fiche employé." });
 
     const result = await pool.query(
       `INSERT INTO vacation
-         (ouverture, utilisateur_id, agent_nom, prestataire_nom, site_id, checklist, observations)
-       VALUES (NOW(), $1::uuid, $2, $3, $4::uuid, $5::jsonb, $6)
+         (ouverture, utilisateur_id, agent_nom, matricule, prestataire_nom, site_id, checklist, observations)
+       VALUES (NOW(), $1::uuid, $2, $3, $4, $5::uuid, $6::jsonb, $7)
        RETURNING id`,
       [
         userId,
-        `${nom} ${prenom}`,
-        typeof body.prestataire === "string" ? body.prestataire.trim() : null,
-        siteId,
+        `${employee.nom} ${employee.prenom}`,
+        employee.matricule,
+        employee.prestataire,
+        employee.site_id,
         JSON.stringify(body.checks && typeof body.checks === "object" ? body.checks : {}),
         typeof body.notes === "string" ? body.notes.trim() : null,
       ],

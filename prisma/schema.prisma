@@ -32,6 +32,7 @@ model Site {
   visiteurs          Visiteur[]
   zones              Zone[]
   postes             Poste[]
+  agents             Agent[]
   comptesRendus      CompteRendu[]
   vacations          Vacation[]
   passations         Passation[]
@@ -350,7 +351,9 @@ model Agent {
   matricule     String             @unique @db.VarChar(50)
   actif         Boolean            @default(true)
   prestataireId String             @map("prestataire_id") @db.Uuid
+  siteId        String?            @map("site_id") @db.Uuid
   prestataire   Prestataire        @relation(fields: [prestataireId], references: [id], onDelete: Restrict, map: "fk_agent_prestataire")
+  site          Site?              @relation(fields: [siteId], references: [id], onDelete: SetNull, map: "fk_agent_site")
   comptesRendus CompteRenduAgent[]
 
   @@map("agent")
