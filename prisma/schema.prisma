@@ -44,6 +44,7 @@ model Site {
   rondes              Ronde[]
   pointsVigilance     PointVigilance[]
   journalMainCourante MainCourante[]
+  documentsSite        DocumentSite[]
 
   @@map("site")
 }
@@ -68,6 +69,7 @@ model Utilisateur {
   rondes          Ronde[]
   pointsVigilance PointVigilance[]
   journalMainCourante MainCourante[]
+  documentsSite DocumentSite[]
 
   @@index([siteId], map: "idx_utilisateur_site")
   @@map("utilisateur")
@@ -532,5 +534,23 @@ model MainCourante {
 
   @@index([siteId, creeLe], map: "idx_main_courante_site_date")
   @@map("main_courante")
+}
+
+model DocumentSite {
+  id            String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  siteId        String      @map("site_id") @db.Uuid
+  utilisateurId String      @map("utilisateur_id") @db.Uuid
+  nom           String      @db.VarChar(240)
+  extension     String      @db.VarChar(12)
+  mimeType      String      @map("mime_type") @db.VarChar(160)
+  taille        Int
+  categorie     String      @default("Autre") @db.VarChar(80)
+  contenu       Bytes       @db.ByteA
+  creeLe        DateTime    @default(now()) @map("cree_le") @db.Timestamptz(6)
+  site          Site        @relation(fields: [siteId], references: [id], onDelete: Cascade, map: "document_site_site_id_fkey")
+  utilisateur   Utilisateur @relation(fields: [utilisateurId], references: [id], onDelete: Restrict, map: "document_site_utilisateur_id_fkey")
+
+  @@index([siteId, creeLe(sort: Desc)], map: "document_site_site_id_cree_le_idx")
+  @@map("document_site")
 }
 
