@@ -2,6 +2,7 @@ import "dotenv/config";
 import { setDefaultResultOrder } from "node:dns";
 import { createServer } from "node:http";
 import { getNeonPool } from "./config/neonPool.js";
+import databasePool from "../config/db.js";
 import { handleApiRoutes } from "../routes/apiRoutes.js";
 import { json } from "../utils/helpers.js";
 
@@ -20,7 +21,7 @@ const allowedOrigins = new Set(
     .filter(Boolean),
 );
 
-let pool;
+let databaseReady = false;
 
 const server = createServer(async (request, response) => {
   const requestTimer = setTimeout(() => {
@@ -49,14 +50,14 @@ const server = createServer(async (request, response) => {
 
   try {
     const pathname = new URL(request.url || "/", `http://${request.headers.host || "localhost"}`).pathname;
-    if (!pool) {
+    if (!databaseReady) {
       const isHealth = request.method === "GET" && pathname === "/api/health";
       json(response, 503, isHealth
         ? { api: "ok", database: "unavailable" }
         : { error: "Base de données temporairement indisponible. Réessayez dans quelques secondes." });
       return;
     }
-    const handled = await handleApiRoutes(request, response, pool, jwtSecret);
+    const handled = await handleApiRoutes(request, response, databasePool, jwtSecret);
     if (!handled && !response.headersSent && !response.writableEnded) {
       json(response, 404, { error: "Route not found" });
     }
@@ -74,10 +75,11 @@ let databaseConnecting = false;
 let retryTimer;
 
 async function connectDatabase() {
-  if (databaseConnecting || pool) return;
+  if (databaseConnecting || databaseReady) return;
   databaseConnecting = true;
   try {
-    pool = await getNeonPool();
+    await getNeonPool();
+    databaseReady = true;
     console.log("Base de données prête.");
   } catch (error) {
     console.error("Connexion à la base échouée; nouvelle tentative dans 1 s:", error.message || error);
@@ -98,7 +100,7 @@ async function shutdown() {
   if (retryTimer) clearTimeout(retryTimer);
   server.close();
   try {
-    if (pool && typeof pool.end === "function") await pool.end();
+  if (databaseReady) await databasePool.end();
   } catch {}
 }
 
