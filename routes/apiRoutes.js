@@ -1,9 +1,10 @@
 import { json, logNetworkCauses } from "../utils/helpers.js";
-import { handleControlRoutes } from "./controlRoutes.js";
-import { handleCameraRoutes } from "./cameraRoutes.js";
-import { handleEntryExitRoutes } from "./entryExitRoutes.js";
-import { handleEmployeeRoutes } from "./employeeRoutes.js";
 import { handleAuthRoutes } from "./authRoutes.js";
+import { handleCameraRoutes } from "./cameraRoutes.js";
+import { handleControlRoutes } from "./controlRoutes.js";
+import { handleCrjRoutes } from "./crjRoutes.js";
+import { handleEmployeeRoutes } from "./employeeRoutes.js";
+import { handleEntryExitRoutes } from "./entryExitRoutes.js";
 import { handleFluxRoutes } from "./fluxRoutes.js";
 import { handleHandoverRoutes } from "./handoverRoutes.js";
 import { handleMainCouranteRoutes } from "./mainCouranteRoutes.js";
@@ -31,6 +32,7 @@ export async function handleApiRoutes(request, response, pool, jwtSecret) {
   if (await handlePatrolRoutes(request, response, pool, pathname, jwtSecret)) return true;
   if (await handleVigilanceRoutes(request, response, pool, pathname, jwtSecret)) return true;
   if (await handleMainCouranteRoutes(request, response, pool, pathname, jwtSecret)) return true;
+  if (await handleCrjRoutes(request, response, pool, pathname, jwtSecret)) return true;
   if (await handleDocumentRoutes(request, response, pool, pathname, jwtSecret)) return true;
 
   if (request.method === "GET" && pathname === `${apiPrefix}/health`) {

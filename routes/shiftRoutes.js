@@ -1,24 +1,81 @@
+import { getEmployeeByMatricule, getFormDataOptions } from "../controllers/employeeController.js";
 import { createShift, endShift, getShifts } from "../controllers/shiftController.js";
-import { getRequestUser } from "../utils/auth.js";
 import { json } from "../utils/helpers.js";
 
-const apiPrefix = "/api";
-const shiftIdPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+export async function handleShiftRoutes(request, response, pool, pathname) {
+  const method = request.method;
 
-export async function handleShiftRoutes(request, response, pool, pathname, jwtSecret) {
-  const isList = pathname === `${apiPrefix}/shifts` && ["GET", "POST"].includes(request.method);
-  const endShiftMatch = pathname.match(/^\/api\/shifts\/([^/]+)\/end$/);
-  const isEnd = request.method === "PUT" && endShiftMatch && shiftIdPattern.test(endShiftMatch[1]);
-  if (!isList && !isEnd) return false;
-
-  const user = getRequestUser(request, jwtSecret);
-  if (!user) {
-    json(response, 401, { error: "Connectez-vous pour accéder aux prises de poste." });
+  // 1. Récupérer toutes les prises de poste
+  if (method === "GET" && pathname === "/api/shifts") {
+    try {
+      const shifts = await getShifts(request, response);
+      json(response, 200, shifts);
+    } catch (error) {
+      json(response, 500, { error: "Erreur lors de la récupération des prises de poste." });
+    }
     return true;
   }
 
-  if (isList && request.method === "GET") await getShifts(request, response, pool);
-  else if (isList) await createShift(request, response, pool, user.id);
-  else await endShift(request, response, pool, endShiftMatch[1]);
-  return true;
+  // 2. Créer une prise de poste
+  if (method === "POST" && pathname === "/api/shifts") {
+    let body = "";
+    request.on("data", (chunk) => (body += chunk));
+    request.on("end", async () => {
+      try {
+        const data = JSON.parse(body || "{}");
+        const newShift = await createShift(data);
+        json(response, 201, newShift);
+      } catch (error) {
+        json(response, 400, { error: error.message || "Erreur lors de la création de la prise de poste." });
+      }
+    });
+    return true;
+  }
+
+  // 3. Clôturer un service
+  if (method === "PUT" && pathname.startsWith("/api/shifts/") && pathname.endsWith("/end")) {
+    const parts = pathname.split("/");
+    const shiftId = parts[3];
+    try {
+      const updated = await endShift(shiftId);
+      if (!updated) {
+        json(response, 404, { error: "Prise de poste non trouvée." });
+      } else {
+        json(response, 200, updated);
+      }
+    } catch (error) {
+      json(response, 500, { error: "Erreur lors de la clôture du service." });
+    }
+    return true;
+  }
+
+  // 4. Récupérer les options pour les sélecteurs (prestataires et sites)
+  if (method === "GET" && pathname === "/api/options-prise-de-poste") {
+    try {
+      const options = await getFormDataOptions();
+      json(response, 200, options);
+    } catch (error) {
+      console.error("Erreur options-prise-de-poste:", error.code, error.message);
+      json(response, 500, { error: "Erreur lors du chargement des options." });
+    }
+    return true;
+  }
+
+  // 5. Vérifier un employé par son matricule
+  if (method === "GET" && pathname.startsWith("/api/employes/")) {
+    const matricule = decodeURIComponent(pathname.replace("/api/employes/", ""));
+    try {
+      const employee = await getEmployeeByMatricule(matricule);
+      if (!employee) {
+        json(response, 404, { error: "Matricule non trouvé." });
+      } else {
+        json(response, 200, employee);
+      }
+    } catch (error) {
+      json(response, 500, { error: "Erreur lors de la recherche du matricule." });
+    }
+    return true;
+  }
+
+  return false;
 }
