@@ -13,11 +13,9 @@ export async function getEmployeeByMatricule(matricule) {
 
 // Récupérer les options pour prestataires et sites de travail
 export async function getFormDataOptions() {
-  const prestatairesRes = await pool.query(
-    "SELECT id, nom AS prestataire FROM prestataire WHERE actif = true ORDER BY nom ASC;"
-  );
-  const sitesRes = await pool.query(
-    "SELECT id, nom AS site FROM site WHERE actif = true ORDER BY nom ASC;"
-  );
+  const [prestatairesRes, sitesRes] = await Promise.all([
+    pool.query("SELECT id, nom AS prestataire FROM prestataire WHERE actif = true ORDER BY nom ASC;"),
+    pool.query("SELECT id, nom AS site FROM site WHERE actif = true ORDER BY nom ASC;"),
+  ]);
   return { prestataires: prestatairesRes.rows, sites: sitesRes.rows };
 }

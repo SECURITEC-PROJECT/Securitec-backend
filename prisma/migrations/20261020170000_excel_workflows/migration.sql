@@ -11,7 +11,7 @@ ALTER TABLE "passage"
   ADD COLUMN "sortie_par_id" UUID;
 
 ALTER TABLE "vacation"
-  ADD COLUMN "agent_nom" VARCHAR(255), c  
+  ADD COLUMN "agent_nom" VARCHAR(255),
   ADD COLUMN "matricule" VARCHAR(50),
   ADD COLUMN "prestataire_nom" VARCHAR(160),
   ADD COLUMN "site_id" UUID,

@@ -49,11 +49,19 @@ const localTz = (col) => `(${col} AT TIME ZONE '${TZ}')`;
 // Options des sélecteurs (prestataire + site de travail)
 // ---------------------------------------------------------------------------
 export async function getCrjOptions() {
-  const [prestataires, sites] = await Promise.all([
-    pool.query(`SELECT id, nom FROM prestataire WHERE actif = true ORDER BY nom ASC;`),
-    pool.query(`SELECT id, nom, type_site AS "typeSite" FROM site WHERE actif = true ORDER BY nom ASC;`),
-  ]);
-  return { prestataires: prestataires.rows, sites: sites.rows };
+  // Une seule requête évite un aller-retour réseau supplémentaire vers Neon.
+  const { rows } = await pool.query(`
+    SELECT
+      COALESCE((
+        SELECT json_agg(json_build_object('id', id, 'nom', nom) ORDER BY nom ASC)
+        FROM prestataire WHERE actif = true
+      ), '[]'::json) AS prestataires,
+      COALESCE((
+        SELECT json_agg(json_build_object('id', id, 'nom', nom, 'typeSite', type_site) ORDER BY nom ASC)
+        FROM site WHERE actif = true
+      ), '[]'::json) AS sites;
+  `);
+  return rows[0] || { prestataires: [], sites: [] };
 }
 
 // ---------------------------------------------------------------------------
