@@ -1,7 +1,6 @@
-import pool from "../config/db.js";
 
 // Vérifier un employé par matricule
-export async function getEmployeeByMatricule(matricule) {
+export async function getEmployeeByMatricule(matricule, pool) {
   const query = `
     SELECT id, matricule, nom, prenom 
     FROM employe 
@@ -12,7 +11,7 @@ export async function getEmployeeByMatricule(matricule) {
 }
 
 // Récupérer les options pour prestataires et sites de travail
-export async function getFormDataOptions() {
+export async function getFormDataOptions(pool) {
   const [prestatairesRes, sitesRes] = await Promise.all([
     pool.query("SELECT id, nom AS prestataire FROM prestataire WHERE actif = true ORDER BY nom ASC;"),
     pool.query("SELECT id, nom AS site FROM site WHERE actif = true ORDER BY nom ASC;"),

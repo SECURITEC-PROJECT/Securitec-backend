@@ -1,7 +1,6 @@
-import pool from "../config/db.js";
 
 // Récupérer toutes les prises de poste (table au singulier 'prise_de_poste')
-export async function getShifts(request, response) {
+export async function getShifts(request, response, pool) {
   try {
     const query = `
       SELECT id, matricule, nom, prenom, prestataire, site_de_travail, notes, started_at, ended_at 
@@ -17,7 +16,7 @@ export async function getShifts(request, response) {
 }
 
 // Créer une nouvelle prise de poste
-export async function createShift(data) {
+export async function createShift(data, pool) {
   const { matricule, nom, prenom, prestataire, site_de_travail, notes } = data;
 
   if (!matricule || !nom || !prenom) {
@@ -43,7 +42,7 @@ export async function createShift(data) {
 }
 
 // Clôturer une prise de poste
-export async function endShift(shiftId) {
+export async function endShift(shiftId, pool) {
   const query = `
     UPDATE prise_de_poste 
     SET ended_at = NOW() 

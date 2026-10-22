@@ -7,7 +7,7 @@ export async function handleCrjRoutes(request, response, pool, pathname) {
   // 1. Options des sélecteurs : prestataires et sites actifs
   if (pathname === "/api/crj/options") {
     try {
-      json(response, 200, await getCrjOptions());
+      json(response, 200, await getCrjOptions(pool));
     } catch (error) {
       console.error("Erreur CRJ options:", error.code, error.message);
       json(response, 500, { error: "Erreur lors du chargement des options du CRJ." });
@@ -23,7 +23,7 @@ export async function handleCrjRoutes(request, response, pool, pathname) {
         prestataireId: url.searchParams.get("prestataireId"),
         siteId: url.searchParams.get("siteId"),
         date: url.searchParams.get("date"),
-      });
+      }, pool);
       json(response, 200, crj);
     } catch (error) {
       console.error("Erreur CRJ:", error.code, error.message);

@@ -8,7 +8,7 @@ export async function handleShiftRoutes(request, response, pool, pathname) {
   // 1. Récupérer toutes les prises de poste
   if (method === "GET" && pathname === "/api/shifts") {
     try {
-      const shifts = await getShifts(request, response);
+      const shifts = await getShifts(request, response, pool);
       json(response, 200, shifts);
     } catch (error) {
       json(response, 500, { error: "Erreur lors de la récupération des prises de poste." });
@@ -23,7 +23,7 @@ export async function handleShiftRoutes(request, response, pool, pathname) {
     request.on("end", async () => {
       try {
         const data = JSON.parse(body || "{}");
-        const newShift = await createShift(data);
+        const newShift = await createShift(data, pool);
         json(response, 201, newShift);
       } catch (error) {
         json(response, 400, { error: error.message || "Erreur lors de la création de la prise de poste." });
@@ -37,7 +37,7 @@ export async function handleShiftRoutes(request, response, pool, pathname) {
     const parts = pathname.split("/");
     const shiftId = parts[3];
     try {
-      const updated = await endShift(shiftId);
+      const updated = await endShift(shiftId, pool);
       if (!updated) {
         json(response, 404, { error: "Prise de poste non trouvée." });
       } else {
@@ -52,7 +52,7 @@ export async function handleShiftRoutes(request, response, pool, pathname) {
   // 4. Récupérer les options pour les sélecteurs (prestataires et sites)
   if (method === "GET" && pathname === "/api/options-prise-de-poste") {
     try {
-      const options = await getFormDataOptions();
+      const options = await getFormDataOptions(pool);
       json(response, 200, options);
     } catch (error) {
       console.error("Erreur options-prise-de-poste:", error.code, error.message);
@@ -65,7 +65,7 @@ export async function handleShiftRoutes(request, response, pool, pathname) {
   if (method === "GET" && pathname.startsWith("/api/employes/")) {
     const matricule = decodeURIComponent(pathname.replace("/api/employes/", ""));
     try {
-      const employee = await getEmployeeByMatricule(matricule);
+      const employee = await getEmployeeByMatricule(matricule, pool);
       if (!employee) {
         json(response, 404, { error: "Matricule non trouvé." });
       } else {

@@ -2,7 +2,6 @@ import "dotenv/config";
 import { setDefaultResultOrder } from "node:dns";
 import { createServer } from "node:http";
 import { getNeonPool } from "./config/neonPool.js";
-import databasePool from "../config/db.js";
 import { handleApiRoutes } from "../routes/apiRoutes.js";
 import { json } from "../utils/helpers.js";
 
@@ -21,6 +20,7 @@ const allowedOrigins = new Set(
 );
 
 let databaseReady = false;
+let databasePool;
 
 const server = createServer(async (request, response) => {
   const origin = request.headers.origin;
@@ -64,7 +64,7 @@ async function connectDatabase() {
   if (databaseConnecting || databaseReady) return;
   databaseConnecting = true;
   try {
-    await getNeonPool();
+    databasePool = await getNeonPool();
     databaseReady = true;
     console.log("Base de données prête.");
   } catch (error) {
@@ -86,7 +86,7 @@ async function shutdown() {
   if (retryTimer) clearTimeout(retryTimer);
   server.close();
   try {
-  if (databaseReady) await databasePool.end();
+    if (databasePool) await databasePool.end();
   } catch {}
 }
 
