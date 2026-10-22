@@ -46,23 +46,138 @@ const local = (col) => `((${col} AT TIME ZONE 'UTC') AT TIME ZONE '${TZ}')`;
 const localTz = (col) => `(${col} AT TIME ZONE '${TZ}')`;
 
 // ---------------------------------------------------------------------------
-// Options des sélecteurs (prestataire + site de travail)
+// Options des sélecteurs (prestataire + site de travail) : UNE seule requête
 // ---------------------------------------------------------------------------
 export async function getCrjOptions() {
-  // Une seule requête évite un aller-retour réseau supplémentaire vers Neon.
-  const { rows } = await pool.query(`
-    SELECT
-      COALESCE((
-        SELECT json_agg(json_build_object('id', id, 'nom', nom) ORDER BY nom ASC)
-        FROM prestataire WHERE actif = true
-      ), '[]'::json) AS prestataires,
-      COALESCE((
-        SELECT json_agg(json_build_object('id', id, 'nom', nom, 'typeSite', type_site) ORDER BY nom ASC)
-        FROM site WHERE actif = true
-      ), '[]'::json) AS sites;
-  `);
-  return rows[0] || { prestataires: [], sites: [] };
+  const res = await pool.query(
+    `SELECT
+       COALESCE((SELECT json_agg(t ORDER BY t.nom)
+                 FROM (SELECT id, nom FROM prestataire WHERE actif = true) t), '[]'::json) AS prestataires,
+       COALESCE((SELECT json_agg(t ORDER BY t.nom)
+                 FROM (SELECT id, nom, type_site AS "typeSite" FROM site WHERE actif = true) t), '[]'::json) AS sites;`
+  );
+  return res.rows[0];
 }
+
+// ---------------------------------------------------------------------------
+// Requête unique : toutes les rubriques du CRJ en un seul aller-retour vers la base
+// ($1 = site, $2 = prestataire, $3 = date). Chaque rubrique revient en tableau JSON.
+// ---------------------------------------------------------------------------
+const SQL_CRJ = `
+WITH s AS (SELECT id, nom, type_site FROM site WHERE id = $1::uuid),
+     p AS (SELECT id, nom FROM prestataire WHERE id = $2::uuid)
+SELECT
+  (SELECT row_to_json(s) FROM s) AS site,
+  (SELECT row_to_json(p) FROM p) AS prestataire,
+
+  -- 1 - Agents : prises de poste du jour pour ce prestataire et ce site
+  COALESCE((
+    SELECT json_agg(a ORDER BY a.started_at) FROM (
+      SELECT pp.matricule, pp.nom, pp.prenom, pp.started_at,
+             EXTRACT(HOUR FROM ${local("pp.started_at")})::int AS heure_debut
+      FROM prise_de_poste pp, s, p
+      WHERE UPPER(TRIM(pp.prestataire)) = UPPER(TRIM(p.nom))
+        AND UPPER(TRIM(pp.site_de_travail)) = UPPER(TRIM(s.nom))
+        AND ${local("pp.started_at")}::date = $3::date
+    ) a
+  ), '[]'::json) AS agents,
+
+  -- 2 - Clés : perceptions du jour + leur réintégration (via perception_id)
+  COALESCE((
+    SELECT json_agg(k ORDER BY k.created_at) FROM (
+      SELECT sc.id, sc.trousse_cle, sc.lieu, sc.personne_habilitee, sc.heure, sc.created_at,
+             to_char(${localTz("sc.created_at")}, 'HH24:MI') AS heure_saisie,
+             r.personne_habilitee AS reint_personne,
+             r.heure AS reint_heure,
+             to_char(${localTz("r.created_at")}, 'HH24:MI') AS reint_heure_saisie
+      FROM suivi_cle sc
+      LEFT JOIN LATERAL (
+        SELECT r1.personne_habilitee, r1.heure, r1.created_at
+        FROM suivi_cle r1
+        WHERE r1.action = 'Réintégration' AND r1.perception_id = sc.id
+        ORDER BY r1.created_at
+        LIMIT 1
+      ) r ON true
+      CROSS JOIN s
+      CROSS JOIN p
+      WHERE sc.action = 'Perception'
+        AND ${localTz("sc.created_at")}::date = $3::date
+        AND (
+          EXISTS (
+            SELECT 1 FROM employe e
+            WHERE UPPER(TRIM(e.matricule)) = UPPER(TRIM(sc.agent_gardien))
+              AND e.site_id = s.id AND e.prestataire_id = p.id
+          )
+          OR EXISTS (
+            SELECT 1 FROM prise_de_poste pp2
+            WHERE UPPER(TRIM(pp2.matricule)) = UPPER(TRIM(sc.agent_gardien))
+              AND UPPER(TRIM(pp2.site_de_travail)) = UPPER(TRIM(s.nom))
+              AND UPPER(TRIM(pp2.prestataire)) = UPPER(TRIM(p.nom))
+              AND ${local("pp2.started_at")}::date = $3::date
+          )
+        )
+    ) k
+  ), '[]'::json) AS cles,
+
+  -- 3, 4, 5 - Flux logistiques
+  COALESCE((
+    SELECT json_agg(f ORDER BY f.cree_le) FROM (
+      SELECT type_flux, camion, transporteur, document, plomb, article, quantite, cree_le
+      FROM flux_logistique
+      WHERE site_id = $1::uuid AND date_operation = $3::date
+    ) f
+  ), '[]'::json) AS flux,
+
+  -- Alcootests
+  COALESCE((
+    SELECT json_agg(a ORDER BY a.heure) FROM (
+      SELECT to_char(heure, 'HH24:MI') AS heure, personne, appartenance, demandeur,
+             type_demande, resultat, taux_mesure
+      FROM controle_alcoolemie
+      WHERE site_id = $1::uuid AND date_controle = $3::date
+    ) a
+  ), '[]'::json) AS alcootests,
+
+  -- Rondes
+  COALESCE((
+    SELECT json_agg(r ORDER BY r.debut) FROM (
+      SELECT nom_parcours, observations,
+             to_char(${local("debut")}, 'HH24:MI') AS debut,
+             to_char(${local("fin")}, 'HH24:MI') AS fin
+      FROM ronde
+      WHERE site_id = $1::uuid AND ${local("debut")}::date = $3::date
+    ) r
+  ), '[]'::json) AS rondes,
+
+  -- Points de vigilance
+  COALESCE((
+    SELECT json_agg(v ORDER BY v.heure) FROM (
+      SELECT to_char(heure, 'HH24:MI') AS heure, type_point, element_verifie, statut, agent_nom, observations
+      FROM point_vigilance
+      WHERE site_id = $1::uuid AND ${local("cree_le")}::date = $3::date
+    ) v
+  ), '[]'::json) AS vigilance,
+
+  -- Anomalies = signalements logistiques
+  COALESCE((
+    SELECT json_agg(x ORDER BY x.heure) FROM (
+      SELECT to_char(heure, 'HH24:MI') AS heure, type_signalement, camion, transporteur, document,
+             casse, manquant, vides, phn, description_faits, observations
+      FROM signalement_logistique
+      WHERE site_id = $1::uuid AND date_operation = $3::date
+    ) x
+  ), '[]'::json) AS signalements,
+
+  -- Violations de procédure et divers = main courante
+  COALESCE((
+    SELECT json_agg(m ORDER BY m.heure) FROM (
+      SELECT to_char(heure, 'HH24:MI') AS heure, category, people, nature_violation, type_entree,
+             description, mesures_prises
+      FROM main_courante
+      WHERE site_id = $1::uuid AND ${local("cree_le")}::date = $3::date
+    ) m
+  ), '[]'::json) AS main_courante;
+`;
 
 // ---------------------------------------------------------------------------
 // Génération du CRJ à partir des activités enregistrées
@@ -73,83 +188,18 @@ export async function generateCrj({ prestataireId, siteId, date }) {
   if (!UUID.test(txt(siteId))) throw fail(400, "Site de travail invalide.");
   if (!DATE.test(day)) throw fail(400, "Date invalide (format attendu : AAAA-MM-JJ).");
 
-  const [siteRes, prestRes] = await Promise.all([
-    pool.query(`SELECT id, nom, type_site FROM site WHERE id = $1::uuid;`, [siteId]),
-    pool.query(`SELECT id, nom FROM prestataire WHERE id = $1::uuid;`, [prestataireId]),
-  ]);
-  const site = siteRes.rows[0];
-  const prestataire = prestRes.rows[0];
-  if (!site) throw fail(404, "Site introuvable.");
-  if (!prestataire) throw fail(404, "Prestataire introuvable.");
+  const res = await pool.query(SQL_CRJ, [siteId, prestataireId, day]);
+  const d = res.rows[0];
+  if (!d?.site) throw fail(404, "Site introuvable.");
+  if (!d?.prestataire) throw fail(404, "Prestataire introuvable.");
 
-  const siteType = site.type_site === "AGENCE" ? "Agence" : "Usine";
-
-  const [agentsRes, cles, fluxRes, alcoolRes, rondesRes, signalRes, mcRes] = await Promise.all([
-    // 1 - Agents : prises de poste du jour pour ce prestataire et ce site
-    pool.query(
-      `SELECT matricule, nom, prenom,
-              EXTRACT(HOUR FROM ${local("started_at")})::int AS heure_debut
-       FROM prise_de_poste
-       WHERE UPPER(TRIM(prestataire)) = UPPER(TRIM($1::text))
-         AND UPPER(TRIM(site_de_travail)) = UPPER(TRIM($2::text))
-         AND ${local("started_at")}::date = $3::date
-       ORDER BY started_at;`,
-      [prestataire.nom, site.nom, day]
-    ),
-    // 2 - Clés
-    chargerCles({ day, siteId, prestataireId, siteNom: site.nom, prestataireNom: prestataire.nom }),
-    // 3, 4, 5 - Flux logistiques
-    pool.query(
-      `SELECT type_flux, camion, transporteur, document, plomb, article, quantite
-       FROM flux_logistique
-       WHERE site_id = $1::uuid AND date_operation = $2::date
-       ORDER BY cree_le;`,
-      [siteId, day]
-    ),
-    // Alcootests
-    pool.query(
-      `SELECT to_char(heure, 'HH24:MI') AS heure, personne, appartenance, demandeur,
-              type_demande, resultat, taux_mesure
-       FROM controle_alcoolemie
-       WHERE site_id = $1::uuid AND date_controle = $2::date
-       ORDER BY heure;`,
-      [siteId, day]
-    ),
-    // Rondes
-    pool.query(
-      `SELECT nom_parcours, observations,
-              to_char(${local("debut")}, 'HH24:MI') AS debut,
-              to_char(${local("fin")}, 'HH24:MI') AS fin
-       FROM ronde
-       WHERE site_id = $1::uuid AND ${local("debut")}::date = $2::date
-       ORDER BY debut;`,
-      [siteId, day]
-    ),
-    // Anomalies = signalements logistiques
-    pool.query(
-      `SELECT to_char(heure, 'HH24:MI') AS heure, type_signalement, camion, transporteur, document,
-              casse, manquant, vides, phn, description_faits, observations
-       FROM signalement_logistique
-       WHERE site_id = $1::uuid AND date_operation = $2::date
-       ORDER BY heure;`,
-      [siteId, day]
-    ),
-    // Violations de procédure et divers = main courante
-    pool.query(
-      `SELECT to_char(heure, 'HH24:MI') AS heure, category, people, nature_violation, type_entree,
-              description, mesures_prises
-       FROM main_courante
-       WHERE site_id = $1::uuid AND ${local("cree_le")}::date = $2::date
-       ORDER BY heure;`,
-      [siteId, day]
-    ),
-  ]);
+  const siteType = d.site.type_site === "AGENCE" ? "Agence" : "Usine";
 
   // --- 1 - Agents jour / nuit (dédoublonnés par matricule) ---
   const agentsJour = [];
   const agentsNuit = [];
   const vus = new Set();
-  for (const a of agentsRes.rows) {
+  for (const a of d.agents) {
     const estJour = a.heure_debut >= JOUR_DEBUT && a.heure_debut < JOUR_FIN;
     const cle = `${estJour ? "J" : "N"}|${norm(a.matricule)}`;
     if (vus.has(cle)) continue;
@@ -162,7 +212,7 @@ export async function generateCrj({ prestataireId, siteId, date }) {
   const dechargements = [];
   const chargements = [];
   const stock = Object.fromEntries(Object.keys(ARTICLES_STOCK).map((k) => [k, 0]));
-  for (const f of fluxRes.rows) {
+  for (const f of d.flux) {
     const ligne = {
       camion: txt(f.camion) || "-",
       transporteur: txt(f.transporteur) || "-",
@@ -180,25 +230,35 @@ export async function generateCrj({ prestataireId, siteId, date }) {
   }
 
   // --- Alcootests ---
-  const alcootests = alcoolRes.rows.map((a) => ({
+  const alcootests = d.alcootests.map((a) => ({
     heure: a.heure,
     nomPrenom: txt(a.personne),
     isStar: /^STAR/.test(norm(a.appartenance)),
     demandeur: txt(a.demandeur) || undefined,
     resultat: txt(a.resultat),
     typeControle: txt(a.type_demande),
-    taux: a.taux_mesure === null ? undefined : String(a.taux_mesure),
+    taux: a.taux_mesure === null || a.taux_mesure === undefined ? undefined : String(a.taux_mesure),
   }));
 
   // --- Rondes ---
-  const rondes = rondesRes.rows.map((r) => ({
+  const rondes = d.rondes.map((r) => ({
     debut: r.debut || "-",
     fin: r.fin || "-",
     obs: txt(r.observations) || txt(r.nom_parcours) || "-",
   }));
 
+  // --- Points de vigilance ---
+  const pointsVigilance = d.vigilance.map((v) => ({
+    heure: v.heure,
+    typePoint: txt(v.type_point) || "-",
+    element: txt(v.element_verifie) || "-",
+    statut: txt(v.statut) || "-",
+    agent: txt(v.agent_nom) || "-",
+    obs: txt(v.observations) || "-",
+  }));
+
   // --- Anomalies ---
-  const anomalies = signalRes.rows.map((s) => ({
+  const anomalies = d.signalements.map((s) => ({
     heure: s.heure,
     camion: txt(s.camion) || "-",
     transporteur: txt(s.transporteur) || "-",
@@ -220,7 +280,7 @@ export async function generateCrj({ prestataireId, siteId, date }) {
   // --- Violations de procédure / divers (main courante) ---
   const violations = [];
   const divers = [];
-  for (const m of mcRes.rows) {
+  for (const m of d.main_courante) {
     const estViolation = txt(m.nature_violation) !== "" || /^VIOLATION/.test(norm(m.type_entree));
     if (estViolation) {
       violations.push({
@@ -242,17 +302,18 @@ export async function generateCrj({ prestataireId, siteId, date }) {
 
   return {
     siteType,
-    prestataire: prestataire.nom,
-    siteNom: site.nom,
+    prestataire: d.prestataire.nom,
+    siteNom: d.site.nom,
     date: `${jour}/${mois}/${annee}`,
     agentsJour,
     agentsNuit,
-    cles,
+    cles: construireCles(d.cles),
     dechargements,
     chargements,
     stockExterieur: siteType === "Agence" ? stock : undefined,
     alcootests,
     rondes,
+    pointsVigilance,
     anomalies,
     violations,
     divers,
@@ -262,53 +323,14 @@ export async function generateCrj({ prestataireId, siteId, date }) {
 // ---------------------------------------------------------------------------
 // Clés : une ligne par trousseau, avec les cycles MATIN et APRES-MIDI.
 // Le cycle d'une clé dépend de l'heure de sa perception (avant 12h = matin).
-// La réintégration est rattachée à sa perception via perception_id.
+// Sa réintégration (reint_*) est rattachée à la même ligne et au même cycle.
 // Une clé appartient au site/prestataire de son agent gardien (matricule).
 // ---------------------------------------------------------------------------
-async function chargerCles({ day, siteId, prestataireId, siteNom, prestataireNom }) {
-  const perceptions = await pool.query(
-    `SELECT s.id, s.trousse_cle, s.lieu, s.personne_habilitee, s.heure,
-            to_char(${localTz("s.created_at")}, 'HH24:MI') AS heure_saisie
-     FROM suivi_cle s
-     WHERE s.action = 'Perception'
-       AND ${localTz("s.created_at")}::date = $1::date
-       AND (
-         EXISTS (
-           SELECT 1 FROM employe e
-           WHERE UPPER(TRIM(e.matricule)) = UPPER(TRIM(s.agent_gardien))
-             AND e.site_id = $2::uuid AND e.prestataire_id = $3::uuid
-         )
-         OR EXISTS (
-           SELECT 1 FROM prise_de_poste p
-           WHERE UPPER(TRIM(p.matricule)) = UPPER(TRIM(s.agent_gardien))
-             AND UPPER(TRIM(p.site_de_travail)) = UPPER(TRIM($4::text))
-             AND UPPER(TRIM(p.prestataire)) = UPPER(TRIM($5::text))
-             AND ${local("p.started_at")}::date = $1::date
-         )
-       )
-     ORDER BY s.created_at;`,
-    [day, siteId, prestataireId, siteNom, prestataireNom]
-  );
-
-  const ids = perceptions.rows.map((p) => p.id);
-  const reintegrations = ids.length
-    ? await pool.query(
-        `SELECT perception_id, personne_habilitee, heure,
-                to_char(${localTz("created_at")}, 'HH24:MI') AS heure_saisie
-         FROM suivi_cle
-         WHERE action = 'Réintégration' AND perception_id = ANY($1::int[])
-         ORDER BY created_at;`,
-        [ids]
-      )
-    : { rows: [] };
-
-  const reintParPerception = new Map();
-  for (const r of reintegrations.rows) reintParPerception.set(r.perception_id, r);
-
+function construireCles(perceptions) {
   const lignes = [];
   const index = new Map(); // trousseau -> lignes existantes
 
-  for (const p of perceptions.rows) {
+  for (const p of perceptions) {
     const heurePerception = hhmm(p.heure) || p.heure_saisie;
     const cycle = parseInt(heurePerception.slice(0, 2), 10) < 12 ? "Matin" : "ApresMidi";
 
@@ -329,10 +351,9 @@ async function chargerCles({ day, siteId, prestataireId, siteNom, prestataireNom
     ligne[`perc${cycle}`] = heurePerception;
     ligne[`respPerc${cycle}`] = txt(p.personne_habilitee);
 
-    const r = reintParPerception.get(p.id);
-    if (r) {
-      ligne[`reint${cycle}`] = hhmm(r.heure) || r.heure_saisie;
-      ligne[`respReint${cycle}`] = txt(r.personne_habilitee);
+    if (p.reint_heure_saisie || p.reint_personne) {
+      ligne[`reint${cycle}`] = hhmm(p.reint_heure) || p.reint_heure_saisie;
+      ligne[`respReint${cycle}`] = txt(p.reint_personne);
     }
   }
 

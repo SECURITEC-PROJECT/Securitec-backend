@@ -1,46 +1,35 @@
-import { getNeonPool, resetNeonPool } from "../src/config/neonPool.js";
+import 'dotenv/config';
+import dns from 'node:dns';
+import pkg from 'pg';
+const { Pool } = pkg;
 
-// Compatibility facade: older controllers use this module, but all queries
-// must go through the same IPv4-pinned Neon pool as the active server.
-const pool = {
-  async query(...args) {
-    const connectedPool = await getNeonPool();
-    try {
-      return await connectedPool.query(...args);
-    } catch (error) {
-      const sql = typeof args[0] === "string" ? args[0] : args[0]?.text || "";
-      const readOnly = /^\s*SELECT\b/i.test(sql);
-      const transient = isTransient(error);
-      if (!readOnly || !transient) throw error;
+// Neon répond souvent en IPv6 en premier : on force l'IPv4 d'abord pour éviter les ETIMEDOUT
+dns.setDefaultResultOrder('ipv4first');
 
-      // Re-resolve Neon before retrying: the old pool was pinned to one IPv4,
-      // which could become unreachable while other Neon addresses are healthy.
-      const replacementPool = await resetNeonPool(connectedPool);
-      return replacementPool.query(...args);
-    }
-  },
-  async connect(...args) {
-    const connectedPool = await getNeonPool();
-    try {
-      return await connectedPool.connect(...args);
-    } catch (error) {
-      if (!isTransient(error)) throw error;
-      const replacementPool = await resetNeonPool(connectedPool);
-      return replacementPool.connect(...args);
-    }
-  },
-  end() {
-    return getNeonPool().then((connectedPool) => connectedPool.end());
-  },
-};
+const options = process.env.DATABASE_URL
+  ? { connectionString: process.env.DATABASE_URL }
+  : {
+      user: process.env.DB_USER,
+      host: process.env.DB_HOST,
+      database: process.env.DB_NAME,
+      password: process.env.DB_PASSWORD,
+      port: process.env.DB_PORT ? Number(process.env.DB_PORT) : 5432,
+    };
 
-function isTransient(error) {
-  const codes = new Set(["ETIMEDOUT", "ECONNRESET", "ECONNREFUSED", "ENETUNREACH", "08000", "08003", "08006"]);
-  for (let current = error; current; current = current.cause) {
-    if (codes.has(current.code)) return true;
-    if (/timeout exceeded when trying to connect|connection terminated|query read timeout|read timeout/i.test(current.message || "")) return true;
-  }
-  return false;
-}
+const pool = new Pool({
+  ...options,
+  connectionTimeoutMillis: 20000, // laisse le temps à Neon de se réveiller
+  idleTimeoutMillis: 300000, // garde la connexion ouverte 5 min : évite de refaire une connexion lente
+  keepAlive: true,
+});
+
+pool.on('connect', () => {
+  console.log('Connecté à la base de données PostgreSQL avec succès.');
+});
+
+// Évite qu'une coupure réseau sur une connexion inactive fasse planter le serveur
+pool.on('error', (err) => {
+  console.error('Erreur sur une connexion inactive du pool:', err.code || err.name, err.message);
+});
 
 export default pool;
