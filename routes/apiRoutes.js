@@ -11,6 +11,7 @@ import { handlePatrolRoutes } from "./patrolRoutes.js";
 import { handleShiftRoutes } from "./shiftRoutes.js";
 import { handleSiteRoutes } from "./siteRoutes.js";
 import { handleVigilanceRoutes } from "./vigilanceRoutes.js";
+import { handleDocumentRoutes } from "./documentRoutes.js";
 
 const apiPrefix = "/api";
 
@@ -30,6 +31,7 @@ export async function handleApiRoutes(request, response, pool, jwtSecret) {
   if (await handlePatrolRoutes(request, response, pool, pathname, jwtSecret)) return true;
   if (await handleVigilanceRoutes(request, response, pool, pathname, jwtSecret)) return true;
   if (await handleMainCouranteRoutes(request, response, pool, pathname, jwtSecret)) return true;
+  if (await handleDocumentRoutes(request, response, pool, pathname, jwtSecret)) return true;
 
   if (request.method === "GET" && pathname === `${apiPrefix}/health`) {
     try {
