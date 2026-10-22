@@ -11,6 +11,7 @@ const CONNECT_TIMEOUT_MS = 10_000;
 const QUERY_TIMEOUT_MS = 15_000;
 const POOL_MAX = 10;
 let sharedPoolPromise;
+let poolResetPromise;
 
 function withTimeout(promise, ms, message) {
   let timer;
@@ -93,4 +94,23 @@ export function getNeonPool() {
     });
   }
   return sharedPoolPromise;
+}
+
+/** Re-resolve Neon and rebuild the pool after a stale or dropped connection. */
+export function resetNeonPool(failedPool) {
+  if (poolResetPromise) return poolResetPromise;
+
+  poolResetPromise = (async () => {
+    const previousPromise = sharedPoolPromise;
+    const currentPool = previousPromise ? await previousPromise.catch(() => null) : null;
+
+    // Another request may already have replaced the failed pool.
+    if (failedPool && currentPool && currentPool !== failedPool) return currentPool;
+    if (sharedPoolPromise === previousPromise) sharedPoolPromise = undefined;
+    return getNeonPool();
+  })().finally(() => {
+    poolResetPromise = undefined;
+  });
+
+  return poolResetPromise;
 }
