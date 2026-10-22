@@ -64,12 +64,14 @@ export async function handleCameraRoutes(request, response, pool, pathname, jwtS
     const url = new URL(request.url || "/", `http://${request.headers.host || "localhost"}`);
 
     if (pathname === camerasPath && request.method === "GET") {
-      const siteId = await resolveSite(pool, account, url.searchParams.get("siteId"));
+      const siteId = await resolveSite(pool, account, url.searchParams.get("siteId"), true);
+      if (!siteId) { json(response, 200, { cameras: [] }); return true; }
       const result = await pool.query(`${cameraSelect} WHERE s.id=$1::uuid ORDER BY z.nom,c.nom`, [siteId]);
       json(response, 200, { cameras: result.rows }); return true;
     }
     if (pathname === zonesPath && request.method === "GET") {
-      const siteId = await resolveSite(pool, account, url.searchParams.get("siteId"));
+      const siteId = await resolveSite(pool, account, url.searchParams.get("siteId"), true);
+      if (!siteId) { json(response, 200, { zones: [] }); return true; }
       const result = await pool.query(`SELECT z.id,z.nom AS name,z.niveau_acces_requis AS "accessLevel",s.id AS "siteId",s.nom AS "siteName" FROM zone z JOIN site s ON s.id=z.site_id WHERE s.id=$1::uuid ORDER BY z.nom`, [siteId]);
       json(response, 200, { zones: result.rows }); return true;
     }
