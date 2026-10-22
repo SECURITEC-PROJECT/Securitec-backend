@@ -5,8 +5,11 @@ import { parse } from "pg-connection-string";
 
 const { Pool } = pg;
 const DNS_TIMEOUT_MS = 1_000;
-const CONNECT_TIMEOUT_MS = 3_500;
+// Le délai de checkout couvre aussi l'attente dans la file lorsque plusieurs
+// modules chargent en même temps. 3,5 s provoquait des erreurs sous charge.
+const CONNECT_TIMEOUT_MS = 10_000;
 const QUERY_TIMEOUT_MS = 15_000;
+const POOL_MAX = 10;
 let sharedPoolPromise;
 
 function withTimeout(promise, ms, message) {
@@ -49,7 +52,8 @@ export async function createNeonPool() {
       connectionTimeoutMillis: CONNECT_TIMEOUT_MS,
       query_timeout: QUERY_TIMEOUT_MS,
       statement_timeout: QUERY_TIMEOUT_MS,
-      max: 5,
+      idleTimeoutMillis: 30_000,
+      max: POOL_MAX,
     });
     pools.push(pool);
     try {
@@ -65,11 +69,11 @@ export async function createNeonPool() {
     winner = await withTimeout(
       Promise.any(attempts),
       CONNECT_TIMEOUT_MS,
-      "Connexion Neon dépassée (3,5 s).",
+      "Connexion Neon dépassée (10 s).",
     );
   } catch (error) {
     for (const candidate of pools) void candidate.end().catch(() => {});
-    throw new AggregateError([error], "Impossible de joindre Neon rapidement.");
+    throw new AggregateError([error], "Impossible de joindre Neon en moins de 10 secondes.");
   }
 
   for (const attempt of attempts) {

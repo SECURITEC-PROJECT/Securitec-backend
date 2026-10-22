@@ -95,13 +95,12 @@ export async function handleCameraRoutes(request, response, pool, pathname, jwtS
       const body = await readJson(request);
       const values = cameraValues(body);
       const siteId = await resolveSite(pool, account, clean(body.siteId, 36));
-      const targetSite = await resolveSite(pool, account, clean(body.siteId, 36));
       const client = await pool.connect();
       try {
         await client.query("BEGIN");
         const existing = await client.query("SELECT c.id FROM camera c JOIN zone z ON z.id=c.zone_id WHERE c.id=$1::uuid AND z.site_id=$2::uuid FOR UPDATE OF c", [idMatch[1], siteId]);
         if (!existing.rows[0]) throw Object.assign(new Error("Caméra introuvable sur ce site."), { status: 404 });
-        const zoneId = await resolveZone(client, targetSite, body);
+        const zoneId = await resolveZone(client, siteId, body);
         await client.query("UPDATE camera SET nom=$1,url_flux=$2,zone_id=$3::uuid WHERE id=$4::uuid", [values.name, values.streamUrl, zoneId, idMatch[1]]);
         const result = await client.query(`${cameraSelect} WHERE c.id=$1::uuid`, [idMatch[1]]);
         await client.query("COMMIT");
