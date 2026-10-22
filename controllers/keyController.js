@@ -1,6 +1,4 @@
-import pool from "../config/db.js";
-
-export async function getKeysMovements() {
+export async function getKeysMovements(pool) {
   try {
     const result = await pool.query(
       `SELECT id, trousse_cle, lieu, action, personne_habilitee, role_personne, matricule_personne,
@@ -15,14 +13,14 @@ export async function getKeysMovements() {
   }
 }
 
-export async function createKeyMovement(data) {
+export async function createKeyMovement(data, pool) {
   const {
     trousseCle, action, personneHabilitee, rolePersonne, matriculePersonne,
     agentGardien, heure, lieu, observation, perceptionId,
   } = data;
 
   if (!trousseCle || !personneHabilitee || !agentGardien) {
-    throw new Error("Tous les champs obligatoires doivent être remplis.");
+    throw Object.assign(new Error("Tous les champs obligatoires doivent être remplis."), { status: 400 });
   }
 
   // Vérification d'habilitation uniquement en cas de Perception
@@ -36,7 +34,7 @@ export async function createKeyMovement(data) {
     );
 
     if (habCheck.rows.length === 0) {
-      throw new Error(`Accès refusé : ${personneHabilitee} n'est pas habilité(e) à percevoir la clé ${trousseCle}.`);
+      throw Object.assign(new Error(`Accès refusé : ${personneHabilitee} n'est pas habilité(e) à percevoir la clé ${trousseCle}.`), { status: 400 });
     }
   }
 
@@ -45,21 +43,21 @@ export async function createKeyMovement(data) {
   if (action === "Réintégration") {
     origineId = Number(perceptionId);
     if (!Number.isInteger(origineId)) {
-      throw new Error("Perception d'origine manquante.");
+      throw Object.assign(new Error("Perception d'origine manquante."), { status: 400 });
     }
     const origine = await pool.query(
       `SELECT 1 FROM suivi_cle WHERE id = $1 AND action = 'Perception';`,
       [origineId]
     );
     if (origine.rows.length === 0) {
-      throw new Error("Perception d'origine introuvable.");
+      throw Object.assign(new Error("Perception d'origine introuvable."), { status: 400 });
     }
     const dejaRendue = await pool.query(
       `SELECT 1 FROM suivi_cle WHERE perception_id = $1 AND action = 'Réintégration';`,
       [origineId]
     );
     if (dejaRendue.rows.length > 0) {
-      throw new Error("Cette clé a déjà été réintégrée.");
+      throw Object.assign(new Error("Cette clé a déjà été réintégrée."), { status: 400 });
     }
   }
 

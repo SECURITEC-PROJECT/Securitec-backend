@@ -8,9 +8,10 @@ export async function handleKeyRoutes(request, response, pool, pathname) {
   // 1. Récupérer les mouvements de clés
   if (method === "GET" && pathname === `${apiPrefix}/keys`) {
     try {
-      const movements = await getKeysMovements(request, response);
+      const movements = await getKeysMovements(pool);
       json(response, 200, movements);
     } catch (error) {
+      console.error("Erreur GET /keys:", error.code || error.name, error.message || "");
       json(response, 500, { error: "Erreur lors de la récupération des mouvements de clés." });
     }
     return true;
@@ -20,10 +21,11 @@ export async function handleKeyRoutes(request, response, pool, pathname) {
   if (method === "POST" && pathname === `${apiPrefix}/keys`) {
     try {
       const body = await readJson(request);
-      const newMovement = await createKeyMovement(body);
+      const newMovement = await createKeyMovement(body, pool);
       json(response, 201, newMovement);
     } catch (error) {
-      json(response, 400, { error: error.message || "Erreur lors de l'enregistrement." });
+      console.error("Erreur POST /keys:", error.code || error.name, error.message || "");
+      json(response, error.status || 500, { error: error.status ? error.message : "Erreur lors de l'enregistrement." });
     }
     return true;
   }

@@ -1,6 +1,6 @@
 import "dotenv/config";
 import { createHmac, timingSafeEqual } from "node:crypto";
-import { createNeonPool } from "./config/neonPool.js";
+import { getNeonPool } from "./config/neonPool.js";
 
 const jwtSecret = process.env.JWT_SECRET;
 if (!jwtSecret || Buffer.byteLength(jwtSecret) < 32) {
@@ -22,15 +22,8 @@ export function clearLoginAttempts(ip) {
   loginAttempts.delete(ip);
 }
 
-let poolPromise;
 export function getPool() {
-  if (!poolPromise) {
-    poolPromise = createNeonPool().catch((error) => {
-      poolPromise = undefined;
-      throw error;
-    });
-  }
-  return poolPromise;
+  return getNeonPool();
 }
 
 export function json(response, status, body) {
@@ -322,9 +315,4 @@ export function logNetworkCauses(error) {
     if (current.cause) pending.push(current.cause);
     if (Array.isArray(current.errors)) pending.push(...current.errors);
   }
-}
-
-
-export async function closePool() {
-  if (poolPromise) await poolPromise.then((pool) => pool.end()).catch(() => {});
 }
