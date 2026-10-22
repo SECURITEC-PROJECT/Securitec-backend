@@ -8,7 +8,6 @@ import { json } from "../utils/helpers.js";
 
 setDefaultResultOrder("ipv4first");
 const port = Number(process.env.PORT || 5000);
-const maxRequestMs = 5_000;
 const jwtSecret = process.env.JWT_SECRET;
 if (!jwtSecret || Buffer.byteLength(jwtSecret) < 32) {
   throw new Error("JWT_SECRET must be set to at least 32 characters.");
@@ -24,17 +23,6 @@ const allowedOrigins = new Set(
 let databaseReady = false;
 
 const server = createServer(async (request, response) => {
-  const requestTimer = setTimeout(() => {
-    if (!response.writableEnded) {
-      if (!response.headersSent) {
-        json(response, 504, { error: "La requête a dépassé le délai maximal de 5 secondes." });
-      } else {
-        response.destroy();
-      }
-    }
-  }, maxRequestMs);
-  response.once("close", () => clearTimeout(requestTimer));
-
   const origin = request.headers.origin;
   if (origin && allowedOrigins.has(origin)) {
     response.setHeader("Access-Control-Allow-Origin", origin);
@@ -66,8 +54,6 @@ const server = createServer(async (request, response) => {
     if (!response.headersSent && !response.writableEnded) {
       json(response, 500, { error: "Erreur interne du serveur." });
     }
-  } finally {
-    clearTimeout(requestTimer);
   }
 });
 

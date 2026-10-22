@@ -6,6 +6,7 @@ import { parse } from "pg-connection-string";
 const { Pool } = pg;
 const DNS_TIMEOUT_MS = 1_000;
 const CONNECT_TIMEOUT_MS = 3_500;
+const QUERY_TIMEOUT_MS = 15_000;
 let sharedPoolPromise;
 
 function withTimeout(promise, ms, message) {
@@ -16,7 +17,7 @@ function withTimeout(promise, ms, message) {
   ]).finally(() => clearTimeout(timer));
 }
 
-/** Resolves Neon IPv4 addresses and races connections so startup stays under five seconds. */
+/** Resolves Neon IPv4 addresses and races connections for a quick startup. */
 export async function createNeonPool() {
   const connectionString = process.env.DATABASE_URL;
   if (!connectionString) throw new Error("DATABASE_URL est absent du fichier .env.");
@@ -46,8 +47,8 @@ export async function createNeonPool() {
         rejectUnauthorized: true,
       },
       connectionTimeoutMillis: CONNECT_TIMEOUT_MS,
-      query_timeout: CONNECT_TIMEOUT_MS,
-      statement_timeout: CONNECT_TIMEOUT_MS,
+      query_timeout: QUERY_TIMEOUT_MS,
+      statement_timeout: QUERY_TIMEOUT_MS,
       max: 5,
     });
     pools.push(pool);
@@ -68,7 +69,7 @@ export async function createNeonPool() {
     );
   } catch (error) {
     for (const candidate of pools) void candidate.end().catch(() => {});
-    throw new AggregateError([error], "Impossible de joindre Neon en moins de 5 secondes.");
+    throw new AggregateError([error], "Impossible de joindre Neon rapidement.");
   }
 
   for (const attempt of attempts) {
