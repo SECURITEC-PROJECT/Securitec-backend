@@ -2,12 +2,12 @@ import "dotenv/config";
 import { setDefaultResultOrder } from "node:dns";
 import { createServer } from "node:http";
 import { getNeonPool } from "./config/neonPool.js";
+import databasePool from "../config/db.js";
 import { handleApiRoutes } from "../routes/apiRoutes.js";
 import { json } from "../utils/helpers.js";
 
 setDefaultResultOrder("ipv4first");
 const port = Number(process.env.PORT || 5000);
-const maxRequestMs = 5_000;
 const jwtSecret = process.env.JWT_SECRET;
 if (!jwtSecret || Buffer.byteLength(jwtSecret) < 32) {
   throw new Error("JWT_SECRET must be set to at least 32 characters.");
@@ -20,20 +20,9 @@ const allowedOrigins = new Set(
     .filter(Boolean),
 );
 
-let pool;
+let databaseReady = false;
 
 const server = createServer(async (request, response) => {
-  const requestTimer = setTimeout(() => {
-    if (!response.writableEnded) {
-      if (!response.headersSent) {
-        json(response, 504, { error: "La requête a dépassé le délai maximal de 5 secondes." });
-      } else {
-        response.destroy();
-      }
-    }
-  }, maxRequestMs);
-  response.once("close", () => clearTimeout(requestTimer));
-
   const origin = request.headers.origin;
   if (origin && allowedOrigins.has(origin)) {
     response.setHeader("Access-Control-Allow-Origin", origin);
@@ -49,14 +38,14 @@ const server = createServer(async (request, response) => {
 
   try {
     const pathname = new URL(request.url || "/", `http://${request.headers.host || "localhost"}`).pathname;
-    if (!pool) {
+    if (!databaseReady) {
       const isHealth = request.method === "GET" && pathname === "/api/health";
       json(response, 503, isHealth
         ? { api: "ok", database: "unavailable" }
         : { error: "Base de données temporairement indisponible. Réessayez dans quelques secondes." });
       return;
     }
-    const handled = await handleApiRoutes(request, response, pool, jwtSecret);
+    const handled = await handleApiRoutes(request, response, databasePool, jwtSecret);
     if (!handled && !response.headersSent && !response.writableEnded) {
       json(response, 404, { error: "Route not found" });
     }
@@ -65,8 +54,6 @@ const server = createServer(async (request, response) => {
     if (!response.headersSent && !response.writableEnded) {
       json(response, 500, { error: "Erreur interne du serveur." });
     }
-  } finally {
-    clearTimeout(requestTimer);
   }
 });
 
@@ -74,10 +61,11 @@ let databaseConnecting = false;
 let retryTimer;
 
 async function connectDatabase() {
-  if (databaseConnecting || pool) return;
+  if (databaseConnecting || databaseReady) return;
   databaseConnecting = true;
   try {
-    pool = await getNeonPool();
+    await getNeonPool();
+    databaseReady = true;
     console.log("Base de données prête.");
   } catch (error) {
     console.error("Connexion à la base échouée; nouvelle tentative dans 1 s:", error.message || error);
@@ -98,7 +86,7 @@ async function shutdown() {
   if (retryTimer) clearTimeout(retryTimer);
   server.close();
   try {
-    if (pool && typeof pool.end === "function") await pool.end();
+  if (databaseReady) await databasePool.end();
   } catch {}
 }
 
