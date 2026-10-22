@@ -24,15 +24,18 @@ export async function handleAuthRoutes(request, response, pool, pathname, jwtSec
       if (!identifier || !pin) return json(response, 400, { error: "Identifiant et PIN requis." });
 
       const result = await pool.query(
-        `SELECT id, nom, identifiant, role, pin_hache, site_id
-         FROM utilisateur WHERE identifiant = $1 LIMIT 1`,
+        `SELECT u.id, u.nom, u.identifiant, u.role, u.pin_hache,
+                u.site_id AS "siteId", s.nom AS "siteNom"
+         FROM utilisateur u
+         LEFT JOIN site s ON s.id = u.site_id
+         WHERE u.identifiant = $1 LIMIT 1`,
         [identifier],
       );
       const record = result.rows[0];
       if (!record || !(await bcrypt.compare(pin, record.pin_hache))) {
         return json(response, 401, { error: "Identifiant ou PIN incorrect." });
       }
-      const user = await findUser(pool, record.id);
+      const { pin_hache: _pinHash, ...user } = record;
       const token = signAccessToken(user, jwtSecret);
       const roleLabel = user.role === 1 ? "Administrateur" : "Agent";
       return json(response, 200, {

@@ -1,4 +1,3 @@
-import pool from "../config/db.js";
 
 // ---------------------------------------------------------------------------
 // Réglages à adapter si besoin
@@ -48,7 +47,7 @@ const localTz = (col) => `(${col} AT TIME ZONE '${TZ}')`;
 // ---------------------------------------------------------------------------
 // Options des sélecteurs (prestataire + site de travail) : UNE seule requête
 // ---------------------------------------------------------------------------
-export async function getCrjOptions() {
+export async function getCrjOptions(pool) {
   const res = await pool.query(
     `SELECT
        COALESCE((SELECT json_agg(t ORDER BY t.nom)
@@ -182,7 +181,7 @@ SELECT
 // ---------------------------------------------------------------------------
 // Génération du CRJ à partir des activités enregistrées
 // ---------------------------------------------------------------------------
-export async function generateCrj({ prestataireId, siteId, date }) {
+export async function generateCrj({ prestataireId, siteId, date }, pool) {
   const day = date || aujourdhui();
   if (!UUID.test(txt(prestataireId))) throw fail(400, "Prestataire invalide.");
   if (!UUID.test(txt(siteId))) throw fail(400, "Site de travail invalide.");
