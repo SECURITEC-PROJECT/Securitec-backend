@@ -55,6 +55,7 @@ model Utilisateur {
   identifiant String             @unique @db.VarChar(100)
   role        Int
   pinHache    String             @map("pin_hache") @db.VarChar(255)
+  actif       Boolean            @default(true)
   siteId      String?            @map("site_id") @db.Uuid
   site        Site?              @relation(fields: [siteId], references: [id], onDelete: SetNull, map: "fk_utilisateur_site")
   consignes   Consigne[]

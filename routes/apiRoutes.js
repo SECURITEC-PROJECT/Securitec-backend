@@ -1,4 +1,5 @@
 import { json, logNetworkCauses } from "../utils/helpers.js";
+import { getRequestUser } from "../utils/auth.js";
 import { handleAnomalieRoutes } from "./anomalieRoutes.js";
 import { handleAuthRoutes } from "./authRoutes.js";
 import { handleCameraRoutes } from "./cameraRoutes.js";
@@ -13,6 +14,7 @@ import { handlePatrolRoutes } from "./patrolRoutes.js";
 import { handleShiftRoutes } from "./shiftRoutes.js";
 import { handleSiteRoutes } from "./siteRoutes.js";
 import { handleVigilanceRoutes } from "./vigilanceRoutes.js";
+import { handleUserRoutes } from "./userRoutes.js";
 
 const apiPrefix = "/api";
 
@@ -20,7 +22,14 @@ export async function handleApiRoutes(request, response, pool, jwtSecret) {
   const urlObj = new URL(request.url || "/", `http://${request.headers.host || "localhost"}`);
   const pathname = urlObj.pathname;
 
+  const authenticatedUser = getRequestUser(request, jwtSecret);
+  if (authenticatedUser) {
+    const active = await pool.query("SELECT 1 FROM utilisateur WHERE id=$1::uuid AND actif=true LIMIT 1", [authenticatedUser.id]);
+    if (!active.rows[0]) return json(response, 401, { error: "Ce compte est désactivé ou introuvable." });
+  }
+
   if (await handleAuthRoutes(request, response, pool, pathname, jwtSecret)) return true;
+  if (await handleUserRoutes(request, response, pool, pathname, jwtSecret)) return true;
   if (await handleEmployeeRoutes(request, response, pool, pathname, jwtSecret)) return true;
   if (await handleCameraRoutes(request, response, pool, pathname, jwtSecret)) return true;
   if (await handleSiteRoutes(request, response, pool, pathname, jwtSecret)) return true;
