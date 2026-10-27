@@ -279,6 +279,7 @@ model PassageVehicule {
   transporteur     String?   @db.VarChar(255)
   conducteur       String?   @db.VarChar(255)
   passagers        String?   @db.VarChar(255)
+  passagersSortie  Int?      @map("passagers_sortie")
   motif            String?   @db.Text
   zone             String?   @db.VarChar(255)
   operation        String?   @db.VarChar(40)
@@ -466,7 +467,6 @@ model FluxLogistique {
   detailsBouteilles Json     @default("[]") @map("details_bouteilles")
   heurePointe    DateTime?   @map("heure_pointe") @db.Time(0)
   designation    String?     @db.VarChar(160)
-  provenance     String?     @db.VarChar(255)
   titre          String?     @db.VarChar(160)
   cree           String?     @db.VarChar(160)
   chauffeur      String?     @db.VarChar(160)
