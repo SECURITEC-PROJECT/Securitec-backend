@@ -1,6 +1,15 @@
 import { randomUUID } from "node:crypto";
 import { apiPrefix, getPool, json, readJson, requestUser, text, getOrCreateSite } from "../server-support.js";
 
+const datePattern = /^\d{4}-\d{2}-\d{2}$/;
+const timePattern = /^(?:[01]\d|2[0-3]):[0-5]\d$/;
+const isValidDate = (value) => {
+  if (!datePattern.test(value)) return false;
+  const [year, month, day] = value.split("-").map(Number);
+  const date = new Date(Date.UTC(year, month - 1, day));
+  return date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day;
+};
+
 export async function handleOperations(request, response, pathname) {
   const siteArchive = /^\/api\/sites\/([0-9a-f-]+)$/.exec(pathname);
   if (request.method === "DELETE" && siteArchive) {
@@ -73,9 +82,10 @@ export async function handleOperations(request, response, pathname) {
              COALESCE(p.piece_fin,'') AS id_document, COALESCE(p.type_piece,'') AS document_type,
              COALESCE(p.hote,'') AS host, COALESCE(p.motif,'') AS reason,
              COALESCE(p.badge_numero,b.uid_nfc) AS badge, COALESCE(p.immatriculation,'') AS vehicle,
-             COALESCE(p.zone,'') AS zone, COALESCE(p.materiel,'') AS equipment,
+             COALESCE(p.zone,'') AS zone, COALESCE(p.materiel,'') AS equipment, s.nom AS site_name,
              p.entree AS entered_at, p.sortie AS exited_at, p.notes_sortie AS exit_notes
            FROM passage p JOIN visiteur v ON v.id=p.visiteur_id JOIN badge b ON b.id=p.badge_id
+           JOIN site s ON s.id=v.site_id
            WHERE p.saisi_par_id=$1 OR ($2::uuid IS NOT NULL AND v.site_id=$2::uuid)
            ORDER BY p.entree DESC LIMIT 500`,
           [account.sub, account.siteId || null],
@@ -89,6 +99,12 @@ export async function handleOperations(request, response, pathname) {
         const reason = text(body.reason, 20000);
         const host = text(body.host);
         if (!name || !reason || !host) { json(response, 400, { error: "Nom, hôte et motif sont obligatoires." }); return; }
+        const entryDate = text(body.entry_date, 10);
+        const entryTime = text(body.entry_time, 5);
+        if ((entryDate || entryTime) && (!isValidDate(entryDate) || !timePattern.test(entryTime))) {
+          json(response, 400, { error: "Indiquez une date et une heure valides." });
+          return;
+        }
         const client = await pool.connect();
         try {
           await client.query("BEGIN");
@@ -104,9 +120,9 @@ export async function handleOperations(request, response, pathname) {
           );
           const passage = await client.query(
             `INSERT INTO passage (entree, motif, badge_id, visiteur_id, type_piece, piece_fin, hote, zone, materiel, immatriculation, badge_numero, saisi_par_id)
-             VALUES (NOW(),$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+             VALUES (CASE WHEN $12::date IS NULL THEN CURRENT_TIMESTAMP::timestamp ELSE $12::date + $13::time END,$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
              RETURNING id, entree AS entered_at`,
-            [reason, badge.rows[0].id, visitor.rows[0].id, text(body.document_type, 80) || null, text(body.id_document, 4) || null, host, text(body.zone) || "Accueil", text(body.equipment, 20000) || null, text(body.vehicle, 50) || null, badgeNumber, account.sub],
+            [reason, badge.rows[0].id, visitor.rows[0].id, text(body.document_type, 80) || null, text(body.id_document, 4) || null, host, text(body.zone) || "Accueil", text(body.equipment, 20000) || null, text(body.vehicle, 50) || null, badgeNumber, account.sub, entryDate || null, entryTime || null],
           );
           await client.query("COMMIT");
           json(response, 201, { visitor: { id: passage.rows[0].id, full_name: name, company: text(body.company), id_document: text(body.id_document, 4), document_type: text(body.document_type, 80), host, reason, badge: badgeNumber, vehicle: text(body.vehicle, 50), zone: text(body.zone) || "Accueil", equipment: text(body.equipment, 20000), entered_at: passage.rows[0].entered_at, exited_at: null } });
