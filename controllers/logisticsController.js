@@ -64,7 +64,7 @@ export async function getLogisticsEntries(request, response, pool, userId) {
     const siteId = await querySiteForRead(pool, account, request);
     if (!siteId) return json(response, 200, { entries: [] });
     const result = await pool.query(
-      `SELECT f.id, f.date_operation AS date, f.type_flux AS type,
+      `SELECT f.id, f.date_operation::text AS date, f.type_flux AS type,
               f.camion, f.transporteur, f.document, f.plomb,
               to_char(f.heure_sortie, 'HH24:MI') AS "heureSortie", f.numero_pesage AS "numeroPesage",
               f.facture, f.poids, f.destinataire, f.vehicule,
@@ -76,6 +76,8 @@ export async function getLogisticsEntries(request, response, pool, userId) {
               f.facture, f.poids, f.destinataire, COALESCE(f.vehicule, f.camion) AS vehicule,
               to_char(f.heure_pointe, 'HH24:MI') AS "heurePointe", f.designation, f.provenance,
               f.titre, f.cree, f.chauffeur, f.magasinier,
+              f.type_chargement AS "typeChargement", f.proprietaire,
+              f.quantite_texte AS "quantiteTexte", f.lp,
               f.categorie_stock AS "categorieStock", f.article, f.quantite,
               s.nom AS "siteName", s.type_site AS "siteType", f.cree_le AS "createdAt"
        FROM flux_logistique f JOIN site s ON s.id = f.site_id
@@ -87,6 +89,156 @@ export async function getLogisticsEntries(request, response, pool, userId) {
   } catch (error) {
     console.error("GET /logistics failed:", error.code || error.name, error.message || "");
     json(response, error.status || 500, { error: error.status ? error.message : "Impossible de charger les flux logistiques." });
+  }
+}
+
+export async function getStarParticulierLoadings(request, response, pool, userId) {
+  try {
+    const account = await getAccount(pool, userId);
+    const siteId = await querySiteForRead(pool, account, request);
+    if (!siteId) return json(response, 200, { entries: [] });
+    const result = await pool.query(
+      `SELECT f.id, f.site_id AS "siteId", f.date_operation::text AS date,
+              f.type_flux AS type, f.type_chargement AS "typeChargement",
+              to_char(f.heure_sortie, 'HH24:MI') AS "heureSortie", f.camion,
+              f.proprietaire, f.nom_chauffeur AS "nomChauffeur", f.designation,
+              f.quantite_texte AS "quantiteTexte", f.poids, f.destinataire,
+              f.lp, f.titre, f.plomb, s.nom AS "siteName"
+       FROM flux_logistique f JOIN site s ON s.id = f.site_id
+       WHERE f.site_id = $1::uuid
+         AND f.type_flux = 'CHARGEMENT'
+         AND f.type_chargement IN ('STAR', 'PARTICULIER')
+       ORDER BY f.date_operation DESC, f.cree_le DESC LIMIT 1000`,
+      [siteId],
+    );
+    json(response, 200, { entries: result.rows });
+  } catch (error) {
+    console.error("GET star/particulier loadings failed:", error.code || error.name, error.message || "");
+    json(response, error.status || 500, { error: error.status ? error.message : "Impossible de charger le registre des chargements." });
+  }
+}
+
+function validateStarParticulierLoading(body) {
+  const heureSortie = cleanText(body.heureSortie, 5);
+  const camion = cleanText(body.camion, 160);
+  const proprietaire = cleanText(body.proprietaire, 255);
+  const nomChauffeur = cleanText(body.nomChauffeur, 255);
+  const designation = cleanText(body.designation, 20000);
+  const quantiteTexte = cleanText(body.quantiteTexte, 5000);
+  const poidsInput = typeof body.poids === "string" ? body.poids.trim() : body.poids;
+  const poids = typeof poidsInput === "number" || (typeof poidsInput === "string" && poidsInput !== "")
+    ? Number(poidsInput)
+    : Number.NaN;
+  const poidsHasValidPrecision = /^\d{1,10}(?:\.\d{1,2})?$/.test(String(poidsInput));
+  const destinataire = cleanText(body.destinataire, 255);
+  const lp = cleanText(body.lp, 6);
+  const titre = cleanText(body.titre, 8);
+  const plomb = cleanText(body.plomb, 8);
+  const typeChargement = cleanText(body.typeChargement, 20).toUpperCase();
+  if (!timePattern.test(heureSortie) || !camion || !proprietaire || !nomChauffeur || !designation
+    || !quantiteTexte || !poidsHasValidPrecision || !Number.isFinite(poids) || poids < 0 || poids > 9999999999.99
+    || !destinataire || !/^\d{1,6}$/.test(lp) || !/^\d{1,8}$/.test(titre)
+    || !/^\d{1,8}$/.test(plomb) || !["STAR", "PARTICULIER"].includes(typeChargement)) {
+    throw Object.assign(new Error("Vérifiez le type de chargement, l’heure, le véhicule, le propriétaire, le chauffeur, la désignation, la quantité, le poids, la destination et les numéros LP/titre/plomb."), { status: 400 });
+  }
+  return { heureSortie, camion, proprietaire, nomChauffeur, designation, quantiteTexte, poids, destinataire, lp, titre, plomb, typeChargement };
+}
+
+export async function createStarParticulierLoading(request, response, pool, userId) {
+  let client;
+  try {
+    const body = await readJson(request);
+    const entry = validateStarParticulierLoading(body);
+    client = await pool.connect();
+    await client.query("BEGIN");
+    const account = await getAccount(client, userId);
+    const siteId = await resolveSite(client, account, body);
+    const result = await client.query(
+      `INSERT INTO flux_logistique
+         (date_operation, type_flux, heure_sortie, camion, proprietaire, nom_chauffeur,
+          designation, quantite_texte, poids, destinataire, lp, titre, plomb,
+          type_chargement, site_id, utilisateur_id)
+       VALUES (timezone('Indian/Antananarivo', CURRENT_TIMESTAMP)::date, 'CHARGEMENT', $1::time,
+          $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13::uuid, $14::uuid)
+       RETURNING id, site_id AS "siteId", date_operation::text AS date, type_flux AS type,
+          to_char(heure_sortie, 'HH24:MI') AS "heureSortie", camion, proprietaire,
+          nom_chauffeur AS "nomChauffeur", designation, quantite_texte AS "quantiteTexte",
+          poids, destinataire, lp, titre, plomb, type_chargement AS "typeChargement"`,
+      [entry.heureSortie, entry.camion, entry.proprietaire, entry.nomChauffeur, entry.designation,
+        entry.quantiteTexte, entry.poids, entry.destinataire, entry.lp, entry.titre, entry.plomb,
+        entry.typeChargement, siteId, userId],
+    );
+    const site = await client.query("SELECT nom AS \"siteName\" FROM site WHERE id = $1::uuid", [siteId]);
+    await client.query("COMMIT");
+    json(response, 201, { entry: { ...result.rows[0], siteName: site.rows[0]?.siteName } });
+  } catch (error) {
+    if (client) await client.query("ROLLBACK").catch(() => {});
+    console.error("POST star/particulier loading failed:", error.code || error.name, error.message || "");
+    json(response, error.status || 500, { error: error.status ? error.message : "Impossible d’enregistrer le chargement." });
+  } finally {
+    client?.release();
+  }
+}
+
+export async function updateStarParticulierLoading(request, response, pool, userId, entryId) {
+  let client;
+  try {
+    if (!uuidPattern.test(entryId)) return json(response, 404, { error: "Chargement introuvable." });
+    const body = await readJson(request);
+    const entry = validateStarParticulierLoading(body);
+    client = await pool.connect();
+    await client.query("BEGIN");
+    const account = await getAccount(client, userId);
+    const siteId = await resolveSite(client, account, body);
+    const result = await client.query(
+      `UPDATE flux_logistique
+       SET heure_sortie = $2::time, camion = $3, proprietaire = $4, nom_chauffeur = $5,
+           designation = $6, quantite_texte = $7, poids = $8, destinataire = $9,
+           lp = $10, titre = $11, plomb = $12, type_chargement = $13
+       WHERE id = $1::uuid AND site_id = $14::uuid
+         AND type_flux = 'CHARGEMENT' AND type_chargement IS NOT NULL
+       RETURNING id, site_id AS "siteId", date_operation::text AS date, type_flux AS type,
+          to_char(heure_sortie, 'HH24:MI') AS "heureSortie", camion, proprietaire,
+          nom_chauffeur AS "nomChauffeur", designation, quantite_texte AS "quantiteTexte",
+          poids, destinataire, lp, titre, plomb, type_chargement AS "typeChargement"`,
+      [entryId, entry.heureSortie, entry.camion, entry.proprietaire, entry.nomChauffeur,
+        entry.designation, entry.quantiteTexte, entry.poids, entry.destinataire, entry.lp,
+        entry.titre, entry.plomb, entry.typeChargement, siteId],
+    );
+    if (!result.rows[0]) {
+      await client.query("ROLLBACK");
+      return json(response, 404, { error: "Chargement introuvable sur ce site." });
+    }
+    const site = await client.query("SELECT nom AS \"siteName\" FROM site WHERE id = $1::uuid", [siteId]);
+    await client.query("COMMIT");
+    json(response, 200, { entry: { ...result.rows[0], siteName: site.rows[0]?.siteName } });
+  } catch (error) {
+    if (client) await client.query("ROLLBACK").catch(() => {});
+    console.error("PUT star/particulier loading failed:", error.code || error.name, error.message || "");
+    json(response, error.status || 500, { error: error.status ? error.message : "Impossible de modifier le chargement." });
+  } finally {
+    client?.release();
+  }
+}
+
+export async function deleteStarParticulierLoading(request, response, pool, userId, entryId) {
+  try {
+    if (!uuidPattern.test(entryId)) return json(response, 404, { error: "Chargement introuvable." });
+    const account = await getAccount(pool, userId);
+    const siteId = await querySiteForRead(pool, account, request);
+    if (!siteId) return json(response, 400, { error: "Sélectionnez un site pour supprimer le chargement." });
+    const result = await pool.query(
+      `DELETE FROM flux_logistique
+       WHERE id = $1::uuid AND site_id = $2::uuid
+         AND type_flux = 'CHARGEMENT' AND type_chargement IS NOT NULL
+       RETURNING id`,
+      [entryId, siteId],
+    );
+    if (!result.rows[0]) return json(response, 404, { error: "Chargement introuvable sur ce site." });
+    json(response, 200, { id: result.rows[0].id, deleted: true });
+  } catch (error) {
+    console.error("DELETE star/particulier loading failed:", error.code || error.name, error.message || "");
+    json(response, error.status || 500, { error: error.status ? error.message : "Impossible de supprimer le chargement." });
   }
 }
 
