@@ -72,7 +72,9 @@ export async function handleLogistics(request, response, pathname) {
       const siteId = account.siteId || url.searchParams.get("siteId") || null;
       const result = await pool.query(
         `SELECT f.id, f.date_operation AS date, f.type_flux AS type, f.camion, f.transporteur, f.document, f.plomb,
-          f.categorie_stock AS "categorieStock", f.article, f.quantite, s.nom AS "siteName", s.type_site AS "siteType",
+          to_char(f.heure_sortie,'HH24:MI') AS "heureSortie", f.numero_pesage AS "numeroPesage",
+          f.facture, f.poids, f.destinataire, f.vehicule, f.categorie_stock AS "categorieStock", f.article, f.quantite,
+          s.nom AS "siteName", s.type_site AS "siteType",
           f.cree_le AS "createdAt"
          FROM flux_logistique f JOIN site s ON s.id=f.site_id
          WHERE ($1::uuid IS NULL OR f.site_id=$1::uuid)
@@ -81,9 +83,46 @@ export async function handleLogistics(request, response, pathname) {
     }
     if (request.method !== "POST") { json(response, 405, { error: "Méthode non autorisée." }); return; }
     const body = await readJson(request);
-    const type = ["DECHARGEMENT", "CHARGEMENT", "INVENTAIRE"].includes(body.type) ? body.type : "";
+    const type = ["DECHARGEMENT", "CHARGEMENT", "INVENTAIRE", "DECHETS"].includes(body.type) ? body.type : "";
     const date = text(body.date, 10);
     if (!type || !datePattern.test(date)) { json(response, 400, { error: "Choisissez le type de flux et une date valide." }); return; }
+    if (type === "DECHETS") {
+      const time = text(body.heureSortie, 5);
+      const numeroPesage = text(body.numeroPesage, 100);
+      const facture = text(body.facture, 160);
+      const poids = Number(body.poids);
+      const destinataire = text(body.destinataire, 255);
+      const vehicule = text(body.vehicule, 160);
+      if (!timePattern.test(time) || !numeroPesage || !facture || !Number.isFinite(poids) || poids <= 0 || poids > 9999999999.99 || !destinataire || !vehicule) {
+        json(response, 400, { error: "Renseignez une heure de sortie, un numéro de pesage, une facture, un poids positif, le destinataire et le véhicule." });
+        return;
+      }
+      const client = await pool.connect();
+      try {
+        await client.query("BEGIN");
+        const siteId = account.siteId || await getOrCreateSite(client, body.siteName, body.siteType);
+        const siteResult = await client.query("SELECT nom, type_site FROM site WHERE id=$1", [siteId]);
+        const site = siteResult.rows[0];
+        if (!site) throw Object.assign(new Error("Site de travail introuvable."), { status: 404 });
+        const inserted = await client.query(
+          `INSERT INTO flux_logistique (date_operation, type_flux, heure_sortie, numero_pesage, facture, poids, destinataire, vehicule, site_id, utilisateur_id)
+           VALUES ($1,'DECHETS',$2::time,$3,$4,$5,$6,$7,$8,$9)
+           RETURNING id, cree_le AS "createdAt"`,
+          [date, time, numeroPesage, facture, poids, destinataire, vehicule, siteId, account.sub],
+        );
+        await client.query("COMMIT");
+        json(response, 201, { entry: {
+          ...inserted.rows[0], date, type, heureSortie: time, numeroPesage, facture, poids, destinataire, vehicule,
+          siteName: site.nom, siteType: site.type_site,
+        } });
+      } catch (error) {
+        await client.query("ROLLBACK").catch(() => {});
+        json(response, error.status || 500, { error: error.message || "Enregistrement de la sortie de déchets impossible." });
+      } finally {
+        client.release();
+      }
+      return;
+    }
     const client = await pool.connect();
     try {
       await client.query("BEGIN");

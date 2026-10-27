@@ -3,9 +3,10 @@ import { json, readJson } from "../utils/helpers.js";
 const datePattern = /^\d{4}-\d{2}-\d{2}$/;
 const timePattern = /^(?:[01]\d|2[0-3]):[0-5]\d$/;
 const truckTypes = new Set(["DECHARGEMENT", "CHARGEMENT"]);
-const fluxTypes = new Set(["DECHARGEMENT", "CHARGEMENT", "INVENTAIRE"]);
+const fluxTypes = new Set(["DECHARGEMENT", "CHARGEMENT", "INVENTAIRE", "DECHETS"]);
 const incidentTypes = new Set(["ANOMALIE", "VIOLATION_PROCEDURE"]);
 const stockCategories = new Set(["VIDES", "PLEINS_EAUX"]);
+const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 const cleanText = (value, max = 255) => typeof value === "string" ? value.trim().slice(0, max) : "";
 const validDate = (value) => {
@@ -56,6 +57,8 @@ export async function getLogisticsEntries(request, response, pool, userId) {
     const result = await pool.query(
       `SELECT f.id, f.date_operation AS date, f.type_flux AS type,
               f.camion, f.transporteur, f.document, f.plomb,
+              to_char(f.heure_sortie, 'HH24:MI') AS "heureSortie", f.numero_pesage AS "numeroPesage",
+              f.facture, f.poids, f.destinataire, f.vehicule,
               f.categorie_stock AS "categorieStock", f.article, f.quantite,
               s.nom AS "siteName", s.type_site AS "siteType", f.cree_le AS "createdAt"
        FROM flux_logistique f JOIN site s ON s.id = f.site_id
@@ -121,6 +124,32 @@ export async function createLogisticsEntry(request, response, pool, userId) {
       return json(response, 201, { entries: created });
     }
 
+    if (type === "DECHETS") {
+      const time = cleanText(body.heureSortie, 5);
+      const numeroPesage = cleanText(body.numeroPesage, 100);
+      const facture = cleanText(body.facture, 160);
+      const poids = Number(body.poids);
+      const destinataire = cleanText(body.destinataire, 255);
+      const vehicule = cleanText(body.vehicule, 160);
+      if (!timePattern.test(time) || !numeroPesage || !facture || !Number.isFinite(poids) || poids <= 0 || poids > 9999999999.99 || !destinataire || !vehicule) {
+        throw Object.assign(new Error("Renseignez une heure de sortie, un numéro de pesage, une facture, un poids positif, le destinataire et le véhicule."), { status: 400 });
+      }
+      const result = await client.query(
+        `INSERT INTO flux_logistique
+           (date_operation, type_flux, heure_sortie, numero_pesage, facture, poids, destinataire, vehicule, site_id, utilisateur_id)
+         VALUES ($1::date, 'DECHETS', $2::time, $3, $4, $5, $6, $7, $8::uuid, $9::uuid)
+         RETURNING id, cree_le AS "createdAt"`,
+        [date, time, numeroPesage, facture, poids, destinataire, vehicule, siteId, userId],
+      );
+      await client.query("COMMIT");
+      return json(response, 201, {
+        entry: {
+          ...result.rows[0], date, type, heureSortie: time, numeroPesage, facture, poids, destinataire, vehicule,
+          siteName: site.nom, siteType: site.type_site,
+        },
+      });
+    }
+
     const camion = cleanText(body.camion, 160);
     if (!truckTypes.has(type) || !camion) {
       throw Object.assign(new Error("Le numéro du camion et de la remorque est obligatoire."), { status: 400 });
@@ -145,6 +174,80 @@ export async function createLogisticsEntry(request, response, pool, userId) {
     json(response, error.status || 500, { error: error.status ? error.message : "Impossible d'enregistrer le flux logistique." });
   } finally {
     client.release();
+  }
+}
+
+export async function updateWasteEntry(request, response, pool, userId, entryId) {
+  const client = await pool.connect();
+  try {
+    if (!uuidPattern.test(entryId)) {
+      return json(response, 404, { error: "Sortie de déchets introuvable." });
+    }
+    const body = await readJson(request);
+    const date = cleanText(body.date, 10);
+    const time = cleanText(body.heureSortie, 5);
+    const numeroPesage = cleanText(body.numeroPesage, 100);
+    const facture = cleanText(body.facture, 160);
+    const poids = Number(body.poids);
+    const destinataire = cleanText(body.destinataire, 255);
+    const vehicule = cleanText(body.vehicule, 160);
+    if (!validDate(date) || !timePattern.test(time) || !numeroPesage || !facture ||
+        !Number.isFinite(poids) || poids <= 0 || poids > 9999999999.99 || !destinataire || !vehicule) {
+      return json(response, 400, { error: "Renseignez une date et une heure valides, le pesage, la facture, un poids positif, le destinataire et le véhicule." });
+    }
+
+    await client.query("BEGIN");
+    const account = await getAccount(client, userId);
+    const siteId = await resolveSite(client, account, body);
+    const existing = await client.query(
+      `SELECT id FROM flux_logistique
+       WHERE id = $1::uuid AND type_flux = 'DECHETS' AND site_id = $2::uuid
+       FOR UPDATE`,
+      [entryId, siteId],
+    );
+    if (!existing.rows[0]) {
+      await client.query("ROLLBACK");
+      return json(response, 404, { error: "Sortie de déchets introuvable sur ce site." });
+    }
+    const result = await client.query(
+      `UPDATE flux_logistique
+       SET date_operation = $2::date, heure_sortie = $3::time, numero_pesage = $4,
+           facture = $5, poids = $6, destinataire = $7, vehicule = $8
+       WHERE id = $1::uuid
+       RETURNING id, date_operation AS date, to_char(heure_sortie, 'HH24:MI') AS "heureSortie",
+                 numero_pesage AS "numeroPesage", facture, poids, destinataire, vehicule`,
+      [entryId, date, time, numeroPesage, facture, poids, destinataire, vehicule],
+    );
+    await client.query("COMMIT");
+    json(response, 200, { entry: { ...result.rows[0], type: "DECHETS" } });
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => {});
+    console.error("PUT /logistics/:id failed:", error.code || error.name, error.message || "");
+    json(response, error.status || 500, { error: error.status ? error.message : "Impossible de modifier la sortie de déchets." });
+  } finally {
+    client.release();
+  }
+}
+
+export async function deleteWasteEntry(request, response, pool, userId, entryId) {
+  try {
+    if (!uuidPattern.test(entryId)) {
+      return json(response, 404, { error: "Sortie de déchets introuvable." });
+    }
+    const account = await getAccount(pool, userId);
+    const siteId = await querySiteForRead(pool, account, request);
+    if (!siteId) return json(response, 400, { error: "Sélectionnez un site pour supprimer la sortie." });
+    const result = await pool.query(
+      `DELETE FROM flux_logistique
+       WHERE id = $1::uuid AND type_flux = 'DECHETS' AND site_id = $2::uuid
+       RETURNING id`,
+      [entryId, siteId],
+    );
+    if (!result.rows[0]) return json(response, 404, { error: "Sortie de déchets introuvable sur ce site." });
+    json(response, 200, { id: result.rows[0].id, deleted: true });
+  } catch (error) {
+    console.error("DELETE /logistics/:id failed:", error.code || error.name, error.message || "");
+    json(response, error.status || 500, { error: error.status ? error.message : "Impossible de supprimer la sortie de déchets." });
   }
 }
 

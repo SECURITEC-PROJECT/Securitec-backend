@@ -10,7 +10,7 @@ export async function handleAnomalieRoutes(request, response, pool, pathname, jw
       json(response, 401, { error: "Connectez-vous pour consulter les anomalies." });
       return true;
     }
-    const anomalies = await getAnomaliesSorties();
+    const anomalies = await getAnomaliesSorties(pool);
     json(response, 200, { count: anomalies.length, anomalies });
   } catch (error) {
     console.error("Erreur anomalies de sortie:", error.code || error.name, error.message);
