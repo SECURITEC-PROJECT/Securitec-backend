@@ -5,6 +5,7 @@ import { handleAuthRoutes } from "./authRoutes.js";
 import { handleCameraRoutes } from "./cameraRoutes.js";
 import { handleControlRoutes } from "./controlRoutes.js";
 import { handleCourrierRoutes } from "./courrierRoutes.js";
+import { handleConsigneJournalRoutes } from "./consigneJournalRoutes.js";
 import { handleCrjRoutes } from "./crjRoutes.js";
 import { handleEmployeeRoutes } from "./employeeRoutes.js";
 import { handleEntryExitRoutes } from "./entryExitRoutes.js";
@@ -40,6 +41,7 @@ export async function handleApiRoutes(request, response, pool, jwtSecret) {
   if (await handleHandoverRoutes(request, response, pool, pathname, jwtSecret)) return true;
   if (await handleControlRoutes(request, response, pool, pathname, jwtSecret)) return true;
   if (await handleCourrierRoutes(request, response, pool, pathname, jwtSecret)) return true;
+  if (await handleConsigneJournalRoutes(request, response, pool, pathname, jwtSecret)) return true;
   if (await handleFluxRoutes(request, response, pool, pathname, jwtSecret)) return true;
   if (await handlePatrolRoutes(request, response, pool, pathname, jwtSecret)) return true;
   if (await handleVigilanceRoutes(request, response, pool, pathname, jwtSecret)) return true;
