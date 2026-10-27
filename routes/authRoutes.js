@@ -9,7 +9,7 @@ async function findUser(pool, id) {
     `SELECT u.id, u.nom, u.identifiant, u.role, u.site_id AS "siteId", s.nom AS "siteNom"
      FROM utilisateur u
      LEFT JOIN site s ON s.id = u.site_id
-     WHERE u.id = $1::uuid`,
+     WHERE u.id = $1::uuid AND u.actif = true`,
     [id],
   );
   return result.rows[0] || null;
@@ -28,7 +28,7 @@ export async function handleAuthRoutes(request, response, pool, pathname, jwtSec
                 u.site_id AS "siteId", s.nom AS "siteNom"
          FROM utilisateur u
          LEFT JOIN site s ON s.id = u.site_id
-         WHERE u.identifiant = $1 LIMIT 1`,
+         WHERE LOWER(u.identifiant) = LOWER($1) AND u.actif = true LIMIT 1`,
         [identifier],
       );
       const record = result.rows[0];
@@ -37,7 +37,7 @@ export async function handleAuthRoutes(request, response, pool, pathname, jwtSec
       }
       const { pin_hache: _pinHash, ...user } = record;
       const token = signAccessToken(user, jwtSecret);
-      const roleLabel = user.role === 1 ? "Administrateur" : "Agent";
+      const roleLabel = user.role === 1 ? "Administrateur" : user.role === 2 ? "Superviseur" : "Agent";
       return json(response, 200, {
         token,
         user: { ...user, name: user.nom, roleLabel },
@@ -45,6 +45,9 @@ export async function handleAuthRoutes(request, response, pool, pathname, jwtSec
     } catch (error) {
       if (error.status) return json(response, error.status, { error: error.message });
       console.error("POST /auth/login failed:", error.code || error.name, error.message || "");
+      if (error.code === "42703" && /actif/i.test(error.message || "")) {
+        return json(response, 503, { error: "La base doit être mise à jour. Exécutez `npm run db:deploy` dans Securitec-backend puis redémarrez le serveur." });
+      }
       return json(response, 500, { error: "Connexion impossible." });
     }
   }
@@ -57,7 +60,7 @@ export async function handleAuthRoutes(request, response, pool, pathname, jwtSec
     try {
       const user = await findUser(pool, tokenUser.id);
       if (!user) return json(response, 401, { error: "Utilisateur introuvable." });
-      const roleLabel = user.role === 1 ? "Administrateur" : "Agent";
+      const roleLabel = user.role === 1 ? "Administrateur" : user.role === 2 ? "Superviseur" : "Agent";
       return json(response, 200, { user: { ...user, name: user.nom, roleLabel } });
     } catch (error) {
       console.error("GET /auth/me failed:", error.code || error.name, error.message || "");

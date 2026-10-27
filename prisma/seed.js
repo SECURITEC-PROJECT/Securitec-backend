@@ -46,7 +46,8 @@ async function main() {
        SET nom = EXCLUDED.nom,
            role = EXCLUDED.role,
            pin_hache = EXCLUDED.pin_hache,
-           site_id = EXCLUDED.site_id
+           site_id = EXCLUDED.site_id,
+           actif = true
        RETURNING id`,
       [nom.trim(), identifiant.trim(), role, pinHache, siteId],
     );
