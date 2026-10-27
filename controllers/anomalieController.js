@@ -1,5 +1,3 @@
-import pool from "../config/db.js";
-
 // ---------------------------------------------------------------------------
 // Réglages
 // ---------------------------------------------------------------------------
@@ -113,7 +111,7 @@ SELECT
   ), '[]'::json) AS vehicules;
 `;
 
-export async function getAnomaliesSorties() {
+export async function getAnomaliesSorties(pool) {
   const res = await pool.query(SQL);
   const { visiteurs, vehicules } = res.rows[0];
   const nowMs = maintenantLocalMs();

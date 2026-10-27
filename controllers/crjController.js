@@ -84,11 +84,24 @@ SELECT
   -- 2 - Clés : perceptions du jour + leur réintégration (via perception_id)
   COALESCE((
     SELECT json_agg(k ORDER BY k.created_at) FROM (
-      SELECT sc.id, sc.trousse_cle, sc.lieu, sc.personne_habilitee, sc.heure, sc.created_at,
-             to_char(${localTz("sc.created_at")}, 'HH24:MI') AS heure_saisie,
-             r.personne_habilitee AS reint_personne,
-             r.heure AS reint_heure,
-             to_char(${localTz("r.created_at")}, 'HH24:MI') AS reint_heure_saisie
+      SELECT sc.id, COALESCE(sc.type_cle, sc.trousse_cle) AS trousse_cle,
+             COALESCE(sc.lieu, '') AS lieu,
+             COALESCE(
+               NULLIF(TRIM(CONCAT_WS(' ', NULLIF(sc.nom_personne, ''), NULLIF(sc.prenom_personne, ''))), ''),
+               sc.personne_habilitee
+             ) AS personne_habilitee,
+             COALESCE(NULLIF(sc.heure, ''), to_char(sc.heure_sortie, 'HH24:MI')) AS heure,
+             COALESCE(sc.cree_le, sc.created_at) AS created_at,
+             to_char(${localTz("COALESCE(sc.cree_le, sc.created_at)")}, 'HH24:MI') AS heure_saisie,
+             COALESCE(
+               r.personne_habilitee,
+               NULLIF(TRIM(CONCAT_WS(' ', NULLIF(sc.nom_personne, ''), NULLIF(sc.prenom_personne, ''))), '')
+             ) AS reint_personne,
+             COALESCE(r.heure, to_char(sc.heure_retour, 'HH24:MI')) AS reint_heure,
+             COALESCE(
+               to_char(${localTz("r.created_at")}, 'HH24:MI'),
+               to_char(sc.heure_retour, 'HH24:MI')
+             ) AS reint_heure_saisie
       FROM suivi_cle sc
       LEFT JOIN LATERAL (
         SELECT r1.personne_habilitee, r1.heure, r1.created_at
@@ -99,20 +112,21 @@ SELECT
       ) r ON true
       CROSS JOIN s
       CROSS JOIN p
-      WHERE sc.action = 'Perception'
-        AND ${localTz("sc.created_at")}::date = $3::date
+      WHERE (sc.action = 'Perception' OR sc.type_cle IS NOT NULL)
+    AND sc.date_suivi = $3::date
         AND (
           EXISTS (
             SELECT 1 FROM employe e
-            WHERE UPPER(TRIM(e.matricule)) = UPPER(TRIM(sc.agent_gardien))
-              AND e.site_id = s.id AND e.prestataire_id = p.id
-          )
-          OR EXISTS (
-            SELECT 1 FROM prise_de_poste pp2
-            WHERE UPPER(TRIM(pp2.matricule)) = UPPER(TRIM(sc.agent_gardien))
-              AND UPPER(TRIM(pp2.site_de_travail)) = UPPER(TRIM(s.nom))
-              AND UPPER(TRIM(pp2.prestataire)) = UPPER(TRIM(p.nom))
-              AND ${local("pp2.started_at")}::date = $3::date
+          WHERE UPPER(TRIM(e.matricule)) = UPPER(TRIM(COALESCE(NULLIF(sc.agent_gardien, ''), sc.matricule_personne)))
+            AND (e.site_id = s.id OR (e.site_id IS NULL AND sc.site_id = s.id))
+            AND e.prestataire_id = p.id
+        )
+        OR EXISTS (
+          SELECT 1 FROM prise_de_poste pp2
+          WHERE UPPER(TRIM(pp2.matricule)) = UPPER(TRIM(COALESCE(NULLIF(sc.agent_gardien, ''), sc.matricule_personne)))
+            AND UPPER(TRIM(pp2.site_de_travail)) = UPPER(TRIM(s.nom))
+            AND UPPER(TRIM(pp2.prestataire)) = UPPER(TRIM(p.nom))
+            AND ${local("pp2.started_at")}::date = $3::date
           )
         )
     ) k
