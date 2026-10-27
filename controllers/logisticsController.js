@@ -3,7 +3,7 @@ import { json, readJson } from "../utils/helpers.js";
 const datePattern = /^\d{4}-\d{2}-\d{2}$/;
 const timePattern = /^(?:[01]\d|2[0-3]):[0-5]\d$/;
 const truckTypes = new Set(["DECHARGEMENT", "CHARGEMENT"]);
-const fluxTypes = new Set(["DECHARGEMENT", "CHARGEMENT", "INVENTAIRE", "DECHETS"]);
+const fluxTypes = new Set(["DECHARGEMENT", "CHARGEMENT", "INVENTAIRE", "DECHETS", "MATIERE_PREMIERE"]);
 const incidentTypes = new Set(["ANOMALIE", "VIOLATION_PROCEDURE"]);
 const stockCategories = new Set(["VIDES", "PLEINS_EAUX"]);
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -58,7 +58,8 @@ export async function getLogisticsEntries(request, response, pool, userId) {
       `SELECT f.id, f.date_operation AS date, f.type_flux AS type,
               f.camion, f.transporteur, f.document, f.plomb,
               to_char(f.heure_sortie, 'HH24:MI') AS "heureSortie", f.numero_pesage AS "numeroPesage",
-              f.facture, f.poids, f.destinataire, f.vehicule,
+              f.facture, f.poids, f.destinataire, COALESCE(f.vehicule, f.camion) AS vehicule,
+              to_char(f.heure_pointe, 'HH24:MI') AS "heurePointe", f.designation, f.provenance,
               f.categorie_stock AS "categorieStock", f.article, f.quantite,
               s.nom AS "siteName", s.type_site AS "siteType", f.cree_le AS "createdAt"
        FROM flux_logistique f JOIN site s ON s.id = f.site_id
@@ -146,6 +147,33 @@ export async function createLogisticsEntry(request, response, pool, userId) {
         entry: {
           ...result.rows[0], date, type, heureSortie: time, numeroPesage, facture, poids, destinataire, vehicule,
           siteName: site.nom, siteType: site.type_site,
+        },
+      });
+    }
+
+    if (type === "MATIERE_PREMIERE") {
+      const time = cleanText(body.heurePointe, 5);
+      const vehicule = cleanText(body.vehicule, 160);
+      const designation = cleanText(body.designation, 160);
+      const quantity = Number(body.quantite);
+      const document = cleanText(body.document, 160);
+      const provenance = cleanText(body.provenance, 255);
+      if (!timePattern.test(time) || !vehicule || !designation || !Number.isFinite(quantity) ||
+          quantity <= 0 || quantity > 9999999999.99 || !document || !provenance) {
+        throw Object.assign(new Error("Renseignez l’heure de pointe, le véhicule, la désignation, une quantité positive, le bon de livraison/facture et la provenance."), { status: 400 });
+      }
+      const result = await client.query(
+        `INSERT INTO flux_logistique
+           (date_operation, type_flux, camion, heure_pointe, designation, quantite, document, provenance, site_id, utilisateur_id)
+         VALUES ($1::date, 'MATIERE_PREMIERE', $2, $3::time, $4, $5, $6, $7, $8::uuid, $9::uuid)
+         RETURNING id, cree_le AS "createdAt"`,
+        [date, vehicule, time, designation, quantity, document, provenance, siteId, userId],
+      );
+      await client.query("COMMIT");
+      return json(response, 201, {
+        entry: {
+          ...result.rows[0], date, type, vehicule, heurePointe: time, designation,
+          quantite: quantity, document, provenance, siteName: site.nom, siteType: site.type_site,
         },
       });
     }
@@ -248,6 +276,80 @@ export async function deleteWasteEntry(request, response, pool, userId, entryId)
   } catch (error) {
     console.error("DELETE /logistics/:id failed:", error.code || error.name, error.message || "");
     json(response, error.status || 500, { error: error.status ? error.message : "Impossible de supprimer la sortie de déchets." });
+  }
+}
+
+export async function updateMatierePremiereEntry(request, response, pool, userId, entryId) {
+  const client = await pool.connect();
+  try {
+    if (!uuidPattern.test(entryId)) {
+      return json(response, 404, { error: "Déchargement introuvable." });
+    }
+    const body = await readJson(request);
+    const date = cleanText(body.date, 10);
+    const time = cleanText(body.heurePointe, 5);
+    const vehicule = cleanText(body.vehicule, 160);
+    const designation = cleanText(body.designation, 160);
+    const quantity = Number(body.quantite);
+    const document = cleanText(body.document, 160);
+    const provenance = cleanText(body.provenance, 255);
+    if (!validDate(date) || !timePattern.test(time) || !vehicule || !designation ||
+        !Number.isFinite(quantity) || quantity <= 0 || quantity > 9999999999.99 || !document || !provenance) {
+      return json(response, 400, { error: "Renseignez une date et heure valides, le véhicule, la désignation, une quantité positive, le bon de livraison/facture et la provenance." });
+    }
+
+    await client.query("BEGIN");
+    const account = await getAccount(client, userId);
+    const siteId = await resolveSite(client, account, body);
+    const existing = await client.query(
+      `SELECT id FROM flux_logistique
+       WHERE id = $1::uuid AND type_flux = 'MATIERE_PREMIERE' AND site_id = $2::uuid
+       FOR UPDATE`,
+      [entryId, siteId],
+    );
+    if (!existing.rows[0]) {
+      await client.query("ROLLBACK");
+      return json(response, 404, { error: "Déchargement introuvable sur ce site." });
+    }
+    const result = await client.query(
+      `UPDATE flux_logistique
+       SET date_operation = $2::date, camion = $3, heure_pointe = $4::time,
+           designation = $5, quantite = $6, document = $7, provenance = $8
+       WHERE id = $1::uuid
+       RETURNING id, date_operation::text AS date, to_char(heure_pointe, 'HH24:MI') AS "heurePointe",
+                 camion AS vehicule, designation, quantite, document, provenance`,
+      [entryId, date, vehicule, time, designation, quantity, document, provenance],
+    );
+    await client.query("COMMIT");
+    json(response, 200, { entry: { ...result.rows[0], type: "MATIERE_PREMIERE" } });
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => {});
+    console.error("PUT /logistics/:id matter-premiere failed:", error.code || error.name, error.message || "");
+    json(response, error.status || 500, { error: error.status ? error.message : "Impossible de modifier le déchargement." });
+  } finally {
+    client.release();
+  }
+}
+
+export async function deleteMatierePremiereEntry(request, response, pool, userId, entryId) {
+  try {
+    if (!uuidPattern.test(entryId)) {
+      return json(response, 404, { error: "Déchargement introuvable." });
+    }
+    const account = await getAccount(pool, userId);
+    const siteId = await querySiteForRead(pool, account, request);
+    if (!siteId) return json(response, 400, { error: "Sélectionnez un site pour supprimer le déchargement." });
+    const result = await pool.query(
+      `DELETE FROM flux_logistique
+       WHERE id = $1::uuid AND type_flux = 'MATIERE_PREMIERE' AND site_id = $2::uuid
+       RETURNING id`,
+      [entryId, siteId],
+    );
+    if (!result.rows[0]) return json(response, 404, { error: "Déchargement introuvable sur ce site." });
+    json(response, 200, { id: result.rows[0].id, deleted: true });
+  } catch (error) {
+    console.error("DELETE /logistics/:id matter-premiere failed:", error.code || error.name, error.message || "");
+    json(response, error.status || 500, { error: error.status ? error.message : "Impossible de supprimer le déchargement." });
   }
 }
 
