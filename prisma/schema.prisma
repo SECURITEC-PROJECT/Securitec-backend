@@ -44,6 +44,7 @@ model Site {
   rondes                  Ronde[]
   pointsVigilance         PointVigilance[]
   journalMainCourante     MainCourante[]
+  mouvementsCourrier     MouvementCourrier[]
   documentsSite           DocumentSite[]
   pointagesApsJour        PointageApsJour[]
   pointagesApsNuit        PointageApsNuit[]
@@ -71,6 +72,7 @@ model Utilisateur {
   rondes                  Ronde[]
   pointsVigilance         PointVigilance[]
   journalMainCourante     MainCourante[]
+  mouvementsCourrier     MouvementCourrier[]
   documentsSite           DocumentSite[]
   pointagesApsJour        PointageApsJour[]
   pointagesApsNuit        PointageApsNuit[]
@@ -566,6 +568,24 @@ model MainCourante {
 
   @@index([siteId, creeLe], map: "idx_main_courante_site_date")
   @@map("main_courante")
+}
+
+model MouvementCourrier {
+  id              String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  creeLe          DateTime    @default(now()) @map("cree_le") @db.Timestamp(6)
+  dateOperation   DateTime    @map("date_operation") @db.Date
+  heureEntree     DateTime    @map("heure_entree") @db.Time(0)
+  prenom          String      @db.VarChar(255)
+  designation     String      @db.Text
+  nombre          Int
+  heureSortie     DateTime?   @map("heure_sortie") @db.Time(0)
+  siteId          String      @map("site_id") @db.Uuid
+  utilisateurId   String      @map("utilisateur_id") @db.Uuid
+  site            Site        @relation(fields: [siteId], references: [id], onDelete: Restrict, map: "fk_mouvement_courrier_site")
+  utilisateur     Utilisateur @relation(fields: [utilisateurId], references: [id], onDelete: Restrict, map: "fk_mouvement_courrier_utilisateur")
+
+  @@index([siteId, dateOperation, heureEntree], map: "idx_mouvement_courrier_site_date")
+  @@map("mouvement_courrier")
 }
 
 model PointageApsJour {
