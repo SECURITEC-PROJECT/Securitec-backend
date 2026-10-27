@@ -1,6 +1,8 @@
 import {
   createLogisticsEntry,
   createLogisticsIncident,
+  updateLogisticsIncident,
+  deleteLogisticsIncident,
   deleteDepotageFuelEntry,
   deleteTruckLogisticsEntry,
   deleteWasteEntry,
@@ -20,13 +22,15 @@ import { json } from "../utils/helpers.js";
 const apiPrefix = "/api";
 const entriesPath = `${apiPrefix}/logistics`;
 const incidentsPath = `${entriesPath}/incidents`;
+const incidentEntryPath = /^\/api\/logistics\/incidents\/([0-9a-f-]{36})$/i;
 const wasteEntryPath = /^\/api\/logistics\/([0-9a-f-]+)$/i;
 const emptyBottleEntryPath = /^\/api\/logistics\/empty-bottles\/([0-9a-f-]+)$/i;
 
 export async function handleFluxRoutes(request, response, pool, pathname, jwtSecret) {
   const wasteMatch = wasteEntryPath.exec(pathname);
   const emptyBottleMatch = emptyBottleEntryPath.exec(pathname);
-  if (pathname !== entriesPath && pathname !== incidentsPath && !wasteMatch && !emptyBottleMatch) return false;
+  const incidentMatch = incidentEntryPath.exec(pathname);
+  if (pathname !== entriesPath && pathname !== incidentsPath && !wasteMatch && !emptyBottleMatch && !incidentMatch) return false;
 
   const user = getRequestUser(request, jwtSecret);
   if (!user) {
@@ -90,6 +94,14 @@ export async function handleFluxRoutes(request, response, pool, pathname, jwtSec
   }
   if (pathname === incidentsPath && request.method === "POST") {
     await createLogisticsIncident(request, response, pool, user.id);
+    return true;
+  }
+  if (incidentMatch && request.method === "PUT") {
+    await updateLogisticsIncident(request, response, pool, user.id, incidentMatch[1]);
+    return true;
+  }
+  if (incidentMatch && request.method === "DELETE") {
+    await deleteLogisticsIncident(request, response, pool, user.id, incidentMatch[1]);
     return true;
   }
 

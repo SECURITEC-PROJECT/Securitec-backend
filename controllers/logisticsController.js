@@ -776,3 +776,50 @@ export async function createLogisticsIncident(request, response, pool, userId) {
     client.release();
   }
 }
+
+export async function updateLogisticsIncident(request, response, pool, userId, entryId) {
+  try {
+    const body = await readJson(request);
+    const date = normalizeDate(body.date);
+    const time = cleanText(body.time, 5);
+    const facts = cleanText(body.facts, 20000);
+    if (!validDate(date) || !timePattern.test(time) || !facts) {
+      return json(response, 400, { error: "Indiquez une date, une heure et une description valides." });
+    }
+    const account = await getAccount(pool, userId);
+    const siteId = await resolveSite(pool, account, body);
+    const result = await pool.query(
+      `UPDATE signalement_logistique
+       SET date_operation=$1::date, heure=$2::time, personne=$3, observations=$4,
+           description_faits=$5, mesures_prises=$6
+       WHERE id=$7::uuid AND site_id=$8::uuid AND type_signalement='ANOMALIE'
+       RETURNING id, date_operation AS date, to_char(heure, 'HH24:MI') AS time,
+                 personne AS person, observations, description_faits AS facts,
+                 mesures_prises AS measures`,
+      [date, time, cleanText(body.person) || null, cleanText(body.observations, 20000) || null,
+        facts, cleanText(body.measures, 20000) || null, entryId, siteId],
+    );
+    if (!result.rows[0]) return json(response, 404, { error: "Anomalie introuvable pour ce site." });
+    json(response, 200, { entry: result.rows[0] });
+  } catch (error) {
+    console.error("PUT /logistics/incidents/:id failed:", error.code || error.name, error.message || "");
+    json(response, error.status || 500, { error: error.status ? error.message : "Impossible de modifier l'anomalie." });
+  }
+}
+
+export async function deleteLogisticsIncident(request, response, pool, userId, entryId) {
+  try {
+    const account = await getAccount(pool, userId);
+    const url = new URL(request.url || "/", `http://${request.headers.host || "localhost"}`);
+    const siteId = await resolveSite(pool, account, { siteId: url.searchParams.get("siteId") });
+    const result = await pool.query(
+      "DELETE FROM signalement_logistique WHERE id=$1::uuid AND site_id=$2::uuid AND type_signalement='ANOMALIE' RETURNING id",
+      [entryId, siteId],
+    );
+    if (!result.rows[0]) return json(response, 404, { error: "Anomalie introuvable pour ce site." });
+    json(response, 200, { id: result.rows[0].id, deleted: true });
+  } catch (error) {
+    console.error("DELETE /logistics/incidents/:id failed:", error.code || error.name, error.message || "");
+    json(response, error.status || 500, { error: error.status ? error.message : "Impossible de supprimer l'anomalie." });
+  }
+}
