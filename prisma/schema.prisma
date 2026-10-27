@@ -22,54 +22,54 @@ enum ShiftAgent {
 }
 
 model Site {
-  id                 String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  nom                String            @db.VarChar(255)
-  adresse            String            @db.Text
-  actif              Boolean           @default(true)
-  horairesOuverture  String?           @map("horaires_ouverture") @db.VarChar(255)
-  typeSite           TypeSite          @default(USINE) @map("type_site")
-  utilisateurs       Utilisateur[]
-  visiteurs          Visiteur[]
-  zones              Zone[]
-  postes             Poste[]
-  employes           Employe[]
-  comptesRendus      CompteRendu[]
-  vacations          Vacation[]
-  passations         Passation[]
-  mouvementsVehicule PassageVehicule[]
-  suivisCles          SuiviCle[]
-  controlesAlcoolemie ControleAlcoolemie[]
-  fluxLogistiques     FluxLogistique[]
+  id                      String                  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  nom                     String                  @db.VarChar(255)
+  adresse                 String                  @db.Text
+  actif                   Boolean                 @default(true)
+  horairesOuverture       String?                 @map("horaires_ouverture") @db.VarChar(255)
+  typeSite                TypeSite                @default(USINE) @map("type_site")
+  utilisateurs            Utilisateur[]
+  visiteurs               Visiteur[]
+  zones                   Zone[]
+  postes                  Poste[]
+  employes                Employe[]
+  comptesRendus           CompteRendu[]
+  vacations               Vacation[]
+  passations              Passation[]
+  mouvementsVehicule      PassageVehicule[]
+  suivisCles              SuiviCle[]
+  controlesAlcoolemie     ControleAlcoolemie[]
+  fluxLogistiques         FluxLogistique[]
   signalementsLogistiques SignalementLogistique[]
-  rondes              Ronde[]
-  pointsVigilance     PointVigilance[]
-  journalMainCourante MainCourante[]
-  documentsSite        DocumentSite[]
+  rondes                  Ronde[]
+  pointsVigilance         PointVigilance[]
+  journalMainCourante     MainCourante[]
+  documentsSite           DocumentSite[]
 
   @@map("site")
 }
 
 model Utilisateur {
-  id          String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  nom         String             @db.VarChar(255)
-  identifiant String             @unique @db.VarChar(100)
-  role        Int
-  pinHache    String             @map("pin_hache") @db.VarChar(255)
-  siteId      String?            @map("site_id") @db.Uuid
-  site        Site?              @relation(fields: [siteId], references: [id], onDelete: SetNull, map: "fk_utilisateur_site")
-  consignes   Consigne[]
-  badges      Badge[]
-  vacations   Vacation[]
-  passations  Passation[]
-  audits      AuditCompteRendu[]
-  suivisCles  SuiviCle[]
-  controlesAlcoolemie ControleAlcoolemie[]
-  fluxLogistiques FluxLogistique[]
+  id                      String                  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  nom                     String                  @db.VarChar(255)
+  identifiant             String                  @unique @db.VarChar(100)
+  role                    Int
+  pinHache                String                  @map("pin_hache") @db.VarChar(255)
+  siteId                  String?                 @map("site_id") @db.Uuid
+  site                    Site?                   @relation(fields: [siteId], references: [id], onDelete: SetNull, map: "fk_utilisateur_site")
+  consignes               Consigne[]
+  badges                  Badge[]
+  vacations               Vacation[]
+  passations              Passation[]
+  audits                  AuditCompteRendu[]
+  suivisCles              SuiviCle[]
+  controlesAlcoolemie     ControleAlcoolemie[]
+  fluxLogistiques         FluxLogistique[]
   signalementsLogistiques SignalementLogistique[]
-  rondes          Ronde[]
-  pointsVigilance PointVigilance[]
-  journalMainCourante MainCourante[]
-  documentsSite DocumentSite[]
+  rondes                  Ronde[]
+  pointsVigilance         PointVigilance[]
+  journalMainCourante     MainCourante[]
+  documentsSite           DocumentSite[]
 
   @@index([siteId], map: "idx_utilisateur_site")
   @@map("utilisateur")
@@ -351,6 +351,7 @@ model Employe {
   prenom        String             @db.VarChar(100)
   nom           String             @db.VarChar(100)
   matricule     String             @unique @db.VarChar(50)
+  role          String             @default("Agent") @db.VarChar(100)
   actif         Boolean            @default(true)
   prestataireId String             @map("prestataire_id") @db.Uuid
   siteId        String?            @map("site_id") @db.Uuid
@@ -390,43 +391,50 @@ model AuditCompteRendu {
 }
 
 model SuiviCle {
-  id                              String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  creeLe                          DateTime    @default(now()) @map("cree_le") @db.Timestamp(6)
-  dateSuivi                       DateTime    @map("date_suivi") @db.Date
-  lieu                            String      @db.VarChar(255)
-  perceptionMatin                 DateTime?   @map("perception_matin") @db.Time(0)
-  responsablePerceptionMatin      String?     @map("responsable_perception_matin") @db.VarChar(255)
-  reintegrationMatin              DateTime?   @map("reintegration_matin") @db.Time(0)
-  responsableReintegrationMatin   String?     @map("responsable_reintegration_matin") @db.VarChar(255)
-  perceptionApresMidi             DateTime?   @map("perception_apres_midi") @db.Time(0)
-  responsablePerceptionApresMidi String?     @map("responsable_perception_apres_midi") @db.VarChar(255)
-  reintegrationApresMidi          DateTime?   @map("reintegration_apres_midi") @db.Time(0)
-  responsableReintegrationApresMidi String?   @map("responsable_reintegration_apres_midi") @db.VarChar(255)
-  observations                    String?     @db.Text
-  siteId                          String      @map("site_id") @db.Uuid
-  utilisateurId                  String      @map("utilisateur_id") @db.Uuid
-  site                            Site        @relation(fields: [siteId], references: [id], onDelete: Restrict, map: "fk_suivi_cle_site")
-  utilisateur                     Utilisateur @relation(fields: [utilisateurId], references: [id], onDelete: Restrict, map: "fk_suivi_cle_utilisateur")
+  id                                Int         @id @default(autoincrement())
+  creeLe                            DateTime    @default(now()) @map("cree_le") @db.Timestamp(6)
+  dateSuivi                         DateTime    @map("date_suivi") @db.Date
+  lieu                              String?     @db.VarChar(255)
+  nomPersonne                       String?     @map("nom_personne") @db.VarChar(100)
+  prenomPersonne                    String?     @map("prenom_personne") @db.VarChar(100)
+  matriculePersonne                 String?     @map("matricule_personne") @db.VarChar(50)
+  typeCle                           String?     @map("type_cle") @db.VarChar(100)
+  nombreCles                        Int?        @map("nombre_cles")
+  heureSortie                       DateTime?   @map("heure_sortie") @db.Time(0)
+  heureRetour                       DateTime?   @map("heure_retour") @db.Time(0)
+  perceptionMatin                   DateTime?   @map("perception_matin") @db.Time(0)
+  responsablePerceptionMatin        String?     @map("responsable_perception_matin") @db.VarChar(255)
+  reintegrationMatin                DateTime?   @map("reintegration_matin") @db.Time(0)
+  responsableReintegrationMatin     String?     @map("responsable_reintegration_matin") @db.VarChar(255)
+  perceptionApresMidi               DateTime?   @map("perception_apres_midi") @db.Time(0)
+  responsablePerceptionApresMidi    String?     @map("responsable_perception_apres_midi") @db.VarChar(255)
+  reintegrationApresMidi            DateTime?   @map("reintegration_apres_midi") @db.Time(0)
+  responsableReintegrationApresMidi String?     @map("responsable_reintegration_apres_midi") @db.VarChar(255)
+  observations                      String?     @db.Text
+  siteId                            String?     @map("site_id") @db.Uuid
+  utilisateurId                     String?     @map("utilisateur_id") @db.Uuid
+  site                              Site?       @relation(fields: [siteId], references: [id], onDelete: Restrict, map: "fk_suivi_cle_site")
+  utilisateur                      Utilisateur? @relation(fields: [utilisateurId], references: [id], onDelete: Restrict, map: "fk_suivi_cle_utilisateur")
 
   @@index([siteId, dateSuivi], map: "idx_suivi_cle_site_date")
   @@map("suivi_cle")
 }
 
 model ControleAlcoolemie {
-  id             String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  creeLe         DateTime    @default(now()) @map("cree_le") @db.Timestamp(6)
-  dateControle   DateTime    @map("date_controle") @db.Date
-  heure          DateTime    @db.Time(0)
-  personne       String      @db.VarChar(255)
-  appartenance   String      @db.VarChar(40)
-  demandeur      String?     @db.VarChar(255)
-  typeDemande    String      @map("type_demande") @db.VarChar(80)
-  resultat       String      @db.VarChar(20)
-  tauxMesure     Decimal?    @map("taux_mesure") @db.Decimal(5, 2)
-  siteId         String      @map("site_id") @db.Uuid
-  utilisateurId  String      @map("utilisateur_id") @db.Uuid
-  site           Site        @relation(fields: [siteId], references: [id], onDelete: Restrict, map: "fk_controle_alcoolemie_site")
-  utilisateur    Utilisateur @relation(fields: [utilisateurId], references: [id], onDelete: Restrict, map: "fk_controle_alcoolemie_utilisateur")
+  id            String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  creeLe        DateTime    @default(now()) @map("cree_le") @db.Timestamp(6)
+  dateControle  DateTime    @map("date_controle") @db.Date
+  heure         DateTime    @db.Time(0)
+  personne      String      @db.VarChar(255)
+  appartenance  String      @db.VarChar(40)
+  demandeur     String?     @db.VarChar(255)
+  typeDemande   String      @map("type_demande") @db.VarChar(80)
+  resultat      String      @db.VarChar(20)
+  tauxMesure    Decimal?    @map("taux_mesure") @db.Decimal(5, 2)
+  siteId        String      @map("site_id") @db.Uuid
+  utilisateurId String      @map("utilisateur_id") @db.Uuid
+  site          Site        @relation(fields: [siteId], references: [id], onDelete: Restrict, map: "fk_controle_alcoolemie_site")
+  utilisateur   Utilisateur @relation(fields: [utilisateurId], references: [id], onDelete: Restrict, map: "fk_controle_alcoolemie_utilisateur")
 
   @@index([siteId, dateControle, heure], map: "idx_alcoolemie_site_date")
   @@map("controle_alcoolemie")
@@ -454,26 +462,26 @@ model FluxLogistique {
 }
 
 model SignalementLogistique {
-  id             String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  creeLe         DateTime    @default(now()) @map("cree_le") @db.Timestamp(6)
-  dateOperation  DateTime    @map("date_operation") @db.Date
-  heure          DateTime    @db.Time(0)
-  typeSignalement String     @map("type_signalement") @db.VarChar(30)
-  camion         String?     @db.VarChar(160)
-  transporteur   String?     @db.VarChar(255)
-  document       String?     @db.VarChar(160)
-  casse          String?     @db.Text
-  manquant       String?     @db.Text
-  vides          String?     @db.Text
-  phn            String?     @db.Text
-  descriptionFaits String?   @map("description_faits") @db.Text
-  personne       String?     @db.VarChar(255)
-  observations   String?     @db.Text
-  mesuresPrises  String?     @map("mesures_prises") @db.Text
-  siteId         String      @map("site_id") @db.Uuid
-  utilisateurId  String      @map("utilisateur_id") @db.Uuid
-  site           Site        @relation(fields: [siteId], references: [id], onDelete: Restrict, map: "fk_signalement_logistique_site")
-  utilisateur    Utilisateur @relation(fields: [utilisateurId], references: [id], onDelete: Restrict, map: "fk_signalement_logistique_utilisateur")
+  id               String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  creeLe           DateTime    @default(now()) @map("cree_le") @db.Timestamp(6)
+  dateOperation    DateTime    @map("date_operation") @db.Date
+  heure            DateTime    @db.Time(0)
+  typeSignalement  String      @map("type_signalement") @db.VarChar(30)
+  camion           String?     @db.VarChar(160)
+  transporteur     String?     @db.VarChar(255)
+  document         String?     @db.VarChar(160)
+  casse            String?     @db.Text
+  manquant         String?     @db.Text
+  vides            String?     @db.Text
+  phn              String?     @db.Text
+  descriptionFaits String?     @map("description_faits") @db.Text
+  personne         String?     @db.VarChar(255)
+  observations     String?     @db.Text
+  mesuresPrises    String?     @map("mesures_prises") @db.Text
+  siteId           String      @map("site_id") @db.Uuid
+  utilisateurId    String      @map("utilisateur_id") @db.Uuid
+  site             Site        @relation(fields: [siteId], references: [id], onDelete: Restrict, map: "fk_signalement_logistique_site")
+  utilisateur      Utilisateur @relation(fields: [utilisateurId], references: [id], onDelete: Restrict, map: "fk_signalement_logistique_utilisateur")
 
   @@index([siteId, dateOperation, heure], map: "idx_signalement_logistique_site_date")
   @@map("signalement_logistique")
@@ -497,40 +505,40 @@ model Ronde {
 }
 
 model PointVigilance {
-  id              String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  creeLe          DateTime    @default(now()) @map("cree_le") @db.Timestamp(6)
-  typePoint       String      @map("type_point") @db.VarChar(160)
-  elementVerifie  String      @map("element_verifie") @db.VarChar(255)
-  statut          String      @db.VarChar(40)
-  observations    String?     @db.Text
-  heure           DateTime    @db.Time(0)
-  agentNom        String      @map("agent_nom") @db.VarChar(255)
-  siteId          String      @map("site_id") @db.Uuid
-  utilisateurId   String      @map("utilisateur_id") @db.Uuid
-  site            Site        @relation(fields: [siteId], references: [id], onDelete: Restrict, map: "fk_point_vigilance_site")
-  utilisateur     Utilisateur @relation(fields: [utilisateurId], references: [id], onDelete: Restrict, map: "fk_point_vigilance_utilisateur")
+  id             String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  creeLe         DateTime    @default(now()) @map("cree_le") @db.Timestamp(6)
+  typePoint      String      @map("type_point") @db.VarChar(160)
+  elementVerifie String      @map("element_verifie") @db.VarChar(255)
+  statut         String      @db.VarChar(40)
+  observations   String?     @db.Text
+  heure          DateTime    @db.Time(0)
+  agentNom       String      @map("agent_nom") @db.VarChar(255)
+  siteId         String      @map("site_id") @db.Uuid
+  utilisateurId  String      @map("utilisateur_id") @db.Uuid
+  site           Site        @relation(fields: [siteId], references: [id], onDelete: Restrict, map: "fk_point_vigilance_site")
+  utilisateur    Utilisateur @relation(fields: [utilisateurId], references: [id], onDelete: Restrict, map: "fk_point_vigilance_utilisateur")
 
   @@index([siteId, creeLe], map: "idx_point_vigilance_site_date")
   @@map("point_vigilance")
 }
 
 model MainCourante {
-  id               String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  creeLe           DateTime    @default(now()) @map("cree_le") @db.Timestamp(6)
-  typeEntree       String      @map("type_entree") @db.VarChar(40)
-  category         String      @db.VarChar(80)
-  severity         String      @db.VarChar(20)
-  zone             String?     @db.VarChar(255)
-  people           String?     @db.VarChar(255)
-  statutAuteur     String?     @map("statut_auteur") @db.VarChar(80)
-  natureViolation  String?     @map("nature_violation") @db.VarChar(160)
-  description      String      @db.Text
-  mesuresPrises    String?     @map("mesures_prises") @db.Text
-  heure            DateTime    @db.Time(0)
-  siteId           String      @map("site_id") @db.Uuid
-  utilisateurId    String      @map("utilisateur_id") @db.Uuid
-  site             Site        @relation(fields: [siteId], references: [id], onDelete: Restrict, map: "fk_main_courante_site")
-  utilisateur      Utilisateur @relation(fields: [utilisateurId], references: [id], onDelete: Restrict, map: "fk_main_courante_utilisateur")
+  id              String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  creeLe          DateTime    @default(now()) @map("cree_le") @db.Timestamp(6)
+  typeEntree      String      @map("type_entree") @db.VarChar(40)
+  category        String      @db.VarChar(80)
+  severity        String      @db.VarChar(20)
+  zone            String?     @db.VarChar(255)
+  people          String?     @db.VarChar(255)
+  statutAuteur    String?     @map("statut_auteur") @db.VarChar(80)
+  natureViolation String?     @map("nature_violation") @db.VarChar(160)
+  description     String      @db.Text
+  mesuresPrises   String?     @map("mesures_prises") @db.Text
+  heure           DateTime    @db.Time(0)
+  siteId          String      @map("site_id") @db.Uuid
+  utilisateurId   String      @map("utilisateur_id") @db.Uuid
+  site            Site        @relation(fields: [siteId], references: [id], onDelete: Restrict, map: "fk_main_courante_site")
+  utilisateur     Utilisateur @relation(fields: [utilisateurId], references: [id], onDelete: Restrict, map: "fk_main_courante_utilisateur")
 
   @@index([siteId, creeLe], map: "idx_main_courante_site_date")
   @@map("main_courante")
@@ -553,4 +561,3 @@ model DocumentSite {
   @@index([siteId, creeLe(sort: Desc)], map: "document_site_site_id_cree_le_idx")
   @@map("document_site")
 }
-

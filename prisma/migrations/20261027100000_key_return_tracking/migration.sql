@@ -1,0 +1,11 @@
+ALTER TABLE "suivi_cle"
+  ALTER COLUMN "lieu" DROP NOT NULL;
+
+ALTER TABLE "suivi_cle"
+  ADD COLUMN IF NOT EXISTS "nom_personne" VARCHAR(100),
+  ADD COLUMN IF NOT EXISTS "prenom_personne" VARCHAR(100),
+  ADD COLUMN IF NOT EXISTS "matricule_personne" VARCHAR(50),
+  ADD COLUMN IF NOT EXISTS "type_cle" VARCHAR(100),
+  ADD COLUMN IF NOT EXISTS "nombre_cles" INTEGER,
+  ADD COLUMN IF NOT EXISTS "heure_sortie" TIME(0),
+  ADD COLUMN IF NOT EXISTS "heure_retour" TIME(0);
