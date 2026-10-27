@@ -3,12 +3,21 @@ import { json, readJson } from "../utils/helpers.js";
 const datePattern = /^\d{4}-\d{2}-\d{2}$/;
 const timePattern = /^(?:[01]\d|2[0-3]):[0-5]\d$/;
 const truckTypes = new Set(["DECHARGEMENT", "CHARGEMENT"]);
-const fluxTypes = new Set(["DECHARGEMENT", "CHARGEMENT", "INVENTAIRE", "DECHETS"]);
+const fluxTypes = new Set(["DECHARGEMENT", "CHARGEMENT", "INVENTAIRE", "DECHETS", "BOUTEILLES_VIDES"]);
 const incidentTypes = new Set(["ANOMALIE", "VIOLATION_PROCEDURE"]);
 const stockCategories = new Set(["VIDES", "PLEINS_EAUX"]);
+const bottleDesignations = new Set(["65 Cl", "50 Cl", "33 Cl", "30 Cl", "1 L"]);
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 const cleanText = (value, max = 255) => typeof value === "string" ? value.trim().slice(0, max) : "";
+const normalizeDate = (value) => {
+  if (typeof value !== "string") return "";
+  const input = value.trim();
+  const isoDate = input.match(/^(\d{4}-\d{2}-\d{2})(?:T.*)?$/);
+  if (isoDate) return isoDate[1];
+  const localDate = input.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+  return localDate ? `${localDate[3]}-${localDate[2]}-${localDate[1]}` : input;
+};
 const validDate = (value) => {
   if (typeof value !== "string" || !datePattern.test(value)) return false;
   const date = new Date(`${value}T00:00:00.000Z`);
@@ -59,6 +68,11 @@ export async function getLogisticsEntries(request, response, pool, userId) {
               f.camion, f.transporteur, f.document, f.plomb,
               to_char(f.heure_sortie, 'HH24:MI') AS "heureSortie", f.numero_pesage AS "numeroPesage",
               f.facture, f.poids, f.destinataire, f.vehicule,
+              to_char(f.heure_arrivee, 'HH24:MI') AS "heureArrivee",
+              f.immatriculation_vehicule AS "immatriculationVehicule",
+              f.nom_chauffeur AS "nomChauffeur",
+              f.numero_titre AS "numeroTitre", f.provenance,
+              f.details_bouteilles AS "detailsBouteilles",
               f.categorie_stock AS "categorieStock", f.article, f.quantite,
               s.nom AS "siteName", s.type_site AS "siteType", f.cree_le AS "createdAt"
        FROM flux_logistique f JOIN site s ON s.id = f.site_id
@@ -77,10 +91,14 @@ export async function createLogisticsEntry(request, response, pool, userId) {
   const client = await pool.connect();
   try {
     const body = await readJson(request);
-    const type = fluxTypes.has(body.type) ? body.type : "";
-    const date = cleanText(body.date, 10);
-    if (!type || !validDate(date)) {
-      return json(response, 400, { error: "Choisissez un type de flux et une date valide." });
+    const requestedType = typeof body.type === "string" ? body.type : body.typeFlux;
+    const type = typeof requestedType === "string" ? requestedType.trim().toUpperCase() : "";
+    const date = normalizeDate(body.date ?? body.dateOperation);
+    if (!fluxTypes.has(type)) {
+      return json(response, 400, { error: "Le type de flux est invalide. Sélectionnez le déchargement de bouteilles vides." });
+    }
+    if (!validDate(date)) {
+      return json(response, 400, { error: "La date est invalide. Choisissez une date valide dans le formulaire." });
     }
 
     await client.query("BEGIN");
@@ -89,6 +107,53 @@ export async function createLogisticsEntry(request, response, pool, userId) {
     const siteResult = await client.query("SELECT nom, type_site FROM site WHERE id = $1::uuid", [siteId]);
     const site = siteResult.rows[0];
     if (!site) throw Object.assign(new Error("Site de travail introuvable."), { status: 404 });
+
+    if (type === "BOUTEILLES_VIDES") {
+      const time = cleanText(body.heureArrivee, 5);
+      const immatriculation = cleanText(body.immatriculationVehicule, 100);
+      const nomChauffeur = cleanText(body.nomChauffeur, 255);
+      const numeroTitre = cleanText(body.numeroTitre, 100);
+      const provenance = typeof body.provenance === "number"
+        ? String(body.provenance)
+        : cleanText(body.provenance, 100);
+      const poids = Number(body.poids);
+      const details = Array.isArray(body.detailsBouteilles) ? body.detailsBouteilles : [];
+      const seenDesignations = new Set();
+      const normalizedDetails = details.map((item) => {
+        const designation = cleanText(item?.designation, 10);
+        const quantity = Number(item?.quantite);
+        if (!bottleDesignations.has(designation) || seenDesignations.has(designation)
+          || !Number.isInteger(quantity) || quantity < 1 || quantity > 1_000_000) {
+          throw Object.assign(new Error("Vérifiez chaque format de bouteille et sa quantité."), { status: 400 });
+        }
+        seenDesignations.add(designation);
+        return { designation, quantite: quantity };
+      });
+      if (!timePattern.test(time) || !immatriculation || !nomChauffeur || !/^\d+$/.test(numeroTitre)
+        || !/^\d+$/.test(provenance)
+        || !Number.isFinite(poids) || poids <= 0 || poids > 9999999999.99
+        || normalizedDetails.length === 0 || normalizedDetails.length > bottleDesignations.size) {
+        throw Object.assign(new Error("Renseignez l’heure d’arrivée, l’immatriculation, le nom du chauffeur, le numéro de titre, une provenance numérique, un poids positif et les quantités par format."), { status: 400 });
+      }
+      const result = await client.query(
+        `INSERT INTO flux_logistique
+           (date_operation, type_flux, heure_arrivee, immatriculation_vehicule,
+            nom_chauffeur, numero_titre, provenance, poids, details_bouteilles, site_id, utilisateur_id)
+         VALUES ($1::date, 'BOUTEILLES_VIDES', $2::time, $3, $4, $5, $6, $7, $8::jsonb, $9::uuid, $10::uuid)
+         RETURNING id, cree_le AS "createdAt"`,
+        [date, time, immatriculation, nomChauffeur, numeroTitre, provenance, poids,
+          JSON.stringify(normalizedDetails), siteId, userId],
+      );
+      await client.query("COMMIT");
+      return json(response, 201, {
+        entry: {
+          ...result.rows[0], date, type, heureArrivee: time,
+          immatriculationVehicule: immatriculation, nomChauffeur, numeroTitre, provenance,
+          poids, detailsBouteilles: normalizedDetails,
+          siteName: site.nom, siteType: site.type_site,
+        },
+      });
+    }
 
     if (type === "INVENTAIRE") {
       if (site.type_site !== "AGENCE") {
@@ -174,6 +239,91 @@ export async function createLogisticsEntry(request, response, pool, userId) {
     json(response, error.status || 500, { error: error.status ? error.message : "Impossible d'enregistrer le flux logistique." });
   } finally {
     client.release();
+  }
+}
+
+export async function updateEmptyBottleEntry(request, response, pool, userId, entryId) {
+  const client = await pool.connect();
+  try {
+    if (!uuidPattern.test(entryId)) return json(response, 404, { error: "Réception de bouteilles introuvable." });
+    const body = await readJson(request);
+    const date = cleanText(body.date, 10);
+    const time = cleanText(body.heureArrivee, 5);
+    const immatriculation = cleanText(body.immatriculationVehicule, 100);
+    const nomChauffeur = cleanText(body.nomChauffeur, 255);
+    const numeroTitre = cleanText(body.numeroTitre, 100);
+    const provenance = typeof body.provenance === "number"
+      ? String(body.provenance)
+      : cleanText(body.provenance, 100);
+    const poids = Number(body.poids);
+    const details = Array.isArray(body.detailsBouteilles) ? body.detailsBouteilles : [];
+    const seenDesignations = new Set();
+    const normalizedDetails = details.map((item) => {
+      const designation = cleanText(item?.designation, 10);
+      const quantity = Number(item?.quantite);
+      if (!bottleDesignations.has(designation) || seenDesignations.has(designation)
+        || !Number.isInteger(quantity) || quantity < 1 || quantity > 1_000_000) {
+        throw Object.assign(new Error("Vérifiez chaque format de bouteille et sa quantité."), { status: 400 });
+      }
+      seenDesignations.add(designation);
+      return { designation, quantite: quantity };
+    });
+    if (!validDate(date) || !timePattern.test(time) || !immatriculation || !nomChauffeur
+      || !/^\d+$/.test(numeroTitre) || !/^\d+$/.test(provenance)
+      || !Number.isFinite(poids) || poids <= 0 || poids > 9999999999.99
+      || normalizedDetails.length === 0 || normalizedDetails.length > bottleDesignations.size) {
+      return json(response, 400, { error: "Vérifiez les informations de la réception, le nom du chauffeur et les quantités par format." });
+    }
+
+    await client.query("BEGIN");
+    const account = await getAccount(client, userId);
+    const siteId = await resolveSite(client, account, body);
+    const result = await client.query(
+      `UPDATE flux_logistique
+       SET date_operation = $2::date, heure_arrivee = $3::time,
+           immatriculation_vehicule = $4, nom_chauffeur = $5, numero_titre = $6,
+           provenance = $7, poids = $8, details_bouteilles = $9::jsonb
+       WHERE id = $1::uuid AND site_id = $10::uuid AND type_flux = 'BOUTEILLES_VIDES'
+       RETURNING id`,
+      [entryId, date, time, immatriculation, nomChauffeur, numeroTitre, provenance,
+        poids, JSON.stringify(normalizedDetails), siteId],
+    );
+    if (!result.rows[0]) {
+      await client.query("ROLLBACK");
+      return json(response, 404, { error: "Réception de bouteilles introuvable sur ce site." });
+    }
+    await client.query("COMMIT");
+    json(response, 200, { entry: {
+      id: entryId, date, type: "BOUTEILLES_VIDES", heureArrivee: time,
+      immatriculationVehicule: immatriculation, nomChauffeur, numeroTitre, provenance,
+      poids, detailsBouteilles: normalizedDetails,
+    } });
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => {});
+    console.error("PUT empty bottle delivery failed:", error.code || error.name, error.message || "");
+    json(response, error.status || 500, { error: error.status ? error.message : "Impossible de modifier la réception de bouteilles." });
+  } finally {
+    client.release();
+  }
+}
+
+export async function deleteEmptyBottleEntry(request, response, pool, userId, entryId) {
+  try {
+    if (!uuidPattern.test(entryId)) return json(response, 404, { error: "Réception de bouteilles introuvable." });
+    const account = await getAccount(pool, userId);
+    const siteId = await querySiteForRead(pool, account, request);
+    if (!siteId) return json(response, 400, { error: "Sélectionnez un site pour supprimer la réception." });
+    const result = await pool.query(
+      `DELETE FROM flux_logistique
+       WHERE id = $1::uuid AND site_id = $2::uuid AND type_flux = 'BOUTEILLES_VIDES'
+       RETURNING id`,
+      [entryId, siteId],
+    );
+    if (!result.rows[0]) return json(response, 404, { error: "Réception de bouteilles introuvable sur ce site." });
+    json(response, 200, { id: result.rows[0].id, deleted: true });
+  } catch (error) {
+    console.error("DELETE empty bottle delivery failed:", error.code || error.name, error.message || "");
+    json(response, error.status || 500, { error: error.status ? error.message : "Impossible de supprimer la réception de bouteilles." });
   }
 }
 

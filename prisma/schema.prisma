@@ -453,11 +453,17 @@ model FluxLogistique {
   article        String?     @db.VarChar(100)
   quantite       Decimal?    @db.Decimal(12, 2)
   heureSortie    DateTime?   @map("heure_sortie") @db.Time(0)
+  heureArrivee   DateTime?   @map("heure_arrivee") @db.Time(0)
   numeroPesage   String?     @map("numero_pesage") @db.VarChar(100)
   facture        String?     @db.VarChar(160)
   poids          Decimal?    @db.Decimal(12, 2)
   destinataire   String?     @db.VarChar(255)
   vehicule       String?     @db.VarChar(160)
+  immatriculationVehicule String? @map("immatriculation_vehicule") @db.VarChar(100)
+  nomChauffeur   String?     @map("nom_chauffeur") @db.VarChar(255)
+  numeroTitre    String?     @map("numero_titre") @db.VarChar(100)
+  provenance     String?     @db.Text
+  detailsBouteilles Json     @default("[]") @map("details_bouteilles")
   siteId         String      @map("site_id") @db.Uuid
   utilisateurId  String      @map("utilisateur_id") @db.Uuid
   site           Site        @relation(fields: [siteId], references: [id], onDelete: Restrict, map: "fk_flux_logistique_site")
