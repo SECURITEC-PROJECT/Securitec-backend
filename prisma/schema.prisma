@@ -45,6 +45,7 @@ model Site {
   pointsVigilance         PointVigilance[]
   journalMainCourante     MainCourante[]
   mouvementsCourrier     MouvementCourrier[]
+  materielsSousTraitant  MaterielSousTraitant[]
   documentsSite           DocumentSite[]
   pointagesApsJour        PointageApsJour[]
   pointagesApsNuit        PointageApsNuit[]
@@ -74,6 +75,7 @@ model Utilisateur {
   pointsVigilance         PointVigilance[]
   journalMainCourante     MainCourante[]
   mouvementsCourrier     MouvementCourrier[]
+  materielsSousTraitant  MaterielSousTraitant[]
   documentsSite           DocumentSite[]
   pointagesApsJour        PointageApsJour[]
   pointagesApsNuit        PointageApsNuit[]
@@ -607,6 +609,24 @@ model MouvementCourrier {
 
   @@index([siteId, dateOperation, heureEntree], map: "idx_mouvement_courrier_site_date")
   @@map("mouvement_courrier")
+}
+
+model MaterielSousTraitant {
+  id            String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  creeLe        DateTime    @default(now()) @map("cree_le") @db.Timestamp(6)
+  dateOperation DateTime    @map("date_operation") @db.Date
+  heureEntree   DateTime    @map("heure_entree") @db.Time(0)
+  materiels     String      @db.Text
+  nombre        Int
+  entreprise    String      @db.VarChar(255)
+  heureSortie   DateTime?   @map("heure_sortie") @db.Time(0)
+  siteId        String      @map("site_id") @db.Uuid
+  utilisateurId String      @map("utilisateur_id") @db.Uuid
+  site          Site        @relation(fields: [siteId], references: [id], onDelete: Restrict, map: "fk_materiel_sous_traitant_site")
+  utilisateur   Utilisateur @relation(fields: [utilisateurId], references: [id], onDelete: Restrict, map: "fk_materiel_sous_traitant_utilisateur")
+
+  @@index([siteId, dateOperation, heureEntree], map: "idx_materiel_sous_traitant_site_date")
+  @@map("materiel_sous_traitant")
 }
 
 model PointageApsJour {
