@@ -1,6 +1,7 @@
 import {
   createLogisticsEntry,
   createLogisticsIncident,
+  createStarParticulierLoading,
   updateLogisticsIncident,
   deleteLogisticsIncident,
   deleteDepotageFuelEntry,
@@ -9,10 +10,13 @@ import {
   deleteEmptyBottleEntry,
   getLogisticsEntries,
   getLogisticsIncidents,
+  getStarParticulierLoadings,
   updateEmptyBottleEntry,
   deleteMatierePremiereEntry,
+  deleteStarParticulierLoading,
   updateDepotageFuelEntry,
   updateMatierePremiereEntry,
+  updateStarParticulierLoading,
   updateTruckLogisticsEntry,
   updateWasteEntry,
 } from "../controllers/logisticsController.js";
@@ -25,16 +29,37 @@ const incidentsPath = `${entriesPath}/incidents`;
 const incidentEntryPath = /^\/api\/logistics\/incidents\/([0-9a-f-]{36})$/i;
 const wasteEntryPath = /^\/api\/logistics\/([0-9a-f-]+)$/i;
 const emptyBottleEntryPath = /^\/api\/logistics\/empty-bottles\/([0-9a-f-]+)$/i;
+const starParticulierPath = `${entriesPath}/star-particulier`;
+const starParticulierEntryPath = /^\/api\/logistics\/star-particulier\/([0-9a-f-]+)$/i;
 
 export async function handleFluxRoutes(request, response, pool, pathname, jwtSecret) {
   const wasteMatch = wasteEntryPath.exec(pathname);
   const emptyBottleMatch = emptyBottleEntryPath.exec(pathname);
   const incidentMatch = incidentEntryPath.exec(pathname);
-  if (pathname !== entriesPath && pathname !== incidentsPath && !wasteMatch && !emptyBottleMatch && !incidentMatch) return false;
+  const starParticulierMatch = starParticulierEntryPath.exec(pathname);
+  if (pathname !== entriesPath && pathname !== starParticulierPath && pathname !== incidentsPath
+    && !wasteMatch && !emptyBottleMatch && !incidentMatch && !starParticulierMatch) return false;
 
   const user = getRequestUser(request, jwtSecret);
   if (!user) {
     json(response, 401, { error: "Connectez-vous pour accéder aux flux logistiques." });
+    return true;
+  }
+
+  if (pathname === starParticulierPath && request.method === "GET") {
+    await getStarParticulierLoadings(request, response, pool, user.id);
+    return true;
+  }
+  if (pathname === starParticulierPath && request.method === "POST") {
+    await createStarParticulierLoading(request, response, pool, user.id);
+    return true;
+  }
+  if (starParticulierMatch && request.method === "PUT") {
+    await updateStarParticulierLoading(request, response, pool, user.id, starParticulierMatch[1]);
+    return true;
+  }
+  if (starParticulierMatch && request.method === "DELETE") {
+    await deleteStarParticulierLoading(request, response, pool, user.id, starParticulierMatch[1]);
     return true;
   }
 

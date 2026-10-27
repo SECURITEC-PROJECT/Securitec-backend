@@ -496,6 +496,10 @@ model FluxLogistique {
   designation    String?     @db.Text
   nbr            String?     @db.VarChar(255)
   titre          String?     @db.VarChar(160)
+  typeChargement String?     @map("type_chargement") @db.VarChar(20)
+  proprietaire   String?     @db.VarChar(255)
+  quantiteTexte  String?     @map("quantite_texte") @db.Text
+  lp             String?     @db.VarChar(6)
   cree           String?     @db.VarChar(160)
   chauffeur      String?     @db.VarChar(160)
   magasinier     String?     @db.VarChar(160)
