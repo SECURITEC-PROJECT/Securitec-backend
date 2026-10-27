@@ -48,6 +48,7 @@ model Site {
   documentsSite           DocumentSite[]
   pointagesApsJour        PointageApsJour[]
   pointagesApsNuit        PointageApsNuit[]
+  consignesJournal        ConsigneJournal[]
 
   @@map("site")
 }
@@ -76,6 +77,7 @@ model Utilisateur {
   documentsSite           DocumentSite[]
   pointagesApsJour        PointageApsJour[]
   pointagesApsNuit        PointageApsNuit[]
+  consignesJournal        ConsigneJournal[]
 
   @@index([siteId], map: "idx_utilisateur_site")
   @@map("utilisateur")
@@ -92,6 +94,23 @@ model Consigne {
 
   @@index([utilisateurId], map: "idx_consigne_utilisateur")
   @@map("consigne")
+}
+
+model ConsigneJournal {
+  id            String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  siteId        String      @map("site_id") @db.Uuid
+  dateConsigne  DateTime    @map("date_consigne") @db.Date
+  heure         DateTime    @db.Time(0)
+  consigne      String      @db.Text
+  emetteur      String      @db.VarChar(255)
+  destinataire  String      @db.VarChar(255)
+  utilisateurId String      @map("utilisateur_id") @db.Uuid
+  creeLe        DateTime    @default(now()) @map("cree_le") @db.Timestamp(6)
+  site          Site        @relation(fields: [siteId], references: [id], onDelete: Restrict, map: "fk_consigne_journal_site")
+  utilisateur   Utilisateur @relation(fields: [utilisateurId], references: [id], onDelete: Restrict, map: "fk_consigne_journal_utilisateur")
+
+  @@index([siteId, dateConsigne, heure], map: "idx_consigne_journal_site_date")
+  @@map("consigne_journal")
 }
 
 model Badge {
