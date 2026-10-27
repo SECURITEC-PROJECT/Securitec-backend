@@ -8,8 +8,6 @@ import {
   getLogisticsIncidents,
   updateEmptyBottleEntry,
   deleteMatierePremiereEntry,
-  getLogisticsEntries,
-  getLogisticsIncidents,
   updateDepotageFuelEntry,
   updateMatierePremiereEntry,
   updateWasteEntry,
