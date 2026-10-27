@@ -458,6 +458,13 @@ model FluxLogistique {
   poids          Decimal?    @db.Decimal(12, 2)
   destinataire   String?     @db.VarChar(255)
   vehicule       String?     @db.VarChar(160)
+  heurePointe    DateTime?   @map("heure_pointe") @db.Time(0)
+  designation    String?     @db.VarChar(160)
+  provenance     String?     @db.VarChar(255)
+  titre          String?     @db.VarChar(160)
+  cree           String?     @db.VarChar(160)
+  chauffeur      String?     @db.VarChar(160)
+  magasinier     String?     @db.VarChar(160)
   siteId         String      @map("site_id") @db.Uuid
   utilisateurId  String      @map("utilisateur_id") @db.Uuid
   site           Site        @relation(fields: [siteId], references: [id], onDelete: Restrict, map: "fk_flux_logistique_site")
