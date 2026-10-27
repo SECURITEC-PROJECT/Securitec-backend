@@ -1,10 +1,12 @@
 import {
   createLogisticsEntry,
   createLogisticsIncident,
+  deleteDepotageFuelEntry,
   deleteWasteEntry,
   deleteMatierePremiereEntry,
   getLogisticsEntries,
   getLogisticsIncidents,
+  updateDepotageFuelEntry,
   updateMatierePremiereEntry,
   updateWasteEntry,
 } from "../controllers/logisticsController.js";
@@ -40,6 +42,10 @@ export async function handleFluxRoutes(request, response, pool, pathname, jwtSec
       await updateMatierePremiereEntry(request, response, pool, user.id, wasteMatch[1]);
       return true;
     }
+    if (url.searchParams.get("type") === "DEPOTAGE_FUEL") {
+      await updateDepotageFuelEntry(request, response, pool, user.id, wasteMatch[1]);
+      return true;
+    }
     await updateWasteEntry(request, response, pool, user.id, wasteMatch[1]);
     return true;
   }
@@ -47,6 +53,10 @@ export async function handleFluxRoutes(request, response, pool, pathname, jwtSec
     const url = new URL(request.url || "/", `http://${request.headers.host || "localhost"}`);
     if (url.searchParams.get("type") === "MATIERE_PREMIERE") {
       await deleteMatierePremiereEntry(request, response, pool, user.id, wasteMatch[1]);
+      return true;
+    }
+    if (url.searchParams.get("type") === "DEPOTAGE_FUEL") {
+      await deleteDepotageFuelEntry(request, response, pool, user.id, wasteMatch[1]);
       return true;
     }
     await deleteWasteEntry(request, response, pool, user.id, wasteMatch[1]);
