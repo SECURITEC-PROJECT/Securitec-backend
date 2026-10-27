@@ -12,11 +12,45 @@ import { getBadges, scanBadge, updateBadgeStatus } from "../controllers/badgeCon
 import { handleKeyRoutes } from "./keyRoutes.js";
 import { getRequestUser } from "../utils/auth.js";
 import { json } from "../utils/helpers.js";
+import {
+  createAlcoholCheck,
+  deleteAlcoholCheck,
+  listAlcoholChecks,
+  updateAlcoholCheck,
+} from "../controllers/alcoholCheckController.js";
 
 const apiPrefix = "/api";
 
 export async function handleControlRoutes(request, response, pool, pathname, jwtSecret) {
   const method = request.method;
+  const alcoholCheckPath = `${apiPrefix}/access-control/alcohol-checks`;
+  const alcoholCheckMatch = new RegExp(`^${alcoholCheckPath}/([0-9a-f-]+)$`, "i").exec(pathname);
+
+  if (pathname === alcoholCheckPath || alcoholCheckMatch) {
+    const user = getRequestUser(request, jwtSecret);
+    if (!user) {
+      json(response, 401, { error: "Connectez-vous pour gérer les tests alcool." });
+      return true;
+    }
+    if (pathname === alcoholCheckPath && method === "GET") {
+      await listAlcoholChecks(request, response, pool, user.id);
+      return true;
+    }
+    if (pathname === alcoholCheckPath && method === "POST") {
+      await createAlcoholCheck(request, response, pool, user.id);
+      return true;
+    }
+    if (alcoholCheckMatch && method === "PUT") {
+      await updateAlcoholCheck(request, response, pool, user.id, alcoholCheckMatch[1]);
+      return true;
+    }
+    if (alcoholCheckMatch && method === "DELETE") {
+      await deleteAlcoholCheck(request, response, pool, user.id, alcoholCheckMatch[1]);
+      return true;
+    }
+    json(response, 405, { error: "Méthode non autorisée." });
+    return true;
+  }
 
   if (pathname.startsWith(`${apiPrefix}/access-control/key-`) ||
       pathname === `${apiPrefix}/access-control/keys` ||
