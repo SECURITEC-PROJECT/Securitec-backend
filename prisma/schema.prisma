@@ -45,6 +45,8 @@ model Site {
   pointsVigilance         PointVigilance[]
   journalMainCourante     MainCourante[]
   documentsSite           DocumentSite[]
+  pointagesApsJour        PointageApsJour[]
+  pointagesApsNuit        PointageApsNuit[]
 
   @@map("site")
 }
@@ -70,6 +72,8 @@ model Utilisateur {
   pointsVigilance         PointVigilance[]
   journalMainCourante     MainCourante[]
   documentsSite           DocumentSite[]
+  pointagesApsJour        PointageApsJour[]
+  pointagesApsNuit        PointageApsNuit[]
 
   @@index([siteId], map: "idx_utilisateur_site")
   @@map("utilisateur")
@@ -561,6 +565,36 @@ model MainCourante {
 
   @@index([siteId, creeLe], map: "idx_main_courante_site_date")
   @@map("main_courante")
+}
+
+model PointageApsJour {
+  id            String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  siteId        String      @map("site_id") @db.Uuid
+  datePointage  DateTime    @map("date_pointage") @db.Date
+  data          Json        @db.JsonB
+  utilisateurId String      @map("utilisateur_id") @db.Uuid
+  updatedAt     DateTime    @default(now()) @map("updated_at") @db.Timestamp(6)
+  site          Site        @relation(fields: [siteId], references: [id], onDelete: Restrict, map: "fk_pointage_aps_jour_site")
+  utilisateur   Utilisateur @relation(fields: [utilisateurId], references: [id], onDelete: Restrict, map: "fk_pointage_aps_jour_utilisateur")
+
+  @@unique([siteId, datePointage], map: "uq_pointage_aps_jour_site_date")
+  @@index([siteId, datePointage], map: "idx_pointage_aps_jour_site_date")
+  @@map("pointage_aps_jour")
+}
+
+model PointageApsNuit {
+  id            String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  siteId        String      @map("site_id") @db.Uuid
+  datePointage  DateTime    @map("date_pointage") @db.Date
+  data          Json        @db.JsonB
+  utilisateurId String      @map("utilisateur_id") @db.Uuid
+  updatedAt     DateTime    @default(now()) @map("updated_at") @db.Timestamp(6)
+  site          Site        @relation(fields: [siteId], references: [id], onDelete: Restrict, map: "fk_pointage_aps_nuit_site")
+  utilisateur   Utilisateur @relation(fields: [utilisateurId], references: [id], onDelete: Restrict, map: "fk_pointage_aps_nuit_utilisateur")
+
+  @@unique([siteId, datePointage], map: "uq_pointage_aps_nuit_site_date")
+  @@index([siteId, datePointage], map: "idx_pointage_aps_nuit_site_date")
+  @@map("pointage_aps_nuit")
 }
 
 model DocumentSite {
