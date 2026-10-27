@@ -1,0 +1,2 @@
+ALTER TABLE "flux_logistique"
+  ADD COLUMN IF NOT EXISTS "nbr" VARCHAR(255);

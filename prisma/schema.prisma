@@ -466,7 +466,8 @@ model FluxLogistique {
   provenance     String?     @db.Text
   detailsBouteilles Json     @default("[]") @map("details_bouteilles")
   heurePointe    DateTime?   @map("heure_pointe") @db.Time(0)
-  designation    String?     @db.VarChar(160)
+  designation    String?     @db.Text
+  nbr            String?     @db.VarChar(255)
   titre          String?     @db.VarChar(160)
   cree           String?     @db.VarChar(160)
   chauffeur      String?     @db.VarChar(160)

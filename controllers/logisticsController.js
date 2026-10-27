@@ -70,7 +70,7 @@ export async function getLogisticsEntries(request, response, pool, userId) {
               f.facture, f.poids, f.destinataire, f.vehicule,
               to_char(f.heure_arrivee, 'HH24:MI') AS "heureArrivee",
               f.immatriculation_vehicule AS "immatriculationVehicule",
-              f.nom_chauffeur AS "nomChauffeur",
+              f.nom_chauffeur AS "nomChauffeur", f.nbr,
               f.numero_titre AS "numeroTitre", f.provenance,
               f.details_bouteilles AS "detailsBouteilles",
               f.facture, f.poids, f.destinataire, COALESCE(f.vehicule, f.camion) AS vehicule,
@@ -276,22 +276,32 @@ export async function createLogisticsEntry(request, response, pool, userId) {
     }
 
     const camion = cleanText(body.camion, 160);
-    if (!truckTypes.has(type) || !camion) {
-      throw Object.assign(new Error("Le numéro du camion et de la remorque est obligatoire."), { status: 400 });
+    if (!truckTypes.has(type)) {
+      throw Object.assign(new Error("Le type de flux camion est invalide."), { status: 400 });
     }
-    const transporteur = cleanText(body.transporteur) || null;
+    const nomChauffeur = cleanText(body.nomChauffeur, 255);
+    const heureArrivee = cleanText(body.heureArrivee, 5);
+    const designation = cleanText(body.designation, 20000);
+    const nbr = cleanText(body.nbr, 255);
     const document = cleanText(body.document, 160) || null;
-    const plomb = cleanText(body.plomb, 100) || null;
+    const destinataire = cleanText(body.destinataire, 255);
+    if (!camion || !nomChauffeur || !timePattern.test(heureArrivee)
+      || !designation || !nbr || !document || !destinataire) {
+      throw Object.assign(new Error("Renseignez le transport, le nom du chauffeur, l’heure d’entrée, la désignation, le NBR, le numéro de bon ou facture et la destination."), { status: 400 });
+    }
     const result = await client.query(
       `INSERT INTO flux_logistique
-         (date_operation, type_flux, camion, transporteur, document, plomb, site_id, utilisateur_id)
-       VALUES ($1::date, $2, $3, $4, $5, $6, $7::uuid, $8::uuid)
+         (date_operation, type_flux, camion, nom_chauffeur, heure_arrivee, designation, nbr, document, destinataire, site_id, utilisateur_id)
+       VALUES ($1::date, $2, $3, $4, $5::time, $6, $7, $8, $9, $10::uuid, $11::uuid)
        RETURNING id, cree_le AS "createdAt"`,
-      [date, type, camion, transporteur, document, plomb, siteId, userId],
+      [date, type, camion, nomChauffeur, heureArrivee, designation, nbr, document, destinataire, siteId, userId],
     );
     await client.query("COMMIT");
     json(response, 201, {
-      entry: { ...result.rows[0], date, type, camion, transporteur, document, plomb, siteName: site.nom, siteType: site.type_site },
+      entry: {
+        ...result.rows[0], date, type, camion, nomChauffeur, heureArrivee,
+        designation, nbr, document, destinataire, siteName: site.nom, siteType: site.type_site,
+      },
     });
   } catch (error) {
     await client.query("ROLLBACK").catch(() => {});
@@ -299,6 +309,75 @@ export async function createLogisticsEntry(request, response, pool, userId) {
     json(response, error.status || 500, { error: error.status ? error.message : "Impossible d'enregistrer le flux logistique." });
   } finally {
     client.release();
+  }
+}
+
+export async function updateTruckLogisticsEntry(request, response, pool, userId, entryId) {
+  const client = await pool.connect();
+  try {
+    if (!uuidPattern.test(entryId)) return json(response, 404, { error: "Mouvement camion introuvable." });
+    const body = await readJson(request);
+    const date = normalizeDate(body.date);
+    const type = cleanText(body.type, 20).toUpperCase();
+    const camion = cleanText(body.camion, 160);
+    const nomChauffeur = cleanText(body.nomChauffeur, 255);
+    const heureArrivee = cleanText(body.heureArrivee, 5);
+    const designation = cleanText(body.designation, 20000);
+    const nbr = cleanText(body.nbr, 255);
+    const document = cleanText(body.document, 160);
+    const destinataire = cleanText(body.destinataire, 255);
+    if (!validDate(date) || !truckTypes.has(type) || !camion || !nomChauffeur
+      || !timePattern.test(heureArrivee) || !designation || !nbr || !document || !destinataire) {
+      return json(response, 400, { error: "Vérifiez les champs du mouvement camion et l’heure d’entrée." });
+    }
+
+    await client.query("BEGIN");
+    const account = await getAccount(client, userId);
+    const siteId = await resolveSite(client, account, body);
+    const result = await client.query(
+      `UPDATE flux_logistique
+       SET date_operation = $2::date, type_flux = $3, camion = $4, nom_chauffeur = $5,
+           heure_arrivee = $6::time, designation = $7, nbr = $8, document = $9, destinataire = $10
+       WHERE id = $1::uuid AND site_id = $11::uuid
+         AND type_flux IN ('DECHARGEMENT', 'CHARGEMENT')
+       RETURNING id, date_operation::text AS date, type_flux AS type, camion,
+                 nom_chauffeur AS "nomChauffeur", to_char(heure_arrivee, 'HH24:MI') AS "heureArrivee",
+                 designation, nbr, document, destinataire`,
+      [entryId, date, type, camion, nomChauffeur, heureArrivee, designation, nbr, document, destinataire, siteId],
+    );
+    if (!result.rows[0]) {
+      await client.query("ROLLBACK");
+      return json(response, 404, { error: "Mouvement camion introuvable sur ce site." });
+    }
+    await client.query("COMMIT");
+    json(response, 200, { entry: { ...result.rows[0] } });
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => {});
+    console.error("PUT truck logistics entry failed:", error.code || error.name, error.message || "");
+    json(response, error.status || 500, { error: error.status ? error.message : "Impossible de modifier le mouvement camion." });
+  } finally {
+    client.release();
+  }
+}
+
+export async function deleteTruckLogisticsEntry(request, response, pool, userId, entryId) {
+  try {
+    if (!uuidPattern.test(entryId)) return json(response, 404, { error: "Mouvement camion introuvable." });
+    const account = await getAccount(pool, userId);
+    const siteId = await querySiteForRead(pool, account, request);
+    if (!siteId) return json(response, 400, { error: "Sélectionnez un site pour supprimer le mouvement." });
+    const result = await pool.query(
+      `DELETE FROM flux_logistique
+       WHERE id = $1::uuid AND site_id = $2::uuid
+         AND type_flux IN ('DECHARGEMENT', 'CHARGEMENT')
+       RETURNING id`,
+      [entryId, siteId],
+    );
+    if (!result.rows[0]) return json(response, 404, { error: "Mouvement camion introuvable sur ce site." });
+    json(response, 200, { id: result.rows[0].id, deleted: true });
+  } catch (error) {
+    console.error("DELETE truck logistics entry failed:", error.code || error.name, error.message || "");
+    json(response, error.status || 500, { error: error.status ? error.message : "Impossible de supprimer le mouvement camion." });
   }
 }
 

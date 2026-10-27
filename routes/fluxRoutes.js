@@ -2,6 +2,7 @@ import {
   createLogisticsEntry,
   createLogisticsIncident,
   deleteDepotageFuelEntry,
+  deleteTruckLogisticsEntry,
   deleteWasteEntry,
   deleteEmptyBottleEntry,
   getLogisticsEntries,
@@ -10,6 +11,7 @@ import {
   deleteMatierePremiereEntry,
   updateDepotageFuelEntry,
   updateMatierePremiereEntry,
+  updateTruckLogisticsEntry,
   updateWasteEntry,
 } from "../controllers/logisticsController.js";
 import { getRequestUser } from "../utils/auth.js";
@@ -42,6 +44,10 @@ export async function handleFluxRoutes(request, response, pool, pathname, jwtSec
   }
   if (wasteMatch && request.method === "PUT") {
     const url = new URL(request.url || "/", `http://${request.headers.host || "localhost"}`);
+    if (url.searchParams.get("type") === "DECHARGEMENT" || url.searchParams.get("type") === "CHARGEMENT") {
+      await updateTruckLogisticsEntry(request, response, pool, user.id, wasteMatch[1]);
+      return true;
+    }
     if (url.searchParams.get("type") === "MATIERE_PREMIERE") {
       await updateMatierePremiereEntry(request, response, pool, user.id, wasteMatch[1]);
       return true;
@@ -55,6 +61,10 @@ export async function handleFluxRoutes(request, response, pool, pathname, jwtSec
   }
   if (wasteMatch && request.method === "DELETE") {
     const url = new URL(request.url || "/", `http://${request.headers.host || "localhost"}`);
+    if (url.searchParams.get("type") === "DECHARGEMENT" || url.searchParams.get("type") === "CHARGEMENT") {
+      await deleteTruckLogisticsEntry(request, response, pool, user.id, wasteMatch[1]);
+      return true;
+    }
     if (url.searchParams.get("type") === "MATIERE_PREMIERE") {
       await deleteMatierePremiereEntry(request, response, pool, user.id, wasteMatch[1]);
       return true;
