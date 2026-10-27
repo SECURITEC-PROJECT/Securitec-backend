@@ -16,7 +16,7 @@ export async function readJson(request) {
   let size = 0;
   for await (const chunk of request) {
     size += chunk.length;
-    if (size > 4096) throw Object.assign(new Error("Requête trop volumineuse"), { status: 413 });
+    if (size > 2_000_000) throw Object.assign(new Error("Requête trop volumineuse"), { status: 413 });
     chunks.push(chunk);
   }
   try {
