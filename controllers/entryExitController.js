@@ -2,6 +2,15 @@ import { randomUUID } from "node:crypto";
 import { json, readJson } from "../utils/helpers.js";
 
 const cleanText = (value, max = 255) => typeof value === "string" ? value.trim().slice(0, max) : "";
+const validDate = (value) => {
+  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const date = new Date(`${value}T00:00:00.000Z`);
+  return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === value;
+};
+const validTime = (value) => typeof value === "string" && /^(?:[01]\d|2[0-3]):[0-5]\d$/.test(value);
+const validPassengerCount = (value) => Number.isInteger(Number(value)) && Number(value) >= 0 && Number(value) <= 10000;
+const vehicleKinds = new Set(["Particulier", "Star"]);
+const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 async function getAccount(pool, userId) {
   const result = await pool.query("SELECT id, role, site_id FROM utilisateur WHERE id=$1::uuid LIMIT 1", [userId]);
@@ -80,7 +89,7 @@ export async function createVisitor(request, response, pool, userId) {
         cleanText(body.id_document, 4) || null, host, cleanText(body.zone) || "Accueil",
         cleanText(body.equipment, 20000) || null, cleanText(body.vehicle, 50) || null, badgeNumber, userId],
     );
-    const site = await client.query("SELECT nom AS site_name FROM site WHERE id=$1::uuid", [siteId]);
+    const site = await client.query("SELECT id AS site_id, nom AS site_name FROM site WHERE id=$1::uuid", [siteId]);
     await client.query("COMMIT");
     json(response, 201, { visitor: {
       id: passage.rows[0].id, full_name: name, company: cleanText(body.company),
@@ -124,11 +133,23 @@ export async function getVehicles(request, response, pool, userId) {
       : new URL(request.url || "/", `http://${request.headers.host || "localhost"}`).searchParams.get("siteId") || null;
     const result = await pool.query(
       `SELECT pv.id, v.immatriculation AS plate, v.type, COALESCE(pv.transporteur,'') AS company,
+              COALESCE(pv.transporteur,'') AS category, COALESCE(pv.conducteur,'') AS "ownerName",
               COALESCE(pv.operation,'') AS operation, COALESCE(pv.plomb,'') AS seal_number,
               COALESCE(pv.reference,'') AS document_reference, COALESCE(pv.etat_chargement,'') AS load_state,
               COALESCE(pv.conducteur,'') AS driver, COALESCE(pv.passagers,'') AS passengers,
+              CASE
+                WHEN pv.passagers ~ '^[0-9]{1,5}$' THEN
+                  CASE WHEN pv.passagers::integer <= 10000 THEN pv.passagers::integer END
+                ELSE NULL
+              END AS "passengersEntry",
+              pv.passagers_sortie AS "passengersOut",
               COALESCE(pv.motif,'') AS reason, COALESCE(pv.zone,'') AS zone, pv.controle_conforme AS compliant,
-              s.nom AS site_name, pv.entree AS entered_at, pv.sortie AS exited_at
+              s.nom AS site_name, pv.site_id AS "siteId",
+              pv.entree AS entered_at, pv.sortie AS exited_at,
+              to_char(pv.entree, 'YYYY-MM-DD') AS "entryDate",
+              to_char(pv.entree, 'HH24:MI') AS "entryTime",
+              to_char(pv.sortie, 'YYYY-MM-DD') AS "exitDate",
+              to_char(pv.sortie, 'HH24:MI') AS "exitTime"
        FROM passage_vehicule pv JOIN vehicule v ON v.id=pv.vehicule_id
        LEFT JOIN site s ON s.id=pv.site_id
        WHERE ($1::uuid IS NULL OR pv.site_id=$1::uuid)
@@ -147,9 +168,18 @@ export async function createVehicle(request, response, pool, userId) {
   try {
     const body = await readJson(request);
     const plate = cleanText(body.plate, 50).toUpperCase();
-    const driver = cleanText(body.driver);
-    const reason = cleanText(body.reason, 20000);
-    if (!plate || !driver || !reason) return json(response, 400, { error: "L’immatriculation, le conducteur et le motif sont obligatoires." });
+    const newMovement = body.ownerName !== undefined || body.category !== undefined || body.passengersEntry !== undefined;
+    const driver = cleanText(body.ownerName ?? body.driver);
+    const reason = cleanText(body.reason, 20000) || (newMovement ? "Mouvement véhicule" : "");
+    const category = cleanText(body.category ?? body.company, 40);
+    const passengersEntry = body.passengersEntry ?? body.passengers;
+    const entryDate = cleanText(body.date, 10);
+    const entryTime = cleanText(body.entryTime, 5);
+    if (!plate || !driver || !reason) return json(response, 400, { error: "L’immatriculation, le nom du propriétaire et le motif sont obligatoires." });
+    if (newMovement && (!vehicleKinds.has(category) || !validDate(entryDate) || !validTime(entryTime)
+      || !validPassengerCount(passengersEntry))) {
+      return json(response, 400, { error: "Vérifiez la date, l’heure d’entrée, le type de véhicule et le nombre de personnes à l’entrée." });
+    }
     client = await pool.connect();
     await client.query("BEGIN");
     const account = await getAccount(client, userId);
@@ -163,21 +193,28 @@ export async function createVehicle(request, response, pool, userId) {
     const result = await client.query(
       `INSERT INTO passage_vehicule (entree, vehicule_id, vacation_id, transporteur, conducteur, passagers,
          motif, zone, operation, reference, plomb, etat_chargement, controle_conforme, saisi_par_id, site_id)
-       VALUES (NOW(),$1::uuid,(SELECT id FROM vacation WHERE utilisateur_id=$2::uuid AND cloture IS NULL ORDER BY ouverture DESC LIMIT 1),
+      VALUES (${newMovement ? "$14::date + $15::time" : "NOW()"},$1::uuid,(SELECT id FROM vacation WHERE utilisateur_id=$2::uuid AND cloture IS NULL ORDER BY ouverture DESC LIMIT 1),
          $3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$2::uuid,$13::uuid)
        RETURNING id, entree AS entered_at`,
-      [vehicle.rows[0].id, userId, cleanText(body.company) || null, driver, cleanText(body.passengers, 255) || null,
-        reason, cleanText(body.zone) || "Accueil", cleanText(body.operation, 40) || "Autre passage",
-        cleanText(body.document_reference, 100) || null, cleanText(body.seal_number, 100) || null,
-        cleanText(body.load_state, 40) || null, body.compliant === true, siteId],
+      [vehicle.rows[0].id, userId, newMovement ? category : cleanText(body.company) || null, driver,
+       newMovement ? String(passengersEntry) : cleanText(body.passengers, 255) || null,
+       reason, cleanText(body.zone) || "Accueil", cleanText(body.operation, 40) || "Autre passage",
+       cleanText(body.document_reference, 100) || null, cleanText(body.seal_number, 100) || null,
+       cleanText(body.load_state, 40) || null, body.compliant === true, siteId,
+       ...(newMovement ? [entryDate, entryTime] : [])],
     );
-    const site = await client.query("SELECT nom AS site_name FROM site WHERE id=$1::uuid", [siteId]);
+    const site = await client.query("SELECT id AS site_id, nom AS site_name FROM site WHERE id=$1::uuid", [siteId]);
     await client.query("COMMIT");
     json(response, 201, { vehicle: {
-      id: result.rows[0].id, plate, type, company: cleanText(body.company), operation: cleanText(body.operation, 40),
+      id: result.rows[0].id, plate, type, company: category, category, ownerName: driver,
+      passengersEntry: newMovement ? Number(passengersEntry) : null, passengersOut: null,
+      entryDate: newMovement ? entryDate : result.rows[0].entered_at,
+      entryTime: newMovement ? entryTime : null, exitDate: null, exitTime: null,
+      operation: cleanText(body.operation, 40),
       seal_number: cleanText(body.seal_number, 100), document_reference: cleanText(body.document_reference, 100),
       load_state: cleanText(body.load_state, 40), driver, passengers: cleanText(body.passengers, 255), reason,
       zone: cleanText(body.zone) || "Accueil", site_name: site.rows[0]?.site_name, compliant: body.compliant === true,
+      siteId: site.rows[0]?.site_id || siteId,
       entered_at: result.rows[0].entered_at, exited_at: null,
     } });
   } catch (error) {
@@ -190,17 +227,116 @@ export async function createVehicle(request, response, pool, userId) {
 
 export async function exitVehicle(request, response, pool, userId, passageId) {
   try {
+    const body = await readJson(request);
+    const hasPassengerCount = body.passengersOut !== undefined && body.passengersOut !== null && body.passengersOut !== "";
+    if (hasPassengerCount && !validPassengerCount(body.passengersOut)) {
+      return json(response, 400, { error: "Le nombre de personnes à la sortie doit être un entier entre 0 et 10 000." });
+    }
     const account = await getAccount(pool, userId);
+    const requestedSiteId = new URL(request.url || "/", `http://${request.headers.host || "localhost"}`).searchParams.get("siteId");
     const result = await pool.query(
-      `UPDATE passage_vehicule SET sortie=NOW(), sortie_par_id=$1::uuid
+      `UPDATE passage_vehicule SET sortie=NOW(), sortie_par_id=$1::uuid,
+         passagers_sortie=CASE WHEN $4::boolean THEN $5::integer ELSE passagers_sortie END
        WHERE id=$2::uuid AND sortie IS NULL AND ($3::uuid IS NULL OR site_id=$3::uuid)
-       RETURNING id, sortie AS exited_at`,
-      [userId, passageId, account.site_id && account.role !== 1 ? account.site_id : null],
+       RETURNING id, sortie AS exited_at, passagers_sortie AS "passengersOut",
+                 to_char(sortie, 'HH24:MI') AS "exitTime"`,
+      [userId, passageId, account.site_id && account.role !== 1 ? account.site_id : requestedSiteId || null,
+        hasPassengerCount, hasPassengerCount ? Number(body.passengersOut) : null],
     );
     if (!result.rows[0]) return json(response, 404, { error: "Véhicule présent introuvable ou déjà sorti." });
     json(response, 200, { vehicle: result.rows[0] });
   } catch (error) {
     console.error("PATCH /vehicles/:id/exit failed:", error.code || error.name, error.message || "");
     json(response, error.status || 500, { error: error.status ? error.message : "Impossible d’enregistrer la sortie véhicule." });
+  }
+}
+
+export async function updateVehicle(request, response, pool, userId, passageId) {
+  let client;
+  try {
+    if (!uuidPattern.test(passageId)) return json(response, 404, { error: "Mouvement véhicule introuvable." });
+    const body = await readJson(request);
+    const plate = cleanText(body.plate, 50).toUpperCase();
+    const ownerName = cleanText(body.ownerName, 255);
+    const category = cleanText(body.category, 40);
+    const entryDate = cleanText(body.date, 10);
+    const entryTime = cleanText(body.entryTime, 5);
+    const passengersEntry = Number(body.passengersEntry);
+    const exitDate = body.exitTime ? cleanText(body.exitDate, 10) || entryDate : "";
+    const exitTime = body.exitTime ? cleanText(body.exitTime, 5) : "";
+    const passengersOut = body.passengersOut === "" || body.passengersOut == null ? null : Number(body.passengersOut);
+    if (!plate || !ownerName || !vehicleKinds.has(category) || !validDate(entryDate)
+      || !validTime(entryTime) || !validPassengerCount(passengersEntry)
+      || (exitTime && (!validDate(exitDate) || !validTime(exitTime) || passengersOut == null || !validPassengerCount(passengersOut)))
+      || (!exitTime && passengersOut != null)) {
+      return json(response, 400, { error: "Vérifiez la date, l’immatriculation, le propriétaire, le type de véhicule et les nombres de personnes." });
+    }
+    client = await pool.connect();
+    await client.query("BEGIN");
+    const account = await getAccount(client, userId);
+    const siteFilter = account.site_id && account.role !== 1 ? account.site_id : body.siteId || null;
+    const existing = await client.query(
+      `SELECT pv.vehicule_id AS "vehicleId"
+       FROM passage_vehicule pv
+       WHERE pv.id=$1::uuid AND ($2::uuid IS NULL OR pv.site_id=$2::uuid)
+       FOR UPDATE`,
+      [passageId, siteFilter],
+    );
+    if (!existing.rows[0]) {
+      await client.query("ROLLBACK");
+      return json(response, 404, { error: "Mouvement véhicule introuvable pour ce site." });
+    }
+    const vehicle = await client.query(
+      `UPDATE vehicule SET immatriculation=$2 WHERE id=$1::uuid RETURNING id`,
+      [existing.rows[0].vehicleId, plate],
+    );
+    if (!vehicle.rows[0]) throw Object.assign(new Error("Véhicule introuvable."), { status: 404 });
+    const result = await client.query(
+      `UPDATE passage_vehicule
+       SET entree=$2::date + $3::time, conducteur=$4, transporteur=$5,
+           passagers=$6, passagers_sortie=$7,
+           sortie=CASE WHEN $8::time IS NULL THEN NULL ELSE $9::date + $8::time END,
+           sortie_par_id=CASE WHEN $8::time IS NULL THEN NULL ELSE $10::uuid END
+       WHERE id=$1::uuid
+       RETURNING id, entree AS entered_at, sortie AS exited_at,
+                 to_char(entree, 'YYYY-MM-DD') AS "entryDate",
+                 to_char(entree, 'HH24:MI') AS "entryTime",
+                 to_char(sortie, 'YYYY-MM-DD') AS "exitDate",
+                 to_char(sortie, 'HH24:MI') AS "exitTime"`,
+      [passageId, entryDate, entryTime, ownerName, category, String(passengersEntry), passengersOut,
+        exitTime || null, exitDate || null, userId],
+    );
+    await client.query("COMMIT");
+    json(response, 200, { vehicle: {
+      id: result.rows[0].id, plate, ownerName, category,
+      passengersEntry, passengersOut, ...result.rows[0],
+    } });
+  } catch (error) {
+    if (client) await client.query("ROLLBACK").catch(() => {});
+    console.error("PUT /vehicles/:id failed:", error.code || error.name, error.message || "");
+    const status = error.code === "23505" ? 409 : error.status || 500;
+    json(response, status, { error: error.code === "23505" ? "Cette immatriculation est déjà utilisée par un autre véhicule." : error.status ? error.message : "Impossible de modifier le mouvement véhicule." });
+  } finally {
+    client?.release();
+  }
+}
+
+export async function deleteVehicle(request, response, pool, userId, passageId) {
+  try {
+    if (!uuidPattern.test(passageId)) return json(response, 404, { error: "Mouvement véhicule introuvable." });
+    const account = await getAccount(pool, userId);
+    const siteFilter = account.site_id && account.role !== 1 ? account.site_id
+      : new URL(request.url || "/", `http://${request.headers.host || "localhost"}`).searchParams.get("siteId");
+    const result = await pool.query(
+      `DELETE FROM passage_vehicule
+       WHERE id=$1::uuid AND ($2::uuid IS NULL OR site_id=$2::uuid)
+       RETURNING id`,
+      [passageId, siteFilter || null],
+    );
+    if (!result.rows[0]) return json(response, 404, { error: "Mouvement véhicule introuvable pour ce site." });
+    json(response, 200, { id: result.rows[0].id, deleted: true });
+  } catch (error) {
+    console.error("DELETE /vehicles/:id failed:", error.code || error.name, error.message || "");
+    json(response, error.status || 500, { error: error.status ? error.message : "Impossible de supprimer le mouvement véhicule." });
   }
 }

@@ -135,7 +135,9 @@ SELECT
   -- 3, 4, 5 - Flux logistiques
   COALESCE((
     SELECT json_agg(f ORDER BY f.cree_le) FROM (
-      SELECT type_flux, camion, transporteur, document, plomb, article, quantite, cree_le
+      SELECT type_flux, camion, transporteur, document, plomb, article, quantite, cree_le,
+             nom_chauffeur, to_char(heure_arrivee, 'HH24:MI') AS heure_arrivee,
+             designation, nbr, destinataire
       FROM flux_logistique
       WHERE site_id = $1::uuid AND date_operation = $3::date
     ) f
