@@ -1,11 +1,17 @@
 import {
   createLogisticsEntry,
   createLogisticsIncident,
+  deleteDepotageFuelEntry,
   deleteWasteEntry,
   deleteEmptyBottleEntry,
   getLogisticsEntries,
   getLogisticsIncidents,
   updateEmptyBottleEntry,
+  deleteMatierePremiereEntry,
+  getLogisticsEntries,
+  getLogisticsIncidents,
+  updateDepotageFuelEntry,
+  updateMatierePremiereEntry,
   updateWasteEntry,
 } from "../controllers/logisticsController.js";
 import { getRequestUser } from "../utils/auth.js";
@@ -37,10 +43,28 @@ export async function handleFluxRoutes(request, response, pool, pathname, jwtSec
     return true;
   }
   if (wasteMatch && request.method === "PUT") {
+    const url = new URL(request.url || "/", `http://${request.headers.host || "localhost"}`);
+    if (url.searchParams.get("type") === "MATIERE_PREMIERE") {
+      await updateMatierePremiereEntry(request, response, pool, user.id, wasteMatch[1]);
+      return true;
+    }
+    if (url.searchParams.get("type") === "DEPOTAGE_FUEL") {
+      await updateDepotageFuelEntry(request, response, pool, user.id, wasteMatch[1]);
+      return true;
+    }
     await updateWasteEntry(request, response, pool, user.id, wasteMatch[1]);
     return true;
   }
   if (wasteMatch && request.method === "DELETE") {
+    const url = new URL(request.url || "/", `http://${request.headers.host || "localhost"}`);
+    if (url.searchParams.get("type") === "MATIERE_PREMIERE") {
+      await deleteMatierePremiereEntry(request, response, pool, user.id, wasteMatch[1]);
+      return true;
+    }
+    if (url.searchParams.get("type") === "DEPOTAGE_FUEL") {
+      await deleteDepotageFuelEntry(request, response, pool, user.id, wasteMatch[1]);
+      return true;
+    }
     await deleteWasteEntry(request, response, pool, user.id, wasteMatch[1]);
     return true;
   }
