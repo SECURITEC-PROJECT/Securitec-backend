@@ -95,7 +95,7 @@ export async function handleLogistics(request, response, pathname) {
       const result = await pool.query(
         `SELECT f.id, f.date_operation AS date, f.type_flux AS type, f.camion, f.transporteur, f.document, f.plomb,
           to_char(COALESCE(f.heure_sortie, f.heure_arrivee),'HH24:MI') AS "heureSortie", f.numero_pesage AS "numeroPesage",
-          COALESCE(f.facture, f.document) AS facture, f.poids, f.destinataire, f.vehicule,
+          COALESCE(f.facture, f.document) AS facture, f.type_dechet AS "typeDechet", f.poids, f.destinataire, f.vehicule,
           COALESCE(f.immatriculation_vehicule, f.vehicule, f.camion) AS "immatriculationVehicule",
           f.categorie_stock AS "categorieStock", f.article, f.quantite,
           f.designation, f.nbr,
@@ -152,14 +152,15 @@ export async function handleLogistics(request, response, pathname) {
     if (!type || !datePattern.test(date)) { json(response, 400, { error: "Choisissez le type de flux et une date valide." }); return; }
     const truckEntry = type === "DECHARGEMENT" ? readTruckEntry(body) : null;
     if (type === "DECHETS") {
+      const typeDechet = text(body.typeDechet, 20).toUpperCase();
       const time = text(body.heureSortie, 5);
       const numeroPesage = text(body.numeroPesage, 100);
       const facture = text(body.facture, 160);
       const poids = Number(body.poids);
       const destinataire = text(body.destinataire, 255);
       const vehicule = text(body.vehicule, 160);
-      if (!timePattern.test(time) || !numeroPesage || !facture || !Number.isFinite(poids) || poids <= 0 || poids > 9999999999.99 || !destinataire || !vehicule) {
-        json(response, 400, { error: "Renseignez une heure de sortie, un numéro de pesage, une facture, un poids positif, le destinataire et le véhicule." });
+      if (!["LEVURE", "DRECHE"].includes(typeDechet) || !timePattern.test(time) || !numeroPesage || !facture || !Number.isFinite(poids) || poids <= 0 || poids > 9999999999.99 || !destinataire || !vehicule) {
+        json(response, 400, { error: "Choisissez le type de sortie et renseignez l’heure, le pesage, la facture, un poids positif, le destinataire et le véhicule." });
         return;
       }
       const client = await pool.connect();
@@ -170,14 +171,14 @@ export async function handleLogistics(request, response, pathname) {
         const site = siteResult.rows[0];
         if (!site) throw Object.assign(new Error("Site de travail introuvable."), { status: 404 });
         const inserted = await client.query(
-          `INSERT INTO flux_logistique (date_operation, type_flux, heure_sortie, numero_pesage, facture, poids, destinataire, vehicule, site_id, utilisateur_id)
-           VALUES ($1,'DECHETS',$2::time,$3,$4,$5,$6,$7,$8,$9)
+          `INSERT INTO flux_logistique (date_operation, type_flux, type_dechet, heure_sortie, numero_pesage, facture, poids, destinataire, vehicule, site_id, utilisateur_id)
+           VALUES ($1,'DECHETS',$2,$3::time,$4,$5,$6,$7,$8,$9,$10)
            RETURNING id, cree_le AS "createdAt"`,
-          [date, time, numeroPesage, facture, poids, destinataire, vehicule, siteId, account.sub],
+          [date, typeDechet, time, numeroPesage, facture, poids, destinataire, vehicule, siteId, account.sub],
         );
         await client.query("COMMIT");
         json(response, 201, { entry: {
-          ...inserted.rows[0], date, type, heureSortie: time, numeroPesage, facture, poids, destinataire, vehicule,
+          ...inserted.rows[0], date, type, typeDechet, heureSortie: time, numeroPesage, facture, poids, destinataire, vehicule,
           siteName: site.nom, siteType: site.type_site,
         } });
       } catch (error) {

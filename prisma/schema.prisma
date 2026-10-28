@@ -485,6 +485,7 @@ model FluxLogistique {
   heureSortie    DateTime?   @map("heure_sortie") @db.Time(0)
   heureArrivee   DateTime?   @map("heure_arrivee") @db.Time(0)
   numeroPesage   String?     @map("numero_pesage") @db.VarChar(100)
+  typeDechet     String?     @map("type_dechet") @db.VarChar(20)
   facture        String?     @db.VarChar(160)
   poids          Decimal?    @db.Decimal(12, 2)
   destinataire   String?     @db.VarChar(255)
