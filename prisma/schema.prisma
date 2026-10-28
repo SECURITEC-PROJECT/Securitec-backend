@@ -365,6 +365,8 @@ model Prestataire {
   actif         Boolean       @default(true)
   employes      Employe[]
   comptesRendus CompteRendu[]
+  materielsSousTraitant MaterielSousTraitant[]
+  materielsStar MaterielStar[]
 
   @@map("prestataire")
 }
@@ -658,13 +660,16 @@ model MaterielSousTraitant {
   materiels     String      @db.Text
   nombre        Int
   entreprise    String      @db.VarChar(255)
+  prestataireId String     @map("prestataire_id") @db.Uuid
   heureSortie   DateTime?   @map("heure_sortie") @db.Time(0)
   siteId        String      @map("site_id") @db.Uuid
   utilisateurId String      @map("utilisateur_id") @db.Uuid
   site          Site        @relation(fields: [siteId], references: [id], onDelete: Restrict, map: "fk_materiel_sous_traitant_site")
   utilisateur   Utilisateur @relation(fields: [utilisateurId], references: [id], onDelete: Restrict, map: "fk_materiel_sous_traitant_utilisateur")
+  prestataire   Prestataire @relation(fields: [prestataireId], references: [id], onDelete: Restrict, map: "fk_materiel_sous_traitant_prestataire")
 
   @@index([siteId, dateOperation, heureEntree], map: "idx_materiel_sous_traitant_site_date")
+  @@index([prestataireId], map: "idx_materiel_sous_traitant_prestataire")
   @@map("materiel_sous_traitant")
 }
 
@@ -676,13 +681,16 @@ model MaterielStar {
   prenom        String      @db.VarChar(255)
   matricule     String      @db.VarChar(100)
   materiels     Json        @db.JsonB
+  prestataireId String     @map("prestataire_id") @db.Uuid
   heureSortie   DateTime?   @map("heure_sortie") @db.Time(0)
   siteId        String      @map("site_id") @db.Uuid
   utilisateurId String      @map("utilisateur_id") @db.Uuid
   site          Site        @relation(fields: [siteId], references: [id], onDelete: Restrict, map: "fk_materiel_star_site")
   utilisateur   Utilisateur @relation(fields: [utilisateurId], references: [id], onDelete: Restrict, map: "fk_materiel_star_utilisateur")
+  prestataire   Prestataire @relation(fields: [prestataireId], references: [id], onDelete: Restrict, map: "fk_materiel_star_prestataire")
 
   @@index([siteId, dateOperation, heureEntree], map: "idx_materiel_star_site_date")
+  @@index([prestataireId], map: "idx_materiel_star_prestataire")
   @@map("materiel_star")
 }
 

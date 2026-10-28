@@ -29,6 +29,17 @@ async function resolveSite(pool, account, requestedSiteId) {
   return result.rows[0].id;
 }
 
+async function resolveProvider(pool, providerId, allowedInactiveId = null) {
+  const id = text(providerId, 36);
+  if (!uuidPattern.test(id)) throw Object.assign(new Error("Sélectionnez un prestataire."), { status: 400 });
+  const result = await pool.query(
+    "SELECT id,nom FROM prestataire WHERE id=$1::uuid AND (actif=true OR id=$2::uuid)",
+    [id, allowedInactiveId],
+  );
+  if (!result.rows[0]) throw Object.assign(new Error("Prestataire introuvable ou inactif."), { status: 400 });
+  return result.rows[0];
+}
+
 export async function handleMaterielsSousTraitantRoutes(request, response, pool, pathname, jwtSecret) {
   const entryMatch = entryPath.exec(pathname);
   const exitMatch = exitPath.exec(pathname);
@@ -47,11 +58,11 @@ export async function handleMaterielsSousTraitantRoutes(request, response, pool,
       if (!siteId) { json(response, 200, { entries: [] }); return true; }
       siteId = await resolveSite(pool, account, siteId);
       const result = await pool.query(
-        `SELECT id, date_operation::text AS date, to_char(heure_entree, 'HH24:MI') AS "heureEntree",
-                materiels, nombre, entreprise, to_char(heure_sortie, 'HH24:MI') AS "heureSortie",
-                site_id AS "siteId", cree_le AS "createdAt"
-         FROM materiel_sous_traitant WHERE site_id=$1::uuid
-         ORDER BY date_operation DESC, heure_entree DESC LIMIT 1000`,
+        `SELECT m.id, m.date_operation::text AS date, to_char(m.heure_entree, 'HH24:MI') AS "heureEntree",
+                m.materiels, m.nombre, m.entreprise, m.prestataire_id AS "providerId", p.nom AS provider,
+                to_char(m.heure_sortie, 'HH24:MI') AS "heureSortie", m.site_id AS "siteId", m.cree_le AS "createdAt"
+         FROM materiel_sous_traitant m JOIN prestataire p ON p.id=m.prestataire_id WHERE m.site_id=$1::uuid
+         ORDER BY m.date_operation DESC, m.heure_entree DESC LIMIT 1000`,
         [siteId],
       );
       json(response, 200, { entries: result.rows });
@@ -64,21 +75,21 @@ export async function handleMaterielsSousTraitantRoutes(request, response, pool,
       const heureEntree = text(body.heureEntree, 5);
       const materiels = text(body.materiels, 20000);
       const nombre = Number(body.nombre);
-      const entreprise = text(body.entreprise);
-      if (!validDate(date) || !timePattern.test(heureEntree) || !materiels || !entreprise || !Number.isSafeInteger(nombre) || nombre < 1 || nombre > 1000000) {
-        json(response, 400, { error: "Vérifiez la date, l'heure, le matériel, l'entreprise et le nombre (entier positif)." });
+      if (!validDate(date) || !timePattern.test(heureEntree) || !materiels || !Number.isSafeInteger(nombre) || nombre < 1 || nombre > 1000000) {
+        json(response, 400, { error: "Vérifiez la date, l'heure, le matériel et le nombre (entier positif)." });
         return true;
       }
       const siteId = await resolveSite(pool, account, body.siteId);
+      const provider = await resolveProvider(pool, body.prestataireId);
       const result = await pool.query(
-        `INSERT INTO materiel_sous_traitant (date_operation, heure_entree, materiels, nombre, entreprise, site_id, utilisateur_id)
-         VALUES ($1::date, $2::time, $3, $4, $5, $6::uuid, $7::uuid)
+        `INSERT INTO materiel_sous_traitant (date_operation, heure_entree, materiels, nombre, entreprise, prestataire_id, site_id, utilisateur_id)
+         VALUES ($1::date, $2::time, $3, $4, $5, $6::uuid, $7::uuid, $8::uuid)
          RETURNING id, date_operation::text AS date, to_char(heure_entree, 'HH24:MI') AS "heureEntree",
-                   materiels, nombre, entreprise, to_char(heure_sortie, 'HH24:MI') AS "heureSortie",
-                   site_id AS "siteId", cree_le AS "createdAt"`,
-        [date, heureEntree, materiels, nombre, entreprise, siteId, account.id],
+                   materiels, nombre, entreprise, prestataire_id AS "providerId",
+                   to_char(heure_sortie, 'HH24:MI') AS "heureSortie", site_id AS "siteId", cree_le AS "createdAt"`,
+        [date, heureEntree, materiels, nombre, provider.nom, provider.id, siteId, account.id],
       );
-      json(response, 201, { entry: result.rows[0] });
+      json(response, 201, { entry: { ...result.rows[0], provider: provider.nom } });
       return true;
     }
 
@@ -89,23 +100,28 @@ export async function handleMaterielsSousTraitantRoutes(request, response, pool,
       const heureEntree = text(body.heureEntree, 5);
       const materiels = text(body.materiels, 20000);
       const nombre = Number(body.nombre);
-      const entreprise = text(body.entreprise);
-      if (!validDate(date) || !timePattern.test(heureEntree) || !materiels || !entreprise || !Number.isSafeInteger(nombre) || nombre < 1 || nombre > 1000000) {
-        json(response, 400, { error: "Vérifiez la date, l'heure, le matériel, l'entreprise et le nombre (entier positif)." });
+      if (!validDate(date) || !timePattern.test(heureEntree) || !materiels || !Number.isSafeInteger(nombre) || nombre < 1 || nombre > 1000000) {
+        json(response, 400, { error: "Vérifiez la date, l'heure, le matériel et le nombre (entier positif)." });
         return true;
       }
       const siteId = await resolveSite(pool, account, body.siteId);
+      const existing = await pool.query(
+        "SELECT prestataire_id FROM materiel_sous_traitant WHERE id=$1::uuid AND site_id=$2::uuid",
+        [entryMatch[1], siteId],
+      );
+      if (!existing.rows[0]) { json(response, 404, { error: "Mouvement introuvable sur ce site." }); return true; }
+      const provider = await resolveProvider(pool, body.prestataireId, existing.rows[0].prestataire_id);
       const result = await pool.query(
         `UPDATE materiel_sous_traitant
-         SET date_operation=$2::date, heure_entree=$3::time, materiels=$4, nombre=$5, entreprise=$6
-         WHERE id=$1::uuid AND site_id=$7::uuid
+         SET date_operation=$2::date, heure_entree=$3::time, materiels=$4, nombre=$5, entreprise=$6, prestataire_id=$7::uuid
+         WHERE id=$1::uuid AND site_id=$8::uuid
          RETURNING id, date_operation::text AS date, to_char(heure_entree, 'HH24:MI') AS "heureEntree",
-                   materiels, nombre, entreprise, to_char(heure_sortie, 'HH24:MI') AS "heureSortie",
-                   site_id AS "siteId", cree_le AS "createdAt"`,
-        [entryMatch[1], date, heureEntree, materiels, nombre, entreprise, siteId],
+                   materiels, nombre, entreprise, prestataire_id AS "providerId",
+                   to_char(heure_sortie, 'HH24:MI') AS "heureSortie", site_id AS "siteId", cree_le AS "createdAt"`,
+        [entryMatch[1], date, heureEntree, materiels, nombre, provider.nom, provider.id, siteId],
       );
       if (!result.rows[0]) { json(response, 404, { error: "Mouvement introuvable sur ce site." }); return true; }
-      json(response, 200, { entry: result.rows[0] });
+      json(response, 200, { entry: { ...result.rows[0], provider: provider.nom } });
       return true;
     }
 

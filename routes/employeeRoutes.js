@@ -3,6 +3,7 @@ import { json, readJson } from "../utils/helpers.js";
 
 const path = "/api/employees";
 const clean = (value, max) => typeof value === "string" ? value.trim().slice(0, max) : "";
+const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 async function authorize(request, pool, secret) {
   const tokenUser = getRequestUser(request, secret);
@@ -16,12 +17,12 @@ function employeeValues(body) {
   const firstName = clean(body.firstName, 100);
   const lastName = clean(body.lastName, 100);
   const matricule = clean(body.matricule, 50);
-  const provider = clean(body.provider, 160);
+  const providerId = clean(body.providerId, 36);
   const siteId = clean(body.siteId, 36);
-  if (!firstName || !lastName || !matricule || !provider || !/^[0-9a-f-]{36}$/i.test(siteId)) {
+  if (!firstName || !lastName || !matricule || !uuidPattern.test(providerId) || !uuidPattern.test(siteId)) {
     throw Object.assign(new Error("Prénom, nom, matricule, prestataire et site sont obligatoires."), { status: 400 });
   }
-  return { firstName, lastName, matricule, provider, siteId };
+  return { firstName, lastName, matricule, providerId, siteId };
 }
 
 export async function handleEmployeeRoutes(request, response, pool, pathname, jwtSecret) {
@@ -34,7 +35,7 @@ export async function handleEmployeeRoutes(request, response, pool, pathname, jw
       if (!user) throw Object.assign(new Error("Connectez-vous pour rechercher un employé."), { status: 401 });
       const matricule = decodeURIComponent(lookupMatch[1]).trim();
       const result = await pool.query(`SELECT a.id,a.prenom AS "firstName",a.nom AS "lastName",a.matricule,
-        p.nom AS provider,s.id AS "siteId",s.nom AS "siteName",COALESCE(s.actif,false) AS "siteActive",a.actif AS active
+        p.id AS "providerId",p.nom AS provider,s.id AS "siteId",s.nom AS "siteName",COALESCE(s.actif,false) AS "siteActive",a.actif AS active
         FROM employe a JOIN prestataire p ON p.id=a.prestataire_id
         LEFT JOIN site s ON s.id=a.site_id WHERE UPPER(a.matricule)=UPPER($1) LIMIT 1`, [matricule]);
       const employee = result.rows[0];
@@ -56,12 +57,13 @@ export async function handleEmployeeRoutes(request, response, pool, pathname, jw
         await client.query("BEGIN");
         const site = await client.query("SELECT id FROM site WHERE id=$1::uuid AND actif=true", [values.siteId]);
         if (!site.rows[0]) throw Object.assign(new Error("Site introuvable ou archivé."), { status: 404 });
-        const provider = await client.query("INSERT INTO prestataire (nom) VALUES ($1) ON CONFLICT (nom) DO UPDATE SET actif=true RETURNING id", [values.provider]);
+        const provider = await client.query("SELECT id,nom FROM prestataire WHERE id=$1::uuid AND actif=true", [values.providerId]);
+        if (!provider.rows[0]) throw Object.assign(new Error("Sélectionnez un prestataire actif."), { status: 400 });
         const employee = await client.query(`INSERT INTO employe (prenom,nom,matricule,prestataire_id,site_id) VALUES ($1,$2,$3,$4::uuid,$5::uuid)
           RETURNING id,prenom AS "firstName",nom AS "lastName",matricule,actif AS active,site_id AS "siteId"`, [values.firstName, values.lastName, values.matricule, provider.rows[0].id, values.siteId]);
         const siteName = await client.query("SELECT nom FROM site WHERE id=$1::uuid", [values.siteId]);
         await client.query("COMMIT");
-        json(response, 201, { employee: { ...employee.rows[0], providerId: provider.rows[0].id, provider: values.provider, siteName: siteName.rows[0].nom } });
+        json(response, 201, { employee: { ...employee.rows[0], providerId: provider.rows[0].id, provider: provider.rows[0].nom, siteName: siteName.rows[0].nom } });
       } catch (error) { await client.query("ROLLBACK").catch(() => {}); throw error; }
       finally { client.release(); }
       return true;
@@ -73,13 +75,19 @@ export async function handleEmployeeRoutes(request, response, pool, pathname, jw
         await client.query("BEGIN");
         const site = await client.query("SELECT id FROM site WHERE id=$1::uuid AND actif=true", [values.siteId]);
         if (!site.rows[0]) throw Object.assign(new Error("Site introuvable ou archivé."), { status: 404 });
-        const provider = await client.query("INSERT INTO prestataire (nom) VALUES ($1) ON CONFLICT (nom) DO UPDATE SET actif=true RETURNING id", [values.provider]);
+        const current = await client.query("SELECT prestataire_id FROM employe WHERE id=$1::uuid FOR UPDATE", [idMatch[1]]);
+        if (!current.rows[0]) throw Object.assign(new Error("Employé introuvable."), { status: 404 });
+        const provider = await client.query(
+          "SELECT id,nom FROM prestataire WHERE id=$1::uuid AND (actif=true OR id=$2::uuid)",
+          [values.providerId, current.rows[0].prestataire_id],
+        );
+        if (!provider.rows[0]) throw Object.assign(new Error("Sélectionnez un prestataire actif."), { status: 400 });
         const employee = await client.query(`UPDATE employe SET prenom=$1,nom=$2,matricule=$3,prestataire_id=$4::uuid,site_id=$5::uuid WHERE id=$6::uuid
           RETURNING id,prenom AS "firstName",nom AS "lastName",matricule,actif AS active,site_id AS "siteId"`, [values.firstName, values.lastName, values.matricule, provider.rows[0].id, values.siteId, idMatch[1]]);
         if (!employee.rows[0]) throw Object.assign(new Error("Employé introuvable."), { status: 404 });
         const siteName = await client.query("SELECT nom FROM site WHERE id=$1::uuid", [values.siteId]);
         await client.query("COMMIT");
-        json(response, 200, { employee: { ...employee.rows[0], providerId: provider.rows[0].id, provider: values.provider, siteName: siteName.rows[0].nom } });
+        json(response, 200, { employee: { ...employee.rows[0], providerId: provider.rows[0].id, provider: provider.rows[0].nom, siteName: siteName.rows[0].nom } });
       } catch (error) { await client.query("ROLLBACK").catch(() => {}); throw error; }
       finally { client.release(); }
       return true;

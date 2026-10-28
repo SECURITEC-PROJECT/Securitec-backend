@@ -20,19 +20,20 @@ const readEntry = (body) => {
   const heureEntree = text(body.heureEntree, 5);
   const prenom = text(body.prenom);
   const matricule = text(body.matricule, 100);
+  const prestataireId = text(body.prestataireId, 36);
   const items = Array.isArray(body.items) && body.items.length <= 100
     ? body.items.map((item) => ({
       designation: text(item?.designation),
       nombre: Number(item?.nombre),
     }))
     : [];
-  if (!validDate(date) || !timePattern.test(heureEntree) || !prenom || !matricule
+  if (!validDate(date) || !timePattern.test(heureEntree) || !prenom || !matricule || !uuidPattern.test(prestataireId)
     || items.length === 0 || items.some((item) =>
       !item.designation || !Number.isSafeInteger(item.nombre) || item.nombre < 1 || item.nombre > 1000000,
     )) {
-    throw Object.assign(new Error("Vérifiez la date, l’heure d’entrée, le prénom, le matricule et les matériels avec leurs nombres."), { status: 400 });
+    throw Object.assign(new Error("Vérifiez la date, l’heure d’entrée, le prénom, le matricule, le prestataire et les matériels avec leurs nombres."), { status: 400 });
   }
-  return { date, heureEntree, prenom, matricule, items };
+  return { date, heureEntree, prenom, matricule, items, prestataireId };
 };
 
 async function getAccount(pool, userId) {
@@ -52,9 +53,18 @@ async function resolveSite(pool, account, requestedSiteId) {
 
 const entrySelect = `SELECT m.id, m.date_operation::text AS date,
   to_char(m.heure_entree, 'HH24:MI') AS "heureEntree", m.prenom, m.matricule,
-  m.materiels AS items, to_char(m.heure_sortie, 'HH24:MI') AS "heureSortie",
-  m.site_id AS "siteId", s.nom AS "siteName"
-  FROM materiel_star m JOIN site s ON s.id=m.site_id`;
+  m.prestataire_id AS "providerId", p.nom AS provider, m.materiels AS items,
+  to_char(m.heure_sortie, 'HH24:MI') AS "heureSortie", m.site_id AS "siteId", s.nom AS "siteName"
+  FROM materiel_star m JOIN site s ON s.id=m.site_id JOIN prestataire p ON p.id=m.prestataire_id`;
+
+async function resolveProvider(pool, providerId, allowedInactiveId = null) {
+  const result = await pool.query(
+    "SELECT id,nom FROM prestataire WHERE id=$1::uuid AND (actif=true OR id=$2::uuid)",
+    [providerId, allowedInactiveId],
+  );
+  if (!result.rows[0]) throw Object.assign(new Error("Prestataire introuvable ou inactif."), { status: 400 });
+  return result.rows[0];
+}
 
 export async function handleMaterielsStarRoutes(request, response, pool, pathname, jwtSecret) {
   const entryMatch = entryPath.exec(pathname);
@@ -85,16 +95,18 @@ export async function handleMaterielsStarRoutes(request, response, pool, pathnam
       const body = await readJson(request);
       const entry = readEntry(body);
       const siteId = await resolveSite(pool, account, body.siteId);
+      const provider = await resolveProvider(pool, entry.prestataireId);
       const result = await pool.query(
-        `INSERT INTO materiel_star (date_operation, heure_entree, prenom, matricule, materiels, site_id, utilisateur_id)
-         VALUES ($1::date, $2::time, $3, $4, $5::jsonb, $6::uuid, $7::uuid)
+        `INSERT INTO materiel_star (date_operation, heure_entree, prenom, matricule, materiels, prestataire_id, site_id, utilisateur_id)
+         VALUES ($1::date, $2::time, $3, $4, $5::jsonb, $6::uuid, $7::uuid, $8::uuid)
          RETURNING id, date_operation::text AS date, to_char(heure_entree, 'HH24:MI') AS "heureEntree",
-                   prenom, matricule, materiels AS items, to_char(heure_sortie, 'HH24:MI') AS "heureSortie",
+                   prenom, matricule, prestataire_id AS "providerId", materiels AS items,
+                   to_char(heure_sortie, 'HH24:MI') AS "heureSortie",
                    site_id AS "siteId"`,
-        [entry.date, entry.heureEntree, entry.prenom, entry.matricule, JSON.stringify(entry.items), siteId, account.id],
+        [entry.date, entry.heureEntree, entry.prenom, entry.matricule, JSON.stringify(entry.items), provider.id, siteId, account.id],
       );
       const site = await pool.query("SELECT nom AS \"siteName\" FROM site WHERE id=$1::uuid", [siteId]);
-      json(response, 201, { entry: { ...result.rows[0], siteName: site.rows[0].siteName } });
+      json(response, 201, { entry: { ...result.rows[0], provider: provider.nom, siteName: site.rows[0].siteName } });
       return true;
     }
 
@@ -103,18 +115,25 @@ export async function handleMaterielsStarRoutes(request, response, pool, pathnam
       const body = await readJson(request);
       const entry = readEntry(body);
       const siteId = await resolveSite(pool, account, body.siteId);
+      const existing = await pool.query(
+        "SELECT prestataire_id FROM materiel_star WHERE id=$1::uuid AND site_id=$2::uuid",
+        [entryMatch[1], siteId],
+      );
+      if (!existing.rows[0]) { json(response, 404, { error: "Mouvement introuvable sur ce site." }); return true; }
+      const provider = await resolveProvider(pool, entry.prestataireId, existing.rows[0].prestataire_id);
       const result = await pool.query(
         `UPDATE materiel_star
-         SET date_operation=$2::date, heure_entree=$3::time, prenom=$4, matricule=$5, materiels=$6::jsonb
-         WHERE id=$1::uuid AND site_id=$7::uuid
+         SET date_operation=$2::date, heure_entree=$3::time, prenom=$4, matricule=$5, materiels=$6::jsonb, prestataire_id=$7::uuid
+         WHERE id=$1::uuid AND site_id=$8::uuid
          RETURNING id, date_operation::text AS date, to_char(heure_entree, 'HH24:MI') AS "heureEntree",
-                   prenom, matricule, materiels AS items, to_char(heure_sortie, 'HH24:MI') AS "heureSortie",
+                   prenom, matricule, prestataire_id AS "providerId", materiels AS items,
+                   to_char(heure_sortie, 'HH24:MI') AS "heureSortie",
                    site_id AS "siteId"`,
-        [entryMatch[1], entry.date, entry.heureEntree, entry.prenom, entry.matricule, JSON.stringify(entry.items), siteId],
+        [entryMatch[1], entry.date, entry.heureEntree, entry.prenom, entry.matricule, JSON.stringify(entry.items), provider.id, siteId],
       );
       if (!result.rows[0]) { json(response, 404, { error: "Mouvement introuvable sur ce site." }); return true; }
       const site = await pool.query("SELECT nom AS \"siteName\" FROM site WHERE id=$1::uuid", [siteId]);
-      json(response, 200, { entry: { ...result.rows[0], siteName: site.rows[0].siteName } });
+      json(response, 200, { entry: { ...result.rows[0], provider: provider.nom, siteName: site.rows[0].siteName } });
       return true;
     }
 
