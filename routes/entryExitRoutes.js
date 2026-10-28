@@ -1,11 +1,13 @@
 import {
   createVehicle,
   createVisitor,
+  deleteVisitor,
   exitVehicle,
   exitVisitor,
   deleteVehicle,
   getVehicles,
   getVisitors,
+  updateVisitor,
   updateVehicle,
 } from "../controllers/entryExitController.js";
 import { getRequestUser } from "../utils/auth.js";
@@ -15,9 +17,10 @@ const apiPrefix = "/api";
 
 export async function handleEntryExitRoutes(request, response, pool, pathname, jwtSecret) {
   const visitorExit = pathname.match(/^\/api\/visitors\/([0-9a-f-]+)\/exit$/i);
+  const visitorEntry = pathname.match(/^\/api\/visitors\/([0-9a-f-]+)$/i);
   const vehicleExit = pathname.match(/^\/api\/vehicles\/([0-9a-f-]+)\/exit$/i);
   const vehicleEntry = pathname.match(/^\/api\/vehicles\/([0-9a-f-]+)$/i);
-  const isVisitor = pathname === `${apiPrefix}/visitors` || visitorExit;
+  const isVisitor = pathname === `${apiPrefix}/visitors` || visitorExit || visitorEntry;
   const isVehicle = pathname === `${apiPrefix}/vehicles` || vehicleExit || vehicleEntry;
   if (!isVisitor && !isVehicle) return false;
 
@@ -36,6 +39,14 @@ export async function handleEntryExitRoutes(request, response, pool, pathname, j
   }
   if (visitorExit && request.method === "PATCH") {
     await exitVisitor(request, response, pool, user.id, visitorExit[1]);
+    return true;
+  }
+  if (visitorEntry && request.method === "PUT") {
+    await updateVisitor(request, response, pool, user.id, visitorEntry[1]);
+    return true;
+  }
+  if (visitorEntry && request.method === "DELETE") {
+    await deleteVisitor(request, response, pool, user.id, visitorEntry[1]);
     return true;
   }
   if (pathname === `${apiPrefix}/vehicles` && request.method === "GET") {

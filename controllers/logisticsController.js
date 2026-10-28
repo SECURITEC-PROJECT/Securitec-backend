@@ -66,14 +66,14 @@ export async function getLogisticsEntries(request, response, pool, userId) {
     const result = await pool.query(
       `SELECT f.id, f.date_operation::text AS date, f.type_flux AS type,
               f.camion, f.transporteur, f.document, f.plomb,
-              to_char(f.heure_sortie, 'HH24:MI') AS "heureSortie", f.numero_pesage AS "numeroPesage",
-              f.facture, f.poids, f.destinataire, f.vehicule,
+              to_char(COALESCE(f.heure_sortie, f.heure_arrivee), 'HH24:MI') AS "heureSortie", f.numero_pesage AS "numeroPesage",
+              COALESCE(f.facture, f.document) AS facture, f.poids, f.destinataire,
+              COALESCE(f.vehicule, f.camion) AS vehicule,
               to_char(f.heure_arrivee, 'HH24:MI') AS "heureArrivee",
-              f.immatriculation_vehicule AS "immatriculationVehicule",
+              COALESCE(f.immatriculation_vehicule, f.vehicule, f.camion) AS "immatriculationVehicule",
               f.nom_chauffeur AS "nomChauffeur", f.nbr,
               f.numero_titre AS "numeroTitre", f.provenance,
               f.details_bouteilles AS "detailsBouteilles",
-              f.facture, f.poids, f.destinataire, COALESCE(f.vehicule, f.camion) AS vehicule,
               to_char(f.heure_pointe, 'HH24:MI') AS "heurePointe", f.designation, f.provenance,
               f.titre, f.cree, f.chauffeur, f.magasinier,
               f.type_chargement AS "typeChargement", f.proprietaire,
@@ -427,10 +427,36 @@ export async function createLogisticsEntry(request, response, pool, userId) {
       });
     }
 
-    const camion = cleanText(body.camion, 160);
     if (!truckTypes.has(type)) {
       throw Object.assign(new Error("Le type de flux camion est invalide."), { status: 400 });
     }
+    if (type === "DECHARGEMENT") {
+      const immatriculation = cleanText(body.immatriculationVehicule, 100);
+      const heureSortie = cleanText(body.heureSortie, 5);
+      const designation = cleanText(body.designation, 20000);
+      const nbr = cleanText(body.nbr, 255);
+      const facture = cleanText(body.facture, 160);
+      if (!immatriculation || !timePattern.test(heureSortie) || !designation || !nbr || !/^\d{1,4}$/.test(facture)) {
+        throw Object.assign(new Error("Renseignez le matricule, une heure de sortie, la désignation, le nombre et une facture de 1 à 4 chiffres."), { status: 400 });
+      }
+      const result = await client.query(
+        `INSERT INTO flux_logistique
+           (date_operation, type_flux, camion, immatriculation_vehicule, vehicule,
+            heure_sortie, designation, nbr, facture, document, site_id, utilisateur_id)
+         VALUES ($1::date, 'DECHARGEMENT', $2, $2, $2, $3::time, $4, $5, $6, $6, $7::uuid, $8::uuid)
+         RETURNING id, cree_le AS "createdAt"`,
+        [date, immatriculation, heureSortie, designation, nbr, facture, siteId, userId],
+      );
+      await client.query("COMMIT");
+      return json(response, 201, {
+        entry: {
+          ...result.rows[0], date, type, immatriculationVehicule: immatriculation,
+          heureSortie, designation, nbr, facture, siteName: site.nom, siteType: site.type_site,
+        },
+      });
+    }
+
+    const camion = cleanText(body.camion, 160);
     const nomChauffeur = cleanText(body.nomChauffeur, 255);
     const heureArrivee = cleanText(body.heureArrivee, 5);
     const designation = cleanText(body.designation, 20000);
@@ -471,6 +497,38 @@ export async function updateTruckLogisticsEntry(request, response, pool, userId,
     const body = await readJson(request);
     const date = normalizeDate(body.date);
     const type = cleanText(body.type, 20).toUpperCase();
+    if (type === "DECHARGEMENT") {
+      const immatriculation = cleanText(body.immatriculationVehicule, 100);
+      const heureSortie = cleanText(body.heureSortie, 5);
+      const designation = cleanText(body.designation, 20000);
+      const nbr = cleanText(body.nbr, 255);
+      const facture = cleanText(body.facture, 160);
+      if (!validDate(date) || !immatriculation || !timePattern.test(heureSortie)
+        || !designation || !nbr || !/^\d{1,4}$/.test(facture)) {
+        return json(response, 400, { error: "Renseignez une date, un matricule, une heure de sortie, une désignation, un nombre et une facture de 1 à 4 chiffres." });
+      }
+
+      await client.query("BEGIN");
+      const account = await getAccount(client, userId);
+      const siteId = await resolveSite(client, account, body);
+      const result = await client.query(
+        `UPDATE flux_logistique
+         SET date_operation = $2::date, camion = $3, immatriculation_vehicule = $3, vehicule = $3,
+             heure_sortie = $4::time, designation = $5, nbr = $6, facture = $7, document = $7
+         WHERE id = $1::uuid AND site_id = $8::uuid AND type_flux = 'DECHARGEMENT'
+         RETURNING id, date_operation::text AS date, type_flux AS type,
+                   immatriculation_vehicule AS "immatriculationVehicule",
+                   to_char(heure_sortie, 'HH24:MI') AS "heureSortie",
+                   designation, nbr, facture`,
+        [entryId, date, immatriculation, heureSortie, designation, nbr, facture, siteId],
+      );
+      if (!result.rows[0]) {
+        await client.query("ROLLBACK");
+        return json(response, 404, { error: "Mouvement camion introuvable sur ce site." });
+      }
+      await client.query("COMMIT");
+      return json(response, 200, { entry: result.rows[0] });
+    }
     const camion = cleanText(body.camion, 160);
     const nomChauffeur = cleanText(body.nomChauffeur, 255);
     const heureArrivee = cleanText(body.heureArrivee, 5);
