@@ -54,6 +54,8 @@ model Site {
   pointagesApsNuit        PointageApsNuit[]
   consignesJournal        ConsigneJournal[]
   truckChecklists         TruckChecklist[]
+  registreOrdures         RegistreOrdure[]
+  registreFerrailles      RegistreFerraille[]
 
   @@map("site")
 }
@@ -88,6 +90,8 @@ model Utilisateur {
   pointagesApsNuit        PointageApsNuit[]
   consignesJournal        ConsigneJournal[]
   truckChecklists         TruckChecklist[]
+  registreOrdures         RegistreOrdure[]
+  registreFerrailles      RegistreFerraille[]
 
   @@index([siteId], map: "idx_utilisateur_site")
   @@map("utilisateur")
@@ -549,6 +553,44 @@ model TruckChecklist {
 
   @@unique([siteId, dateOperation], map: "uq_truck_checklist_site_date")
   @@map("truck_checklist")
+}
+
+model RegistreOrdure {
+  id            String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  creeLe        DateTime    @default(now()) @map("cree_le") @db.Timestamp(6)
+  dateOperation DateTime    @map("date_operation") @db.Date
+  heure         DateTime    @db.Time(0)
+  prenom        String      @db.VarChar(100)
+  matricule     String      @db.VarChar(50)
+  section       String      @db.VarChar(100)
+  designation   String      @db.Text
+  siteId        String      @map("site_id") @db.Uuid
+  utilisateurId String      @map("utilisateur_id") @db.Uuid
+  site          Site        @relation(fields: [siteId], references: [id], onDelete: Restrict, map: "fk_registre_ordures_site")
+  utilisateur   Utilisateur @relation(fields: [utilisateurId], references: [id], onDelete: Restrict, map: "fk_registre_ordures_utilisateur")
+
+  @@index([siteId, dateOperation, heure], map: "idx_registre_ordures_site_date")
+  @@map("registre_ordures")
+}
+
+model RegistreFerraille {
+  id            String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  creeLe        DateTime    @default(now()) @map("cree_le") @db.Timestamp(6)
+  dateOperation DateTime    @map("date_operation") @db.Date
+  heure         DateTime    @db.Time(0)
+  prenom        String      @db.VarChar(100)
+  matricule     String      @db.VarChar(50)
+  section       String      @db.VarChar(100)
+  designation   String      @db.Text
+  nombre        Int
+  motif         String      @db.Text
+  siteId        String      @map("site_id") @db.Uuid
+  utilisateurId String      @map("utilisateur_id") @db.Uuid
+  site          Site        @relation(fields: [siteId], references: [id], onDelete: Restrict, map: "fk_registre_ferrailles_site")
+  utilisateur   Utilisateur @relation(fields: [utilisateurId], references: [id], onDelete: Restrict, map: "fk_registre_ferrailles_utilisateur")
+
+  @@index([siteId, dateOperation, heure], map: "idx_registre_ferrailles_site_date")
+  @@map("registre_ferrailles")
 }
 
 model SignalementLogistique {

@@ -28,13 +28,38 @@ function employeeValues(body) {
 export async function handleEmployeeRoutes(request, response, pool, pathname, jwtSecret) {
   const idMatch = /^\/api\/employees\/([0-9a-f-]{36})$/i.exec(pathname);
   const lookupMatch = /^\/api\/employees\/by-matricule\/([^/]+)$/i.exec(pathname);
-  if (pathname !== path && !idMatch && !lookupMatch) return false;
+  const optionsPath = `${path}/options`;
+  if (pathname !== path && pathname !== optionsPath && !idMatch && !lookupMatch) return false;
   try {
+    if (pathname === optionsPath && request.method === "GET") {
+      const tokenUser = getRequestUser(request, jwtSecret);
+      if (!tokenUser) throw Object.assign(new Error("Connectez-vous pour charger les employés."), { status: 401 });
+      const account = await pool.query(
+        "SELECT id,role,site_id AS \"siteId\" FROM utilisateur WHERE id=$1::uuid AND actif=true",
+        [tokenUser.id],
+      );
+      if (!account.rows[0]) throw Object.assign(new Error("Utilisateur introuvable."), { status: 401 });
+      const url = new URL(request.url || "/", `http://${request.headers.host || "localhost"}`);
+      const requestedSiteId = clean(url.searchParams.get("siteId"), 36);
+      const siteId = account.rows[0].role === 1 ? requestedSiteId : account.rows[0].siteId;
+      if (!uuidPattern.test(siteId || "")) throw Object.assign(new Error("Sélectionnez un site."), { status: 400 });
+      if (account.rows[0].role === 1) {
+        const site = await pool.query("SELECT id FROM site WHERE id=$1::uuid AND actif=true", [siteId]);
+        if (!site.rows[0]) throw Object.assign(new Error("Site introuvable ou archivé."), { status: 404 });
+      }
+      const employees = await pool.query(
+        `SELECT id,prenom AS "firstName",nom AS "lastName",matricule,role AS section
+         FROM employe WHERE site_id=$1::uuid AND actif=true ORDER BY prenom,nom,matricule`,
+        [siteId],
+      );
+      json(response, 200, { employees: employees.rows });
+      return true;
+    }
     if (lookupMatch && request.method === "GET") {
       const user = getRequestUser(request, jwtSecret);
       if (!user) throw Object.assign(new Error("Connectez-vous pour rechercher un employé."), { status: 401 });
       const matricule = decodeURIComponent(lookupMatch[1]).trim();
-      const result = await pool.query(`SELECT a.id,a.prenom AS "firstName",a.nom AS "lastName",a.matricule,
+      const result = await pool.query(`SELECT a.id,a.prenom AS "firstName",a.nom AS "lastName",a.matricule,a.role AS section,
         p.id AS "providerId",p.nom AS provider,s.id AS "siteId",s.nom AS "siteName",COALESCE(s.actif,false) AS "siteActive",a.actif AS active
         FROM employe a JOIN prestataire p ON p.id=a.prestataire_id
         LEFT JOIN site s ON s.id=a.site_id WHERE UPPER(a.matricule)=UPPER($1) LIMIT 1`, [matricule]);
