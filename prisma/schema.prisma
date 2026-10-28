@@ -48,6 +48,7 @@ model Site {
   materielsSousTraitant  MaterielSousTraitant[]
   materielsStar          MaterielStar[]
   questionnairesVisiteurs QuestionnaireVisiteur[]
+  declarationsObjets      DeclarationObjet[]
   documentsSite           DocumentSite[]
   pointagesApsJour        PointageApsJour[]
   pointagesApsNuit        PointageApsNuit[]
@@ -81,6 +82,7 @@ model Utilisateur {
   materielsSousTraitant  MaterielSousTraitant[]
   materielsStar          MaterielStar[]
   questionnairesVisiteurs QuestionnaireVisiteur[]
+  declarationsObjets      DeclarationObjet[]
   documentsSite           DocumentSite[]
   pointagesApsJour        PointageApsJour[]
   pointagesApsNuit        PointageApsNuit[]
@@ -697,6 +699,21 @@ model QuestionnaireVisiteur {
 
   @@index([siteId, dateOperation, creeLe], map: "idx_questionnaire_visiteur_site_date")
   @@map("questionnaire_visiteur")
+}
+
+model DeclarationObjet {
+  id            String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  creeLe        DateTime    @default(now()) @map("cree_le") @db.Timestamp(6)
+  modifieLe     DateTime    @default(now()) @updatedAt @map("modifie_le") @db.Timestamp(6)
+  dateOperation DateTime    @map("date_operation") @db.Date
+  donnees       Json        @db.JsonB
+  siteId        String      @map("site_id") @db.Uuid
+  utilisateurId String      @map("utilisateur_id") @db.Uuid
+  site          Site        @relation(fields: [siteId], references: [id], onDelete: Restrict, map: "fk_declaration_objet_site")
+  utilisateur   Utilisateur @relation(fields: [utilisateurId], references: [id], onDelete: Restrict, map: "fk_declaration_objet_utilisateur")
+
+  @@index([siteId, dateOperation, creeLe], map: "idx_declaration_objet_site_date")
+  @@map("declaration_objet")
 }
 
 model PointageApsJour {
