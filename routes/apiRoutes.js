@@ -14,6 +14,7 @@ import { handleHandoverRoutes } from "./handoverRoutes.js";
 import { handleMainCouranteRoutes } from "./mainCouranteRoutes.js";
 import { handleMaterielsSousTraitantRoutes } from "./materielsSousTraitantRoutes.js";
 import { handleMaterielsStarRoutes } from "./materielsStarRoutes.js";
+import { handleVisitorQuestionnaireRoutes } from "./visitorQuestionnaireRoutes.js";
 import { handleApsAttendanceRoutes } from "./apsAttendanceRoutes.js";
 import { handlePatrolRoutes } from "./patrolRoutes.js";
 import { handleShiftRoutes } from "./shiftRoutes.js";
@@ -46,6 +47,7 @@ export async function handleApiRoutes(request, response, pool, jwtSecret) {
   if (await handleCourrierRoutes(request, response, pool, pathname, jwtSecret)) return true;
   if (await handleMaterielsSousTraitantRoutes(request, response, pool, pathname, jwtSecret)) return true;
   if (await handleMaterielsStarRoutes(request, response, pool, pathname, jwtSecret)) return true;
+  if (await handleVisitorQuestionnaireRoutes(request, response, pool, pathname, jwtSecret)) return true;
   if (await handleConsigneJournalRoutes(request, response, pool, pathname, jwtSecret)) return true;
   if (await handleFluxRoutes(request, response, pool, pathname, jwtSecret)) return true;
   if (await handleTruckChecklistRoutes(request, response, pool, pathname, jwtSecret)) return true;
