@@ -52,6 +52,7 @@ model Site {
   documentsSite           DocumentSite[]
   pointagesApsJour        PointageApsJour[]
   pointagesApsNuit        PointageApsNuit[]
+  configurationsPostesAps ConfigurationPostesAps[]
   consignesJournal        ConsigneJournal[]
   truckChecklists         TruckChecklist[]
 
@@ -86,6 +87,7 @@ model Utilisateur {
   documentsSite           DocumentSite[]
   pointagesApsJour        PointageApsJour[]
   pointagesApsNuit        PointageApsNuit[]
+  configurationsPostesAps ConfigurationPostesAps[]
   consignesJournal        ConsigneJournal[]
   truckChecklists         TruckChecklist[]
 
@@ -744,6 +746,20 @@ model PointageApsNuit {
   @@unique([siteId, datePointage], map: "uq_pointage_aps_nuit_site_date")
   @@index([siteId, datePointage], map: "idx_pointage_aps_nuit_site_date")
   @@map("pointage_aps_nuit")
+}
+
+model ConfigurationPostesAps {
+  id            String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  siteId        String      @map("site_id") @db.Uuid
+  service       String      @db.VarChar(10)
+  postes        Json        @db.JsonB
+  utilisateurId String      @map("utilisateur_id") @db.Uuid
+  updatedAt     DateTime    @default(now()) @map("updated_at") @db.Timestamp(6)
+  site          Site        @relation(fields: [siteId], references: [id], onDelete: Restrict, map: "fk_configuration_postes_aps_site")
+  utilisateur   Utilisateur @relation(fields: [utilisateurId], references: [id], onDelete: Restrict, map: "fk_configuration_postes_aps_utilisateur")
+
+  @@unique([siteId, service], map: "uq_configuration_postes_aps_site_service")
+  @@map("configuration_postes_aps")
 }
 
 model DocumentSite {

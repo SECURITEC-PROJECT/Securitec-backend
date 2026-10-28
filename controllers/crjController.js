@@ -8,18 +8,6 @@ const TZ = "Indian/Antananarivo";
 const DECHARGEMENT = /^(DECH|RECEP|ENTR)/;
 const CHARGEMENT = /^(CHARG|EXPED|SORT)/;
 
-// Postes et effectifs de référence du formulaire Pointage APS
-const POSTES_JOUR = [
-  ["PG1", 5], ["EXP", 2], ["BOX", 1], ["EX GARAGE", 1], ["MG/HV", 1],
-  ["TDE", 1], ["BON ESPOIR", 2], ["CO2", 1], ["PG2", 2], ["PBM", 1],
-  ["PBS", 1], ["PARKING EXTERIEUR", 1], ["MATERIEL", 1], ["FITAVA", 1], ["VILLA G", 1],
-];
-const POSTES_NUIT = [
-  ["PG1", 2], ["EXP", 1], ["BOX", 1], ["EX GARAGE", 1], ["MG/HV", 1],
-  ["TDE", 1], ["BON ESPOIR", 3], ["CO2", 1], ["PG2", 2], ["MATO", 2],
-  ["FITAVA", 1], ["VILLA G", 1],
-];
-
 // Articles du stock extérieur (Agence) : clé du rapport -> début du code article
 const ARTICLES_STOCK = {
   cv12: "CV12",
@@ -82,6 +70,7 @@ SELECT
     SELECT json_agg(json_build_object(
       'service', a.service,
       'poste', a.poste,
+      'nom', a.agent->>'nom',
       'prenom', a.agent->>'prenom',
       'matricule', a.agent->>'matricule',
       'nom_employe', e.nom,
@@ -103,6 +92,22 @@ SELECT
     LEFT JOIN employe e
       ON UPPER(TRIM(e.matricule)) = UPPER(TRIM(a.agent->>'matricule'))
   ), '[]'::json) AS agents,
+  COALESCE((
+    SELECT json_agg(json_build_object('service', c.service, 'postes', c.postes) ORDER BY c.source_order)
+    FROM (
+      SELECT 'jour' AS service, data AS postes, 1 AS source_order
+      FROM pointage_aps_jour
+      WHERE site_id = $1::uuid AND date_pointage = $3::date
+      UNION ALL
+      SELECT 'nuit' AS service, data AS postes, 1 AS source_order
+      FROM pointage_aps_nuit
+      WHERE site_id = $1::uuid AND date_pointage = $3::date
+      UNION ALL
+      SELECT service, postes, 0 AS source_order
+      FROM configuration_postes_aps
+      WHERE site_id = $1::uuid
+    ) c
+  ), '[]'::json) AS configured_postes,
   EXISTS (
     SELECT 1 FROM pointage_aps_jour pa
     WHERE pa.site_id = $1::uuid AND pa.date_pointage = $3::date
@@ -263,12 +268,31 @@ export async function generateCrj({ prestataireId, siteId, date }, pool) {
 
   // --- 1 - Agents groupés par poste depuis les pointages APS jour et nuit ---
   const pointages = { jour: new Map(), nuit: new Map() };
+  const effectifs = { jour: new Map(), nuit: new Map() };
+  const ordrePostes = [];
   const aliasPostesJour = {
     GARAGE: "EX GARAGE",
     PGIT: "PG2",
     FITAA: "FITAVA",
     EXTERIEUR: "PARKING EXTERIEUR",
   };
+  for (const configuration of d.configured_postes ?? []) {
+    const service = configuration.service;
+    if (!effectifs[service] || !configuration.postes || typeof configuration.postes !== "object") continue;
+    const entries = Array.isArray(configuration.postes)
+      ? configuration.postes
+        .filter((poste) => poste && typeof poste.name === "string")
+        .map((poste) => [poste.name, Number(poste.count)] )
+      : Object.entries(configuration.postes)
+        .filter(([, agents]) => Array.isArray(agents))
+        .map(([name, agents]) => [name, agents.length]);
+    for (const [savedName, count] of entries) {
+      if (!Number.isInteger(count) || count < 1 || count > 30) continue;
+      const name = service === "jour" ? aliasPostesJour[savedName] || savedName : savedName;
+      effectifs[service].set(name, count);
+      if (!ordrePostes.includes(name)) ordrePostes.push(name);
+    }
+  }
   for (const agent of d.agents) {
     if (!pointages[agent.service]) continue;
     const poste = agent.service === "jour" ? aliasPostesJour[agent.poste] || agent.poste : agent.poste;
@@ -276,17 +300,22 @@ export async function generateCrj({ prestataireId, siteId, date }, pool) {
     if (!parPoste.has(poste)) parPoste.set(poste, []);
     const nomEmploye = [txt(agent.nom_employe), txt(agent.prenom_employe)].filter(Boolean).join(" ");
     parPoste.get(poste).push({
-      nom: nomEmploye || txt(agent.prenom),
+      nom: nomEmploye || txt(agent.nom) || txt(agent.prenom),
       matricule: txt(agent.matricule),
     });
+    if (!ordrePostes.includes(poste)) ordrePostes.push(poste);
   }
-  const postesOrdre = [...new Set([...POSTES_JOUR, ...POSTES_NUIT].map(([poste]) => poste))];
+  const postesOrdre = [...new Set([...ordrePostes, ...pointages.jour.keys(), ...pointages.nuit.keys()])];
   const agentsPostes = postesOrdre.map((poste) => {
     const jour = pointages.jour.get(poste) ?? [];
     const nuit = pointages.nuit.get(poste) ?? [];
-    const effectifJour = POSTES_JOUR.find(([nom]) => nom === poste)?.[1] ?? 0;
-    const effectifNuit = POSTES_NUIT.find(([nom]) => nom === poste)?.[1] ?? 0;
-    const nombreLignes = Math.max(effectifJour, effectifNuit, jour.length, nuit.length, 1);
+    const nombreLignes = Math.max(
+      effectifs.jour.get(poste) ?? 0,
+      effectifs.nuit.get(poste) ?? 0,
+      jour.length,
+      nuit.length,
+      1,
+    );
     return {
       poste,
       jour: Array.from({ length: nombreLignes }, (_, index) => jour[index] ?? { nom: "", matricule: "" }),
