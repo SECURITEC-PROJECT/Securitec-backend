@@ -46,7 +46,7 @@ export async function getVisitors(request, response, pool, userId) {
               COALESCE(p.badge_numero,b.uid_nfc) AS badge, COALESCE(p.immatriculation,'') AS vehicle,
               COALESCE(p.zone,'') AS zone, COALESCE(p.materiel,'') AS equipment,
               p.entree AS entered_at, p.sortie AS exited_at, p.notes_sortie AS exit_notes,
-              s.nom AS site_name
+              v.site_id, s.nom AS site_name, s.type_site AS site_type
        FROM passage p JOIN visiteur v ON v.id=p.visiteur_id JOIN badge b ON b.id=p.badge_id
        LEFT JOIN site s ON s.id=v.site_id
        WHERE ($1::uuid IS NULL OR v.site_id=$1::uuid)
@@ -67,7 +67,11 @@ export async function createVisitor(request, response, pool, userId) {
     const name = cleanText(body.full_name);
     const reason = cleanText(body.reason, 20000);
     const host = cleanText(body.host);
-    if (!name || !reason || !host) return json(response, 400, { error: "Le nom, l’hôte et le motif sont obligatoires." });
+    const entryDate = cleanText(body.entryDate ?? body.entry_date, 10);
+    const entryTime = cleanText(body.entryTime ?? body.entry_time, 5);
+    if (!name || !reason || ((entryDate || entryTime) && (!validDate(entryDate) || !validTime(entryTime)))) {
+      return json(response, 400, { error: "Renseignez le nom, le motif, une date et une heure d’entrée valides." });
+    }
     client = await pool.connect();
     await client.query("BEGIN");
     const account = await getAccount(client, userId);
@@ -83,20 +87,22 @@ export async function createVisitor(request, response, pool, userId) {
     );
     const passage = await client.query(
       `INSERT INTO passage (entree, motif, badge_id, visiteur_id, type_piece, piece_fin, hote, zone, materiel, immatriculation, badge_numero, saisi_par_id)
-       VALUES (NOW(),$1,$2::uuid,$3::uuid,$4,$5,$6,$7,$8,$9,$10,$11::uuid)
+       VALUES (COALESCE($12::date + $13::time,NOW()),$1,$2::uuid,$3::uuid,$4,$5,$6,$7,$8,$9,$10,$11::uuid)
        RETURNING id, entree AS entered_at`,
       [reason, badge.rows[0].id, visitor.rows[0].id, cleanText(body.document_type, 80) || null,
         cleanText(body.id_document, 4) || null, host, cleanText(body.zone) || "Accueil",
-        cleanText(body.equipment, 20000) || null, cleanText(body.vehicle, 50) || null, badgeNumber, userId],
+        cleanText(body.equipment, 20000) || null, cleanText(body.vehicle, 50) || null, badgeNumber, userId,
+        entryDate || null, entryTime || null],
     );
-    const site = await client.query("SELECT id AS site_id, nom AS site_name FROM site WHERE id=$1::uuid", [siteId]);
+    const site = await client.query("SELECT id AS site_id, nom AS site_name, type_site AS site_type FROM site WHERE id=$1::uuid", [siteId]);
     await client.query("COMMIT");
     json(response, 201, { visitor: {
-      id: passage.rows[0].id, full_name: name, company: cleanText(body.company),
+      id: passage.rows[0].id, site_id: site.rows[0]?.site_id, full_name: name, company: cleanText(body.company),
       id_document: cleanText(body.id_document, 4), document_type: cleanText(body.document_type, 80),
       host, reason, badge: badgeNumber, vehicle: cleanText(body.vehicle, 50), zone: cleanText(body.zone) || "Accueil",
-      equipment: cleanText(body.equipment, 20000), entered_at: passage.rows[0].entered_at, exited_at: null,
-      site_name: site.rows[0]?.site_name,
+      equipment: cleanText(body.equipment, 20000), entered_at: passage.rows[0].entered_at,
+      exited_at: null,
+      site_name: site.rows[0]?.site_name, site_type: site.rows[0]?.site_type,
     } });
   } catch (error) {
     if (client) await client.query("ROLLBACK").catch(() => {});
@@ -105,12 +111,115 @@ export async function createVisitor(request, response, pool, userId) {
   } finally { client?.release(); }
 }
 
+export async function updateVisitor(request, response, pool, userId, passageId) {
+  let client;
+  try {
+    if (!uuidPattern.test(passageId)) return json(response, 404, { error: "Passage visiteur introuvable." });
+    const body = await readJson(request);
+    const name = cleanText(body.full_name);
+    const company = cleanText(body.company);
+    const badge = cleanText(body.badge, 80);
+    const reason = cleanText(body.reason, 20000);
+    const entryDate = cleanText(body.entryDate, 10);
+    const entryTime = cleanText(body.entryTime, 5);
+    if (!name || !reason || !validDate(entryDate) || !validTime(entryTime)) {
+      return json(response, 400, { error: "Renseignez le nom, le motif, une date et une heure d’entrée valides." });
+    }
+    client = await pool.connect();
+    await client.query("BEGIN");
+    const account = await getAccount(client, userId);
+    const siteId = await resolveSite(client, account, body);
+    const result = await client.query(
+      `UPDATE passage p
+       SET motif=$2, badge_numero=$3, entree=$4::date + $5::time
+       FROM visiteur v
+       WHERE p.id=$1::uuid AND p.visiteur_id=v.id AND v.site_id=$6::uuid
+       RETURNING p.id, v.id AS "visitorId", p.badge_id AS "badgeId",
+                 p.entree AS entered_at, p.sortie AS exited_at`,
+      [passageId, reason, badge || null, entryDate, entryTime, siteId],
+    );
+    if (!result.rows[0]) {
+      await client.query("ROLLBACK");
+      return json(response, 404, { error: "Passage visiteur introuvable sur ce site." });
+    }
+    await client.query(
+      "UPDATE visiteur SET identite=$2, societe=$3 WHERE id=$1::uuid",
+      [result.rows[0].visitorId, name, company || null],
+    );
+    const site = await client.query("SELECT id AS site_id, nom AS site_name, type_site AS site_type FROM site WHERE id=$1::uuid", [siteId]);
+    await client.query("COMMIT");
+    json(response, 200, { visitor: {
+      id: result.rows[0].id, site_id: site.rows[0]?.site_id,
+      full_name: name, company,
+      reason, badge,
+      entered_at: result.rows[0].entered_at, exited_at: result.rows[0].exited_at,
+      site_name: site.rows[0]?.site_name, site_type: site.rows[0]?.site_type,
+    } });
+  } catch (error) {
+    if (client) await client.query("ROLLBACK").catch(() => {});
+    console.error("PUT /visitors/:id failed:", error.code || error.name, error.message || "");
+    json(response, error.status || 500, { error: error.status ? error.message : "Impossible de modifier le passage visiteur." });
+  } finally {
+    client?.release();
+  }
+}
+
+export async function deleteVisitor(request, response, pool, userId, passageId) {
+  let client;
+  try {
+    if (!uuidPattern.test(passageId)) return json(response, 404, { error: "Passage visiteur introuvable." });
+    client = await pool.connect();
+    await client.query("BEGIN");
+    const account = await getAccount(client, userId);
+    const url = new URL(request.url || "/", `http://${request.headers.host || "localhost"}`);
+    const requestedSite = account.site_id && account.role !== 1 ? account.site_id : url.searchParams.get("siteId");
+    const passage = await client.query(
+      `SELECT p.sortie
+       FROM passage p JOIN visiteur v ON v.id=p.visiteur_id
+       WHERE p.id=$1::uuid AND ($2::uuid IS NULL OR v.site_id=$2::uuid)
+       FOR UPDATE OF p`,
+      [passageId, requestedSite || null],
+    );
+    if (!passage.rows[0]) {
+      await client.query("ROLLBACK");
+      return json(response, 404, { error: "Passage visiteur introuvable pour ce site." });
+    }
+    if (!passage.rows[0].sortie) {
+      await client.query("ROLLBACK");
+      return json(response, 409, { error: "Enregistrez la sortie du visiteur avant de supprimer ce passage." });
+    }
+    const result = await client.query(
+      `DELETE FROM passage p USING visiteur v
+       WHERE p.id=$1::uuid AND p.visiteur_id=v.id
+         AND ($2::uuid IS NULL OR v.site_id=$2::uuid)
+       RETURNING p.id`,
+      [passageId, requestedSite || null],
+    );
+    if (!result.rows[0]) {
+      await client.query("ROLLBACK");
+      return json(response, 404, { error: "Passage visiteur introuvable pour ce site." });
+    }
+    await client.query("COMMIT");
+    json(response, 200, { id: result.rows[0].id, deleted: true });
+  } catch (error) {
+    if (client) await client.query("ROLLBACK").catch(() => {});
+    console.error("DELETE /visitors/:id failed:", error.code || error.name, error.message || "");
+    json(response, error.status || 500, { error: error.status ? error.message : "Impossible de supprimer le passage visiteur." });
+  } finally {
+    client?.release();
+  }
+}
+
 export async function exitVisitor(request, response, pool, userId, passageId) {
   try {
     const body = await readJson(request);
     const account = await getAccount(pool, userId);
     const extra = cleanText(body.extraEquipment, 500);
-    const note = `Matériel déclaré sorti : ${body.equipmentOut === true ? "oui" : "non"}${extra ? ` · Autre matériel : ${extra}` : ""}`;
+    const note = extra
+      ? `Autre matériel déclaré à la sortie : ${extra}`
+      : body.equipmentOut === true
+        ? "Contrôle de sortie effectué."
+        : "Sortie visiteur enregistrée.";
     const result = await pool.query(
       `UPDATE passage p SET sortie=NOW(), notes_sortie=$1, sortie_par_id=$2::uuid
        FROM visiteur v WHERE p.id=$3::uuid AND p.visiteur_id=v.id AND p.sortie IS NULL
