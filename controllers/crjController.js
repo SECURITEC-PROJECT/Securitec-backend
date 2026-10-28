@@ -4,13 +4,21 @@
 // ---------------------------------------------------------------------------
 const TZ = "Indian/Antananarivo";
 
-// Une prise de poste commencée entre ces heures (locales) = poste de JOUR, sinon NUIT
-const JOUR_DEBUT = 5;
-const JOUR_FIN = 17;
-
 // Types de flux logistiques (comparés sans accents ni majuscules, début de mot)
 const DECHARGEMENT = /^(DECH|RECEP|ENTR)/;
 const CHARGEMENT = /^(CHARG|EXPED|SORT)/;
+
+// Postes et effectifs de référence du formulaire Pointage APS
+const POSTES_JOUR = [
+  ["PG1", 5], ["EXP", 2], ["BOX", 1], ["EX GARAGE", 1], ["MG/HV", 1],
+  ["TDE", 1], ["BON ESPOIR", 2], ["CO2", 1], ["PG2", 2], ["PBM", 1],
+  ["PBS", 1], ["PARKING EXTERIEUR", 1], ["MATERIEL", 1], ["FITAVA", 1], ["VILLA G", 1],
+];
+const POSTES_NUIT = [
+  ["PG1", 2], ["EXP", 1], ["BOX", 1], ["EX GARAGE", 1], ["MG/HV", 1],
+  ["TDE", 1], ["BON ESPOIR", 3], ["CO2", 1], ["PG2", 2], ["MATO", 2],
+  ["FITAVA", 1], ["VILLA G", 1],
+];
 
 // Articles du stock extérieur (Agence) : clé du rapport -> début du code article
 const ARTICLES_STOCK = {
@@ -69,17 +77,40 @@ SELECT
   (SELECT row_to_json(s) FROM s) AS site,
   (SELECT row_to_json(p) FROM p) AS prestataire,
 
-  -- 1 - Agents : prises de poste du jour pour ce prestataire et ce site
+  -- 1 - Agents : pointages APS enregistrés pour le site et la date sélectionnés
   COALESCE((
-    SELECT json_agg(a ORDER BY a.started_at) FROM (
-      SELECT pp.matricule, pp.nom, pp.prenom, pp.started_at,
-             EXTRACT(HOUR FROM ${local("pp.started_at")})::int AS heure_debut
-      FROM prise_de_poste pp, s, p
-      WHERE UPPER(TRIM(pp.prestataire)) = UPPER(TRIM(p.nom))
-        AND UPPER(TRIM(pp.site_de_travail)) = UPPER(TRIM(s.nom))
-        AND ${local("pp.started_at")}::date = $3::date
+    SELECT json_agg(json_build_object(
+      'service', a.service,
+      'poste', a.poste,
+      'prenom', a.agent->>'prenom',
+      'matricule', a.agent->>'matricule',
+      'nom_employe', e.nom,
+      'prenom_employe', e.prenom
+    ) ORDER BY a.service, a.poste, a.position)
+    FROM (
+      SELECT 'jour' AS service, poste.key AS poste, agent.value AS agent, agent.position
+      FROM pointage_aps_jour pa
+      CROSS JOIN LATERAL jsonb_each(pa.data) AS poste(key, value)
+      CROSS JOIN LATERAL jsonb_array_elements(poste.value) WITH ORDINALITY AS agent(value, position)
+      WHERE pa.site_id = $1::uuid AND pa.date_pointage = $3::date
+      UNION ALL
+      SELECT 'nuit' AS service, poste.key AS poste, agent.value AS agent, agent.position
+      FROM pointage_aps_nuit pa
+      CROSS JOIN LATERAL jsonb_each(pa.data) AS poste(key, value)
+      CROSS JOIN LATERAL jsonb_array_elements(poste.value) WITH ORDINALITY AS agent(value, position)
+      WHERE pa.site_id = $1::uuid AND pa.date_pointage = $3::date
     ) a
+    LEFT JOIN employe e
+      ON UPPER(TRIM(e.matricule)) = UPPER(TRIM(a.agent->>'matricule'))
   ), '[]'::json) AS agents,
+  EXISTS (
+    SELECT 1 FROM pointage_aps_jour pa
+    WHERE pa.site_id = $1::uuid AND pa.date_pointage = $3::date
+  ) AS pointage_aps_jour_enregistre,
+  EXISTS (
+    SELECT 1 FROM pointage_aps_nuit pa
+    WHERE pa.site_id = $1::uuid AND pa.date_pointage = $3::date
+  ) AS pointage_aps_nuit_enregistre,
 
   -- 2 - Clés : perceptions du jour + leur réintégration (via perception_id)
   COALESCE((
@@ -135,13 +166,31 @@ SELECT
   -- 3, 4, 5 - Flux logistiques
   COALESCE((
     SELECT json_agg(f ORDER BY f.cree_le) FROM (
-      SELECT type_flux, camion, transporteur, document, plomb, article, quantite, cree_le,
-             nom_chauffeur, to_char(heure_arrivee, 'HH24:MI') AS heure_arrivee,
-             designation, nbr, destinataire
+      SELECT type_flux, camion, immatriculation_vehicule, vehicule, transporteur,
+             nom_chauffeur, chauffeur, magasinier, cree, proprietaire,
+             document, facture, numero_titre, titre, plomb,
+             article, quantite, categorie_stock, cree_le,
+             to_char(heure_arrivee, 'HH24:MI') AS heure_arrivee,
+             to_char(heure_sortie, 'HH24:MI') AS heure_sortie,
+             to_char(heure_pointe, 'HH24:MI') AS heure_pointe,
+             designation, nbr, quantite_texte, destinataire, provenance, poids,
+             numero_pesage, details_bouteilles
       FROM flux_logistique
       WHERE site_id = $1::uuid AND date_operation = $3::date
     ) f
   ), '[]'::json) AS flux,
+
+  -- Dernier relevé de stock de la journée pour chaque article et catégorie
+  COALESCE((
+    SELECT json_agg(i ORDER BY i.categorie_stock, i.article) FROM (
+      SELECT DISTINCT ON (categorie_stock, article)
+             categorie_stock, article, quantite
+      FROM flux_logistique
+      WHERE site_id = $1::uuid AND date_operation = $3::date
+        AND type_flux = 'INVENTAIRE'
+      ORDER BY categorie_stock, article, cree_le DESC, id DESC
+    ) i
+  ), '[]'::json) AS stock,
 
   -- Alcootests
   COALESCE((
@@ -160,7 +209,9 @@ SELECT
              to_char(${local("debut")}, 'HH24:MI') AS debut,
              to_char(${local("fin")}, 'HH24:MI') AS fin
       FROM ronde
-      WHERE site_id = $1::uuid AND ${local("debut")}::date = $3::date
+      WHERE site_id = $1::uuid
+        AND ${local("debut")} < ($3::date + INTERVAL '1 day')
+        AND COALESCE(${local("fin")}, ${local("debut")}) >= $3::date
     ) r
   ), '[]'::json) AS rondes,
 
@@ -177,7 +228,7 @@ SELECT
   COALESCE((
     SELECT json_agg(x ORDER BY x.heure) FROM (
       SELECT to_char(heure, 'HH24:MI') AS heure, type_signalement, camion, transporteur, document,
-             casse, manquant, vides, phn, description_faits, observations
+             casse, manquant, vides, phn, description_faits, observations, mesures_prises
       FROM signalement_logistique
       WHERE site_id = $1::uuid AND date_operation = $3::date
     ) x
@@ -210,37 +261,74 @@ export async function generateCrj({ prestataireId, siteId, date }, pool) {
 
   const siteType = d.site.type_site === "AGENCE" ? "Agence" : "Usine";
 
-  // --- 1 - Agents jour / nuit (dédoublonnés par matricule) ---
-  const agentsJour = [];
-  const agentsNuit = [];
-  const vus = new Set();
-  for (const a of d.agents) {
-    const estJour = a.heure_debut >= JOUR_DEBUT && a.heure_debut < JOUR_FIN;
-    const cle = `${estJour ? "J" : "N"}|${norm(a.matricule)}`;
-    if (vus.has(cle)) continue;
-    vus.add(cle);
-    const agent = { nom: `${txt(a.nom)} ${txt(a.prenom)}`.trim(), matricule: txt(a.matricule) };
-    (estJour ? agentsJour : agentsNuit).push(agent);
+  // --- 1 - Agents groupés par poste depuis les pointages APS jour et nuit ---
+  const pointages = { jour: new Map(), nuit: new Map() };
+  const aliasPostesJour = {
+    GARAGE: "EX GARAGE",
+    PGIT: "PG2",
+    FITAA: "FITAVA",
+    EXTERIEUR: "PARKING EXTERIEUR",
+  };
+  for (const agent of d.agents) {
+    if (!pointages[agent.service]) continue;
+    const poste = agent.service === "jour" ? aliasPostesJour[agent.poste] || agent.poste : agent.poste;
+    const parPoste = pointages[agent.service];
+    if (!parPoste.has(poste)) parPoste.set(poste, []);
+    const nomEmploye = [txt(agent.nom_employe), txt(agent.prenom_employe)].filter(Boolean).join(" ");
+    parPoste.get(poste).push({
+      nom: nomEmploye || txt(agent.prenom),
+      matricule: txt(agent.matricule),
+    });
   }
+  const postesOrdre = [...new Set([...POSTES_JOUR, ...POSTES_NUIT].map(([poste]) => poste))];
+  const agentsPostes = postesOrdre.map((poste) => {
+    const jour = pointages.jour.get(poste) ?? [];
+    const nuit = pointages.nuit.get(poste) ?? [];
+    const effectifJour = POSTES_JOUR.find(([nom]) => nom === poste)?.[1] ?? 0;
+    const effectifNuit = POSTES_NUIT.find(([nom]) => nom === poste)?.[1] ?? 0;
+    const nombreLignes = Math.max(effectifJour, effectifNuit, jour.length, nuit.length, 1);
+    return {
+      poste,
+      jour: Array.from({ length: nombreLignes }, (_, index) => jour[index] ?? { nom: "", matricule: "" }),
+      nuit: Array.from({ length: nombreLignes }, (_, index) => nuit[index] ?? { nom: "", matricule: "" }),
+    };
+  });
 
   // --- 3, 4, 5 - Déchargements, chargements, stock extérieur ---
   const dechargements = [];
   const chargements = [];
   const stock = Object.fromEntries(Object.keys(ARTICLES_STOCK).map((k) => [k, 0]));
   for (const f of d.flux) {
+    const detailsBouteilles = Array.isArray(f.details_bouteilles)
+      ? f.details_bouteilles.map((b) => `${txt(b.designation)}: ${txt(b.quantite)}`).filter(Boolean).join(", ")
+      : "";
     const ligne = {
-      camion: txt(f.camion) || "-",
-      transporteur: txt(f.transporteur) || "-",
-      titre: txt(f.document) || "-",
+      camion: txt(f.camion) || txt(f.immatriculation_vehicule) || txt(f.vehicule) || "-",
+      transporteur: txt(f.transporteur) || txt(f.nom_chauffeur) || txt(f.chauffeur) || txt(f.proprietaire) || "-",
+      titre: txt(f.numero_titre) || txt(f.document) || txt(f.titre) || txt(f.facture) || txt(f.numero_pesage) || "-",
       plomb: txt(f.plomb) || "-",
+      heureDebut: txt(f.heure_arrivee) || txt(f.heure_pointe) || txt(f.heure_sortie) || "-",
+      heureFin: txt(f.heure_sortie) || "-",
+      comptage: txt(f.nbr) || txt(f.quantite_texte) || detailsBouteilles
+        || [txt(f.designation), f.quantite == null ? "" : String(f.quantite), f.poids == null ? "" : `${f.poids} kg`].filter(Boolean).join(" : ")
+        || "-",
+      destination: txt(f.destinataire) || txt(f.provenance) || "-",
     };
     const type = norm(f.type_flux);
-    if (DECHARGEMENT.test(type)) dechargements.push(ligne);
-    else if (CHARGEMENT.test(type)) chargements.push(ligne);
+    if (DECHARGEMENT.test(type) || ["BOUTEILLES_VIDES", "MATIERE_PREMIERE", "DEPOTAGE_FUEL"].includes(type)) {
+      dechargements.push(ligne);
+    } else if (CHARGEMENT.test(type) || type === "DECHETS") {
+      chargements.push(ligne);
+    }
+  }
 
+  for (const f of d.stock) {
     const article = norm(f.article).replace(/[^A-Z0-9]/g, "");
     for (const [cle, code] of Object.entries(ARTICLES_STOCK)) {
-      if (article.startsWith(code)) stock[cle] += Number(f.quantite) || 0;
+      const categorieAttendue = ["cv12", "cv24", "cv20", "intercalaires"].includes(cle) ? "VIDES" : "PLEINS_EAUX";
+      if (article.startsWith(code) && norm(f.categorie_stock) === categorieAttendue) {
+        stock[cle] += Number(f.quantite) || 0;
+      }
     }
   }
 
@@ -287,6 +375,7 @@ export async function generateCrj({ prestataireId, siteId, date }, pool) {
         txt(s.phn) && `PHN : ${txt(s.phn)}`,
         txt(s.description_faits),
         txt(s.observations),
+        txt(s.mesures_prises) && `Mesures : ${txt(s.mesures_prises)}`,
       ]
         .filter(Boolean)
         .join(" — ") || "-",
@@ -320,8 +409,9 @@ export async function generateCrj({ prestataireId, siteId, date }, pool) {
     prestataire: d.prestataire.nom,
     siteNom: d.site.nom,
     date: `${jour}/${mois}/${annee}`,
-    agentsJour,
-    agentsNuit,
+    agentsPostes,
+    pointageApsJourEnregistre: d.pointage_aps_jour_enregistre,
+    pointageApsNuitEnregistre: d.pointage_aps_nuit_enregistre,
     cles: construireCles(d.cles),
     dechargements,
     chargements,
