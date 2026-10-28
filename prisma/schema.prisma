@@ -55,6 +55,8 @@ model Site {
   configurationsPostesAps ConfigurationPostesAps[]
   consignesJournal        ConsigneJournal[]
   truckChecklists         TruckChecklist[]
+  registreOrdures         RegistreOrdure[]
+  registreFerrailles      RegistreFerraille[]
 
   @@map("site")
 }
@@ -90,6 +92,8 @@ model Utilisateur {
   configurationsPostesAps ConfigurationPostesAps[]
   consignesJournal        ConsigneJournal[]
   truckChecklists         TruckChecklist[]
+  registreOrdures         RegistreOrdure[]
+  registreFerrailles      RegistreFerraille[]
 
   @@index([siteId], map: "idx_utilisateur_site")
   @@map("utilisateur")
@@ -367,6 +371,8 @@ model Prestataire {
   actif         Boolean       @default(true)
   employes      Employe[]
   comptesRendus CompteRendu[]
+  materielsSousTraitant MaterielSousTraitant[]
+  materielsStar MaterielStar[]
 
   @@map("prestataire")
 }
@@ -551,6 +557,44 @@ model TruckChecklist {
   @@map("truck_checklist")
 }
 
+model RegistreOrdure {
+  id            String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  creeLe        DateTime    @default(now()) @map("cree_le") @db.Timestamp(6)
+  dateOperation DateTime    @map("date_operation") @db.Date
+  heure         DateTime    @db.Time(0)
+  prenom        String      @db.VarChar(100)
+  matricule     String      @db.VarChar(50)
+  section       String      @db.VarChar(100)
+  designation   String      @db.Text
+  siteId        String      @map("site_id") @db.Uuid
+  utilisateurId String      @map("utilisateur_id") @db.Uuid
+  site          Site        @relation(fields: [siteId], references: [id], onDelete: Restrict, map: "fk_registre_ordures_site")
+  utilisateur   Utilisateur @relation(fields: [utilisateurId], references: [id], onDelete: Restrict, map: "fk_registre_ordures_utilisateur")
+
+  @@index([siteId, dateOperation, heure], map: "idx_registre_ordures_site_date")
+  @@map("registre_ordures")
+}
+
+model RegistreFerraille {
+  id            String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  creeLe        DateTime    @default(now()) @map("cree_le") @db.Timestamp(6)
+  dateOperation DateTime    @map("date_operation") @db.Date
+  heure         DateTime    @db.Time(0)
+  prenom        String      @db.VarChar(100)
+  matricule     String      @db.VarChar(50)
+  section       String      @db.VarChar(100)
+  designation   String      @db.Text
+  nombre        Int
+  motif         String      @db.Text
+  siteId        String      @map("site_id") @db.Uuid
+  utilisateurId String      @map("utilisateur_id") @db.Uuid
+  site          Site        @relation(fields: [siteId], references: [id], onDelete: Restrict, map: "fk_registre_ferrailles_site")
+  utilisateur   Utilisateur @relation(fields: [utilisateurId], references: [id], onDelete: Restrict, map: "fk_registre_ferrailles_utilisateur")
+
+  @@index([siteId, dateOperation, heure], map: "idx_registre_ferrailles_site_date")
+  @@map("registre_ferrailles")
+}
+
 model SignalementLogistique {
   id               String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   creeLe           DateTime    @default(now()) @map("cree_le") @db.Timestamp(6)
@@ -660,13 +704,16 @@ model MaterielSousTraitant {
   materiels     String      @db.Text
   nombre        Int
   entreprise    String      @db.VarChar(255)
+  prestataireId String     @map("prestataire_id") @db.Uuid
   heureSortie   DateTime?   @map("heure_sortie") @db.Time(0)
   siteId        String      @map("site_id") @db.Uuid
   utilisateurId String      @map("utilisateur_id") @db.Uuid
   site          Site        @relation(fields: [siteId], references: [id], onDelete: Restrict, map: "fk_materiel_sous_traitant_site")
   utilisateur   Utilisateur @relation(fields: [utilisateurId], references: [id], onDelete: Restrict, map: "fk_materiel_sous_traitant_utilisateur")
+  prestataire   Prestataire @relation(fields: [prestataireId], references: [id], onDelete: Restrict, map: "fk_materiel_sous_traitant_prestataire")
 
   @@index([siteId, dateOperation, heureEntree], map: "idx_materiel_sous_traitant_site_date")
+  @@index([prestataireId], map: "idx_materiel_sous_traitant_prestataire")
   @@map("materiel_sous_traitant")
 }
 
@@ -678,13 +725,16 @@ model MaterielStar {
   prenom        String      @db.VarChar(255)
   matricule     String      @db.VarChar(100)
   materiels     Json        @db.JsonB
+  prestataireId String     @map("prestataire_id") @db.Uuid
   heureSortie   DateTime?   @map("heure_sortie") @db.Time(0)
   siteId        String      @map("site_id") @db.Uuid
   utilisateurId String      @map("utilisateur_id") @db.Uuid
   site          Site        @relation(fields: [siteId], references: [id], onDelete: Restrict, map: "fk_materiel_star_site")
   utilisateur   Utilisateur @relation(fields: [utilisateurId], references: [id], onDelete: Restrict, map: "fk_materiel_star_utilisateur")
+  prestataire   Prestataire @relation(fields: [prestataireId], references: [id], onDelete: Restrict, map: "fk_materiel_star_prestataire")
 
   @@index([siteId, dateOperation, heureEntree], map: "idx_materiel_star_site_date")
+  @@index([prestataireId], map: "idx_materiel_star_prestataire")
   @@map("materiel_star")
 }
 

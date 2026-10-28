@@ -8,6 +8,8 @@ import { handleCourrierRoutes } from "./courrierRoutes.js";
 import { handleConsigneJournalRoutes } from "./consigneJournalRoutes.js";
 import { handleCrjRoutes } from "./crjRoutes.js";
 import { handleEmployeeRoutes } from "./employeeRoutes.js";
+import { handleWasteScrapRegisterRoutes } from "./wasteScrapRegisterRoutes.js";
+import { handleProviderRoutes } from "./providerRoutes.js";
 import { handleEntryExitRoutes } from "./entryExitRoutes.js";
 import { handleFluxRoutes } from "./fluxRoutes.js";
 import { handleHandoverRoutes } from "./handoverRoutes.js";
@@ -39,6 +41,8 @@ export async function handleApiRoutes(request, response, pool, jwtSecret) {
   if (await handleAuthRoutes(request, response, pool, pathname, jwtSecret)) return true;
   if (await handleUserRoutes(request, response, pool, pathname, jwtSecret)) return true;
   if (await handleEmployeeRoutes(request, response, pool, pathname, jwtSecret)) return true;
+  if (await handleWasteScrapRegisterRoutes(request, response, pool, pathname, jwtSecret)) return true;
+  if (await handleProviderRoutes(request, response, pool, pathname, jwtSecret)) return true;
   if (await handleCameraRoutes(request, response, pool, pathname, jwtSecret)) return true;
   if (await handleSiteRoutes(request, response, pool, pathname, jwtSecret)) return true;
   if (await handleEntryExitRoutes(request, response, pool, pathname, jwtSecret)) return true;
