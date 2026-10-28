@@ -465,6 +465,17 @@ model ControleAlcoolemie {
   typeDemande   String      @map("type_demande") @db.VarChar(80)
   resultat      String      @db.VarChar(20)
   tauxMesure    Decimal?    @map("taux_mesure") @db.Decimal(5, 2)
+  civilite      String      @default("Monsieur") @db.VarChar(10)
+  typeAppareil  String      @default("Electronique") @map("type_appareil") @db.VarChar(20)
+  testeurNom    String?     @map("testeur_nom") @db.VarChar(255)
+  testeurMatricule String?  @map("testeur_matricule") @db.VarChar(100)
+  testeurFonction String?   @map("testeur_fonction") @db.VarChar(100)
+  temoinNom     String?     @map("temoin_nom") @db.VarChar(255)
+  temoinMatricule String?   @map("temoin_matricule") @db.VarChar(100)
+  temoinFonction String?    @map("temoin_fonction") @db.VarChar(100)
+  temoin2Nom    String?     @map("temoin2_nom") @db.VarChar(255)
+  temoin2Matricule String?  @map("temoin2_matricule") @db.VarChar(100)
+  temoin2Fonction String?   @map("temoin2_fonction") @db.VarChar(100)
   siteId        String      @map("site_id") @db.Uuid
   utilisateurId String      @map("utilisateur_id") @db.Uuid
   site          Site        @relation(fields: [siteId], references: [id], onDelete: Restrict, map: "fk_controle_alcoolemie_site")

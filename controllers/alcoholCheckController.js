@@ -5,6 +5,8 @@ const datePattern = /^\d{4}-\d{2}-\d{2}$/;
 const timePattern = /^(?:[01]\d|2[0-3]):[0-5]\d$/;
 const functions = new Set(["CR", "ADM", "Qualite", "Labo", "Maintenance", "Logistique", "Pile & Face", "Sécurité", "Pronete", "Néa"]);
 const results = new Set(["Positif", "Négatif"]);
+const civilities = new Set(["Monsieur", "Madame"]);
+const devices = new Set(["Electronique", "Ballon"]);
 const cleanText = (value, max = 255) => typeof value === "string" ? value.trim().slice(0, max) : "";
 
 function validDate(value) {
@@ -38,16 +40,40 @@ function validate(body) {
   const personne = cleanText(body.personne, 255);
   const fonction = cleanText(body.fonction, 40);
   const resultat = cleanText(body.resultat, 20);
+  const civilite = cleanText(body.civilite, 10);
+  const typeAppareil = cleanText(body.typeAppareil, 20);
+  const tauxMesure = body.tauxMesure === "" || body.tauxMesure == null ? null : Number(body.tauxMesure);
+  const testeurNom = cleanText(body.testeurNom, 255);
+  const testeurMatricule = cleanText(body.testeurMatricule, 100);
+  const testeurFonction = cleanText(body.testeurFonction, 100);
+  const temoinNom = cleanText(body.temoinNom, 255);
+  const temoinMatricule = cleanText(body.temoinMatricule, 100);
+  const temoinFonction = cleanText(body.temoinFonction, 100);
+  const temoin2Nom = cleanText(body.temoin2Nom, 255);
+  const temoin2Matricule = cleanText(body.temoin2Matricule, 100);
+  const temoin2Fonction = cleanText(body.temoin2Fonction, 100);
   if (!validDate(date) || !timePattern.test(heure) || !matricule || !personne
-    || !functions.has(fonction) || !results.has(resultat)) {
-    throw Object.assign(new Error("Vérifiez la date, l’heure, le matricule, le nom et prénom, la fonction et le résultat."), { status: 400 });
+    || !functions.has(fonction) || !results.has(resultat) || !civilities.has(civilite)
+    || !devices.has(typeAppareil) || !Number.isFinite(tauxMesure) || tauxMesure < 0 || tauxMesure > 999.99
+    || !testeurNom || !testeurFonction) {
+    throw Object.assign(new Error("Vérifiez la date, l’heure, les informations de la personne testée, le résultat, le taux et les informations du testeur."), { status: 400 });
   }
-  return { date, heure, matricule, personne, fonction, resultat };
+  return {
+    date, heure, matricule, personne, fonction, resultat, civilite, typeAppareil, tauxMesure,
+    testeurNom, testeurMatricule, testeurFonction,
+    temoinNom, temoinMatricule, temoinFonction, temoin2Nom, temoin2Matricule, temoin2Fonction,
+  };
 }
 
 const selectEntry = `
   SELECT c.id, c.date_controle::text AS date, to_char(c.heure, 'HH24:MI') AS heure,
          c.matricule, c.personne, c.fonction, c.resultat,
+         c.taux_mesure AS "tauxMesure", c.civilite, c.type_appareil AS "typeAppareil",
+         c.testeur_nom AS "testeurNom", c.testeur_matricule AS "testeurMatricule",
+         c.testeur_fonction AS "testeurFonction",
+         c.temoin_nom AS "temoinNom", c.temoin_matricule AS "temoinMatricule",
+         c.temoin_fonction AS "temoinFonction", c.temoin2_nom AS "temoin2Nom",
+         c.temoin2_matricule AS "temoin2Matricule", c.temoin2_fonction AS "temoin2Fonction",
          c.site_id AS "siteId", s.nom AS "siteName"
   FROM controle_alcoolemie c
   JOIN site s ON s.id = c.site_id`;
@@ -78,10 +104,17 @@ export async function createAlcoholCheck(request, response, pool, userId) {
     const result = await pool.query(
       `INSERT INTO controle_alcoolemie
          (date_controle, heure, matricule, personne, fonction, resultat,
-          appartenance, type_demande, taux_mesure, site_id, utilisateur_id)
-       VALUES ($1::date, $2::time, $3, $4, $5, $6, 'STAR', 'Test ordinaire (Entrée/Sortie)', NULL, $7::uuid, $8::uuid)
+          appartenance, type_demande, taux_mesure, civilite, type_appareil,
+          testeur_nom, testeur_matricule, testeur_fonction,
+          temoin_nom, temoin_matricule, temoin_fonction,
+          temoin2_nom, temoin2_matricule, temoin2_fonction, site_id, utilisateur_id)
+       VALUES ($1::date, $2::time, $3, $4, $5, $6, 'STAR', 'Test ordinaire (Entrée/Sortie)',
+          $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19::uuid, $20::uuid)
        RETURNING id`,
-      [entry.date, entry.heure, entry.matricule, entry.personne, entry.fonction, entry.resultat, siteId, userId],
+      [entry.date, entry.heure, entry.matricule, entry.personne, entry.fonction, entry.resultat,
+        entry.tauxMesure, entry.civilite, entry.typeAppareil, entry.testeurNom, entry.testeurMatricule,
+        entry.testeurFonction, entry.temoinNom, entry.temoinMatricule, entry.temoinFonction,
+        entry.temoin2Nom, entry.temoin2Matricule, entry.temoin2Fonction, siteId, userId],
     );
     const created = await pool.query(
       `${selectEntry} WHERE c.id = $1::uuid`,
@@ -103,10 +136,17 @@ export async function updateAlcoholCheck(request, response, pool, userId, entryI
     const result = await pool.query(
       `UPDATE controle_alcoolemie
        SET date_controle = $2::date, heure = $3::time, matricule = $4,
-           personne = $5, fonction = $6, resultat = $7
-       WHERE id = $1::uuid AND site_id = $8::uuid
+           personne = $5, fonction = $6, resultat = $7, taux_mesure = $8,
+           civilite = $9, type_appareil = $10, testeur_nom = $11, testeur_matricule = $12,
+           testeur_fonction = $13, temoin_nom = $14, temoin_matricule = $15,
+           temoin_fonction = $16, temoin2_nom = $17, temoin2_matricule = $18,
+           temoin2_fonction = $19
+       WHERE id = $1::uuid AND site_id = $20::uuid
        RETURNING id`,
-      [entryId, entry.date, entry.heure, entry.matricule, entry.personne, entry.fonction, entry.resultat, siteId],
+      [entryId, entry.date, entry.heure, entry.matricule, entry.personne, entry.fonction,
+        entry.resultat, entry.tauxMesure, entry.civilite, entry.typeAppareil, entry.testeurNom,
+        entry.testeurMatricule, entry.testeurFonction, entry.temoinNom, entry.temoinMatricule,
+        entry.temoinFonction, entry.temoin2Nom, entry.temoin2Matricule, entry.temoin2Fonction, siteId],
     );
     if (!result.rows[0]) return json(response, 404, { error: "Test alcool introuvable sur ce site." });
     const updated = await pool.query(
