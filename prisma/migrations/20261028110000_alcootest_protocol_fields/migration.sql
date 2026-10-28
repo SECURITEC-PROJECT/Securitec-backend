@@ -1,0 +1,12 @@
+ALTER TABLE "controle_alcoolemie"
+  ADD COLUMN IF NOT EXISTS "civilite" VARCHAR(10) NOT NULL DEFAULT 'Monsieur',
+  ADD COLUMN IF NOT EXISTS "type_appareil" VARCHAR(20) NOT NULL DEFAULT 'Electronique',
+  ADD COLUMN IF NOT EXISTS "testeur_nom" VARCHAR(255),
+  ADD COLUMN IF NOT EXISTS "testeur_matricule" VARCHAR(100),
+  ADD COLUMN IF NOT EXISTS "testeur_fonction" VARCHAR(100),
+  ADD COLUMN IF NOT EXISTS "temoin_nom" VARCHAR(255),
+  ADD COLUMN IF NOT EXISTS "temoin_matricule" VARCHAR(100),
+  ADD COLUMN IF NOT EXISTS "temoin_fonction" VARCHAR(100),
+  ADD COLUMN IF NOT EXISTS "temoin2_nom" VARCHAR(255),
+  ADD COLUMN IF NOT EXISTS "temoin2_matricule" VARCHAR(100),
+  ADD COLUMN IF NOT EXISTS "temoin2_fonction" VARCHAR(100);
