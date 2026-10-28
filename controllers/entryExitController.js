@@ -431,21 +431,46 @@ export async function updateVehicle(request, response, pool, userId, passageId) 
 }
 
 export async function deleteVehicle(request, response, pool, userId, passageId) {
+  let client;
   try {
     if (!uuidPattern.test(passageId)) return json(response, 404, { error: "Mouvement véhicule introuvable." });
-    const account = await getAccount(pool, userId);
+    client = await pool.connect();
+    await client.query("BEGIN");
+    const account = await getAccount(client, userId);
     const siteFilter = account.site_id && account.role !== 1 ? account.site_id
       : new URL(request.url || "/", `http://${request.headers.host || "localhost"}`).searchParams.get("siteId");
-    const result = await pool.query(
+    const existing = await client.query(
+      `SELECT sortie
+       FROM passage_vehicule
+       WHERE id=$1::uuid AND ($2::uuid IS NULL OR site_id=$2::uuid)
+       FOR UPDATE`,
+      [passageId, siteFilter || null],
+    );
+    if (!existing.rows[0]) {
+      await client.query("ROLLBACK");
+      return json(response, 404, { error: "Mouvement véhicule introuvable pour ce site." });
+    }
+    if (!existing.rows[0].sortie) {
+      await client.query("ROLLBACK");
+      return json(response, 409, { error: "Enregistrez la sortie du véhicule avant de supprimer ce mouvement." });
+    }
+    const result = await client.query(
       `DELETE FROM passage_vehicule
        WHERE id=$1::uuid AND ($2::uuid IS NULL OR site_id=$2::uuid)
        RETURNING id`,
       [passageId, siteFilter || null],
     );
-    if (!result.rows[0]) return json(response, 404, { error: "Mouvement véhicule introuvable pour ce site." });
+    if (!result.rows[0]) {
+      await client.query("ROLLBACK");
+      return json(response, 404, { error: "Mouvement véhicule introuvable pour ce site." });
+    }
+    await client.query("COMMIT");
     json(response, 200, { id: result.rows[0].id, deleted: true });
   } catch (error) {
+    if (client) await client.query("ROLLBACK").catch(() => {});
     console.error("DELETE /vehicles/:id failed:", error.code || error.name, error.message || "");
     json(response, error.status || 500, { error: error.status ? error.message : "Impossible de supprimer le mouvement véhicule." });
+  } finally {
+    client?.release();
   }
 }
