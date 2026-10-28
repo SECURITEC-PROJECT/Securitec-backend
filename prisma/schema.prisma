@@ -47,6 +47,7 @@ model Site {
   mouvementsCourrier     MouvementCourrier[]
   materielsSousTraitant  MaterielSousTraitant[]
   materielsStar          MaterielStar[]
+  questionnairesVisiteurs QuestionnaireVisiteur[]
   documentsSite           DocumentSite[]
   pointagesApsJour        PointageApsJour[]
   pointagesApsNuit        PointageApsNuit[]
@@ -78,6 +79,7 @@ model Utilisateur {
   mouvementsCourrier     MouvementCourrier[]
   materielsSousTraitant  MaterielSousTraitant[]
   materielsStar          MaterielStar[]
+  questionnairesVisiteurs QuestionnaireVisiteur[]
   documentsSite           DocumentSite[]
   pointagesApsJour        PointageApsJour[]
   pointagesApsNuit        PointageApsNuit[]
@@ -652,6 +654,21 @@ model MaterielStar {
 
   @@index([siteId, dateOperation, heureEntree], map: "idx_materiel_star_site_date")
   @@map("materiel_star")
+}
+
+model QuestionnaireVisiteur {
+  id            String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  creeLe        DateTime    @default(now()) @map("cree_le") @db.Timestamp(6)
+  modifieLe     DateTime    @default(now()) @updatedAt @map("modifie_le") @db.Timestamp(6)
+  dateOperation DateTime    @map("date_operation") @db.Date
+  donnees       Json        @db.JsonB
+  siteId        String      @map("site_id") @db.Uuid
+  utilisateurId String      @map("utilisateur_id") @db.Uuid
+  site          Site        @relation(fields: [siteId], references: [id], onDelete: Restrict, map: "fk_questionnaire_visiteur_site")
+  utilisateur   Utilisateur @relation(fields: [utilisateurId], references: [id], onDelete: Restrict, map: "fk_questionnaire_visiteur_utilisateur")
+
+  @@index([siteId, dateOperation, creeLe], map: "idx_questionnaire_visiteur_site_date")
+  @@map("questionnaire_visiteur")
 }
 
 model PointageApsJour {
