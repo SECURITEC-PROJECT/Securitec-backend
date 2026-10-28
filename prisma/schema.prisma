@@ -51,6 +51,7 @@ model Site {
   pointagesApsJour        PointageApsJour[]
   pointagesApsNuit        PointageApsNuit[]
   consignesJournal        ConsigneJournal[]
+  truckChecklists         TruckChecklist[]
 
   @@map("site")
 }
@@ -82,6 +83,7 @@ model Utilisateur {
   pointagesApsJour        PointageApsJour[]
   pointagesApsNuit        PointageApsNuit[]
   consignesJournal        ConsigneJournal[]
+  truckChecklists         TruckChecklist[]
 
   @@index([siteId], map: "idx_utilisateur_site")
   @@map("utilisateur")
@@ -515,6 +517,21 @@ model FluxLogistique {
 
   @@index([siteId, dateOperation, typeFlux], map: "idx_flux_logistique_site_date")
   @@map("flux_logistique")
+}
+
+model TruckChecklist {
+  id            String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  dateOperation DateTime    @map("date_operation") @db.Date
+  rows          Json        @db.JsonB
+  siteId        String      @map("site_id") @db.Uuid
+  utilisateurId String      @map("utilisateur_id") @db.Uuid
+  creeLe        DateTime    @default(now()) @map("cree_le") @db.Timestamp(6)
+  modifieLe     DateTime    @default(now()) @map("modifie_le") @db.Timestamp(6)
+  site          Site        @relation(fields: [siteId], references: [id], onDelete: Restrict, map: "fk_truck_checklist_site")
+  utilisateur   Utilisateur @relation(fields: [utilisateurId], references: [id], onDelete: Restrict, map: "fk_truck_checklist_utilisateur")
+
+  @@unique([siteId, dateOperation], map: "uq_truck_checklist_site_date")
+  @@map("truck_checklist")
 }
 
 model SignalementLogistique {
