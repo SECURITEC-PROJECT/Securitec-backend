@@ -67,6 +67,21 @@ async function querySiteForRead(pool, account, request) {
   return result.rows[0]?.id || null;
 }
 
+async function requireRegisteredWasteVehicle(pool, siteId, vehicule) {
+  const result = await pool.query(
+    `SELECT 1 FROM chauffeur
+     WHERE site_id = $1::uuid AND LOWER(BTRIM(vehicule)) = LOWER($2)
+     LIMIT 1`,
+    [siteId, vehicule],
+  );
+  if (!result.rows[0]) {
+    throw Object.assign(
+      new Error("Ce véhicule n’est pas enregistré dans le module Chauffeurs pour ce site."),
+      { status: 400 },
+    );
+  }
+}
+
 export async function getLogisticsEntries(request, response, pool, userId) {
   try {
     const account = await getAccount(pool, userId);
@@ -377,6 +392,7 @@ export async function createLogisticsEntry(request, response, pool, userId) {
       if (!["LEVURE", "DRECHE"].includes(typeDechet) || !timePattern.test(time) || !numeroPesage || !facture || !Number.isFinite(poids) || poids <= 0 || poids > 9999999999.99 || !destinataire || !vehicule) {
         throw Object.assign(new Error("Choisissez le type de sortie et renseignez l’heure, le pesage, la facture, un poids positif, le destinataire et le véhicule."), { status: 400 });
       }
+      await requireRegisteredWasteVehicle(client, siteId, vehicule);
       const result = await client.query(
         `INSERT INTO flux_logistique
            (date_operation, type_flux, type_dechet, heure_sortie, numero_pesage, facture, poids, destinataire, vehicule, site_id, utilisateur_id)
@@ -736,6 +752,7 @@ export async function updateWasteEntry(request, response, pool, userId, entryId)
       await client.query("ROLLBACK");
       return json(response, 404, { error: "Sortie de déchets introuvable sur ce site." });
     }
+    await requireRegisteredWasteVehicle(client, siteId, vehicule);
     const result = await client.query(
       `UPDATE flux_logistique
        SET date_operation = $2::date, type_dechet = $3, heure_sortie = $4::time, numero_pesage = $5,
