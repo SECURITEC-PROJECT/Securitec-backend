@@ -6,7 +6,16 @@ const truckTypes = new Set(["DECHARGEMENT", "CHARGEMENT"]);
 const fluxTypes = new Set(["DECHARGEMENT", "CHARGEMENT", "INVENTAIRE", "DECHETS", "BOUTEILLES_VIDES", "MATIERE_PREMIERE", "DEPOTAGE_FUEL"]);
 const incidentTypes = new Set(["ANOMALIE", "VIOLATION_PROCEDURE"]);
 const stockCategories = new Set(["VIDES", "PLEINS_EAUX"]);
-const bottleDesignations = new Set(["65 Cl", "50 Cl", "33 Cl", "30 Cl", "1 L"]);
+const bottleDesignations = new Set([
+  "Bouteilles vides - 65 Cl", "Bouteilles vides - 50 Cl", "Bouteilles vides - 33 Cl",
+  "Fût - 30 L", "Fût - 20 L",
+  "Cageau jaune - C20", "Cageau jaune - C24",
+  "Bouteilles neuves - 65 Cl", "Bouteilles neuves - 50 Cl", "Bouteilles neuves - 33 Cl",
+  "Palette neuve - 1310 x 1055", "Palette neuve - 1000 x 1200", "Palette neuve - 800 x 1200",
+  "Palette réparée - 1310 x 1055", "Palette réparée - 1000 x 1200", "Palette réparée - 800 x 1200",
+  "65 Cl", "50 Cl", "33 Cl", "30 Cl", "1 L",
+]);
+const maxBottleDesignationLines = 16;
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 const cleanText = (value, max = 255) => typeof value === "string" ? value.trim().slice(0, max) : "";
@@ -287,11 +296,11 @@ export async function createLogisticsEntry(request, response, pool, userId) {
       const details = Array.isArray(body.detailsBouteilles) ? body.detailsBouteilles : [];
       const seenDesignations = new Set();
       const normalizedDetails = details.map((item) => {
-        const designation = cleanText(item?.designation, 10);
+        const designation = cleanText(item?.designation, 50);
         const quantity = Number(item?.quantite);
         if (!bottleDesignations.has(designation) || seenDesignations.has(designation)
           || !Number.isInteger(quantity) || quantity < 1 || quantity > 1_000_000) {
-          throw Object.assign(new Error("Vérifiez chaque format de bouteille et sa quantité."), { status: 400 });
+          throw Object.assign(new Error("Vérifiez chaque type d’article et sa quantité."), { status: 400 });
         }
         seenDesignations.add(designation);
         return { designation, quantite: quantity };
@@ -300,7 +309,7 @@ export async function createLogisticsEntry(request, response, pool, userId) {
         || !immatriculation || !nomChauffeur || !/^\d+$/.test(numeroTitre)
         || !/^\d+$/.test(provenance)
         || !Number.isFinite(poids) || poids <= 0 || poids > 9999999999.99
-        || normalizedDetails.length === 0 || normalizedDetails.length > bottleDesignations.size) {
+        || normalizedDetails.length === 0 || normalizedDetails.length > maxBottleDesignationLines) {
         throw Object.assign(new Error("Renseignez l’heure d’arrivée, l’immatriculation, le nom du chauffeur, le numéro de titre, une provenance numérique, un poids positif et les quantités par format."), { status: 400 });
       }
       const result = await client.query(
@@ -625,11 +634,11 @@ export async function updateEmptyBottleEntry(request, response, pool, userId, en
     const details = Array.isArray(body.detailsBouteilles) ? body.detailsBouteilles : [];
     const seenDesignations = new Set();
     const normalizedDetails = details.map((item) => {
-      const designation = cleanText(item?.designation, 10);
+      const designation = cleanText(item?.designation, 50);
       const quantity = Number(item?.quantite);
       if (!bottleDesignations.has(designation) || seenDesignations.has(designation)
         || !Number.isInteger(quantity) || quantity < 1 || quantity > 1_000_000) {
-        throw Object.assign(new Error("Vérifiez chaque format de bouteille et sa quantité."), { status: 400 });
+        throw Object.assign(new Error("Vérifiez chaque type d’article et sa quantité."), { status: 400 });
       }
       seenDesignations.add(designation);
       return { designation, quantite: quantity };
@@ -638,7 +647,7 @@ export async function updateEmptyBottleEntry(request, response, pool, userId, en
       || !immatriculation || !nomChauffeur
       || !/^\d+$/.test(numeroTitre) || !/^\d+$/.test(provenance)
       || !Number.isFinite(poids) || poids <= 0 || poids > 9999999999.99
-      || normalizedDetails.length === 0 || normalizedDetails.length > bottleDesignations.size) {
+      || normalizedDetails.length === 0 || normalizedDetails.length > maxBottleDesignationLines) {
       return json(response, 400, { error: "Vérifiez les informations de la réception, le nom du chauffeur et les quantités par format." });
     }
 
