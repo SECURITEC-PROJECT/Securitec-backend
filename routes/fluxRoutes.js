@@ -73,7 +73,7 @@ export async function handleFluxRoutes(request, response, pool, pathname, jwtSec
   }
   if (wasteMatch && request.method === "PUT") {
     const url = new URL(request.url || "/", `http://${request.headers.host || "localhost"}`);
-    if (url.searchParams.get("type") === "DECHARGEMENT" || url.searchParams.get("type") === "CHARGEMENT") {
+    if (["DECHARGEMENT", "CHARGEMENT", "ORDURES"].includes(url.searchParams.get("type"))) {
       await updateTruckLogisticsEntry(request, response, pool, user.id, wasteMatch[1]);
       return true;
     }
@@ -90,7 +90,7 @@ export async function handleFluxRoutes(request, response, pool, pathname, jwtSec
   }
   if (wasteMatch && request.method === "DELETE") {
     const url = new URL(request.url || "/", `http://${request.headers.host || "localhost"}`);
-    if (url.searchParams.get("type") === "DECHARGEMENT" || url.searchParams.get("type") === "CHARGEMENT") {
+    if (["DECHARGEMENT", "CHARGEMENT", "ORDURES"].includes(url.searchParams.get("type"))) {
       await deleteTruckLogisticsEntry(request, response, pool, user.id, wasteMatch[1]);
       return true;
     }

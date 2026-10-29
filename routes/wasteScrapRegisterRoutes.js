@@ -37,7 +37,7 @@ function readValues(body, hasScrapFields) {
   const date = text(body.date, 10);
   const heure = text(body.heure, 5);
   const matricule = text(body.matricule, 50);
-  const designation = text(body.designation);
+  const designation = hasScrapFields ? text(body.designation) : text(body.observation ?? body.designation);
   const nombre = hasScrapFields ? Number(body.nombre) : null;
   const motif = hasScrapFields ? text(body.motif) : null;
   if (!validDate(date) || !timePattern.test(heure) || !matricule || !designation
@@ -45,7 +45,7 @@ function readValues(body, hasScrapFields) {
     throw Object.assign(
       new Error(hasScrapFields
         ? "La date, l’heure, le matricule, la désignation, le nombre et le motif sont obligatoires."
-        : "La date, l’heure, le matricule et la désignation sont obligatoires."),
+        : "La date, l’heure, le matricule et l’observation sont obligatoires."),
       { status: 400 },
     );
   }
@@ -67,6 +67,8 @@ async function resolveEmployee(pool, matricule, siteId, includeInactive = false)
 
 const columns = `id,date_operation::text AS date,to_char(heure,'HH24:MI') AS heure,
   prenom,matricule,section,designation`;
+const wasteColumns = `id,date_operation::text AS date,to_char(heure,'HH24:MI') AS heure,
+  prenom,matricule,section,observation`;
 
 export async function handleWasteScrapRegisterRoutes(request, response, pool, pathname, jwtSecret) {
   const definitionEntry = Object.entries(definitions).find(([base]) => pathname === base || pathname.startsWith(`${base}/`));
@@ -84,7 +86,7 @@ export async function handleWasteScrapRegisterRoutes(request, response, pool, pa
 
     if (request.method === "GET" && pathname === basePath) {
       const siteId = await resolveSite(pool, account, url.searchParams.get("siteId"));
-      const fields = definition.hasScrapFields ? `${columns},nombre,motif` : columns;
+      const fields = definition.hasScrapFields ? `${columns},nombre,motif` : wasteColumns;
       const result = await pool.query(
         `SELECT ${fields},site_id AS "siteId"
          FROM ${definition.table} WHERE site_id=$1::uuid
@@ -114,13 +116,22 @@ export async function handleWasteScrapRegisterRoutes(request, response, pool, pa
       const scrapValues = definition.hasScrapFields ? ",$7,$8" : "";
       const siteParam = definition.hasScrapFields ? 9 : 7;
       const userParam = definition.hasScrapFields ? 10 : 8;
+      const writableColumns = definition.hasScrapFields
+        ? `${columns}${scrapColumns}`
+        : `${wasteColumns}`;
+      const insertFields = definition.hasScrapFields
+        ? `date_operation,heure,prenom,matricule,section,designation${scrapColumns},site_id,utilisateur_id`
+        : "date_operation,heure,prenom,matricule,section,designation,observation,site_id,utilisateur_id";
+      const insertValues = definition.hasScrapFields
+        ? `$1::date,$2::time,$3,$4,$5,$6${scrapValues},$${siteParam}::uuid,$${userParam}::uuid`
+        : "$1::date,$2::time,$3,$4,$5,$6,$6,$7::uuid,$8::uuid";
 
       if (request.method === "POST") {
         const result = await pool.query(
           `INSERT INTO ${definition.table}
-            (date_operation,heure,prenom,matricule,section,designation${scrapColumns},site_id,utilisateur_id)
-           VALUES ($1::date,$2::time,$3,$4,$5,$6${scrapValues},$${siteParam}::uuid,$${userParam}::uuid)
-           RETURNING ${columns}${scrapColumns},site_id AS "siteId"`,
+            (${insertFields})
+           VALUES (${insertValues})
+           RETURNING ${writableColumns},site_id AS "siteId"`,
           params,
         );
         json(response, 201, { entry: result.rows[0] });
@@ -135,9 +146,10 @@ export async function handleWasteScrapRegisterRoutes(request, response, pool, pa
       const result = await pool.query(
         `UPDATE ${definition.table}
          SET date_operation=$1::date,heure=$2::time,prenom=$3,matricule=$4,section=$5,designation=$6
+           ${definition.hasScrapFields ? "" : ",observation=$6"}
            ${definition.hasScrapFields ? ",nombre=$7,motif=$8" : ""}
          WHERE id=$${idParam}::uuid AND site_id=$${updateSiteParam}::uuid
-         RETURNING ${columns}${scrapColumns},site_id AS "siteId"`,
+         RETURNING ${writableColumns},site_id AS "siteId"`,
         updateValues,
       );
       if (!result.rows[0]) throw Object.assign(new Error("Enregistrement introuvable sur ce site."), { status: 404 });

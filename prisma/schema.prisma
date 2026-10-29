@@ -580,6 +580,7 @@ model RegistreOrdure {
   matricule     String      @db.VarChar(50)
   section       String      @db.VarChar(100)
   designation   String      @db.Text
+  observation   String      @db.Text
   siteId        String      @map("site_id") @db.Uuid
   utilisateurId String      @map("utilisateur_id") @db.Uuid
   site          Site        @relation(fields: [siteId], references: [id], onDelete: Restrict, map: "fk_registre_ordures_site")
