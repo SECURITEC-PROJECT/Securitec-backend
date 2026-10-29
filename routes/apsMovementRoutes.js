@@ -20,7 +20,7 @@ function validDate(value) {
 
 async function getAccount(pool, userId) {
   const result = await pool.query(
-    "SELECT id,role,site_id AS \"siteId\" FROM utilisateur WHERE id=$1::uuid AND actif=true LIMIT 1",
+    "SELECT id,nom,role,site_id AS \"siteId\" FROM utilisateur WHERE id=$1::uuid AND actif=true LIMIT 1",
     [userId],
   );
   return result.rows[0] || null;
@@ -74,15 +74,22 @@ function validateHandover(body) {
   const entry = { date };
   for (const [field, maxLength] of textFields) {
     const value = body?.[field] ?? "";
-    if (typeof value !== "string" || value.length > maxLength) {
-      throw Object.assign(new Error(`Le champ ${field} est invalide ou trop long.`), { status: 400 });
+    if (typeof value !== "string" || !value.trim() || value.length > maxLength) {
+      throw Object.assign(new Error(`Le champ ${field} est obligatoire et ne doit pas dépasser ${maxLength} caractères.`), { status: 400 });
     }
     entry[field] = value.trim();
   }
   for (const field of ["chaineEst", "chaineOuest"]) {
     const value = body?.[field] ?? "";
-    if (typeof value !== "string" || value.length > 100) {
-      throw Object.assign(new Error(`Le champ ${field} est invalide ou trop long.`), { status: 400 });
+    if (typeof value !== "string" || !value.trim() || value.length > 100) {
+      throw Object.assign(new Error(`Le champ ${field} est obligatoire et ne doit pas dépasser 100 caractères.`), { status: 400 });
+    }
+    entry[field] = value.trim();
+  }
+  for (const field of ["cpDescendantMatricule", "cpMontantMatricule"]) {
+    const value = body?.[field];
+    if (typeof value !== "string" || !value.trim() || value.trim().length > 50) {
+      throw Object.assign(new Error("Le matricule des deux CP est obligatoire et ne doit pas dépasser 50 caractères."), { status: 400 });
     }
     entry[field] = value.trim();
   }
@@ -91,6 +98,30 @@ function validateHandover(body) {
   }
   return entry;
 }
+
+async function validateHandoverSignatories(pool, siteId, entry) {
+  const result = await pool.query(
+    `SELECT UPPER(BTRIM(matricule)) AS matricule
+     FROM employe
+     WHERE site_id=$1::uuid AND actif=true
+       AND UPPER(BTRIM(matricule)) IN (UPPER($2),UPPER($3))`,
+    [siteId, entry.cpDescendantMatricule, entry.cpMontantMatricule],
+  );
+  const found = new Set(result.rows.map((row) => row.matricule));
+  if (!found.has(entry.cpDescendantMatricule.toLocaleUpperCase())
+    || !found.has(entry.cpMontantMatricule.toLocaleUpperCase())) {
+    throw Object.assign(new Error("Les matricules des deux CP doivent correspondre à des employés actifs du site sélectionné."), { status: 400 });
+  }
+}
+
+const handoverSelect = `SELECT h.id,TO_CHAR(h.date_operation,'YYYY-MM-DD') AS date,h.materiel,
+  h.chaine_est AS "chaineEst",h.chaine_ouest AS "chaineOuest",
+  h.cles_rendus AS "clesRendus",h.cles_non_rendus AS "clesNonRendus",
+  h.etat_des_lieux AS "etatDesLieux",h.consigne,h.evenement,h.remarque,
+  h.cp_descendant_matricule AS "cpDescendantMatricule",
+  h.cp_montant_matricule AS "cpMontantMatricule",
+  u.nom AS controleur,h.site_id AS "siteId"
+  FROM mouvement_aps_passation h JOIN utilisateur u ON u.id=h.utilisateur_id`;
 
 function validatePostes(rawPostes) {
   if (!Array.isArray(rawPostes) || rawPostes.length > 100) {
@@ -167,13 +198,9 @@ export async function handleApsMovementRoutes(request, response, pool, pathname,
       if (!validDate(date)) throw Object.assign(new Error("Date invalide."), { status: 400 });
       const siteId = await resolveSite(pool, account, url.searchParams.get("siteId"));
       const result = await pool.query(
-        `SELECT id,TO_CHAR(date_operation,'YYYY-MM-DD') AS date,materiel,
-           chaine_est AS "chaineEst",chaine_ouest AS "chaineOuest",
-           cles_rendus AS "clesRendus",cles_non_rendus AS "clesNonRendus",
-           etat_des_lieux AS "etatDesLieux",consigne,evenement,remarque,site_id AS "siteId"
-         FROM mouvement_aps_passation
-         WHERE site_id=$1::uuid AND date_operation=$2::date
-         ORDER BY cree_le DESC,id`,
+        `${handoverSelect}
+         WHERE h.site_id=$1::uuid AND h.date_operation=$2::date
+         ORDER BY h.cree_le DESC,h.id`,
         [siteId, date],
       );
       json(response, 200, { entries: result.rows });
@@ -184,19 +211,20 @@ export async function handleApsMovementRoutes(request, response, pool, pathname,
       const body = await readJson(request);
       const entry = validateHandover(body);
       const siteId = await resolveSite(pool, account, body?.siteId);
+      await validateHandoverSignatories(pool, siteId, entry);
       const result = await pool.query(
         `INSERT INTO mouvement_aps_passation
            (site_id,date_operation,materiel,chaine_est,chaine_ouest,cles_rendus,cles_non_rendus,
-            etat_des_lieux,consigne,evenement,remarque,utilisateur_id)
-         VALUES ($1::uuid,$2::date,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::uuid)
-         RETURNING id,TO_CHAR(date_operation,'YYYY-MM-DD') AS date,materiel,
-           chaine_est AS "chaineEst",chaine_ouest AS "chaineOuest",
-           cles_rendus AS "clesRendus",cles_non_rendus AS "clesNonRendus",
-           etat_des_lieux AS "etatDesLieux",consigne,evenement,remarque,site_id AS "siteId"`,
+            etat_des_lieux,consigne,evenement,remarque,cp_descendant_matricule,
+            cp_montant_matricule,utilisateur_id)
+         VALUES ($1::uuid,$2::date,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14::uuid)
+         RETURNING id`,
         [siteId, entry.date, entry.materiel, entry.chaineEst, entry.chaineOuest, entry.clesRendus,
-          entry.clesNonRendus, entry.etatDesLieux, entry.consigne, entry.evenement, entry.remarque, account.id],
+          entry.clesNonRendus, entry.etatDesLieux, entry.consigne, entry.evenement, entry.remarque,
+          entry.cpDescendantMatricule, entry.cpMontantMatricule, account.id],
       );
-      json(response, 201, { entry: result.rows[0] });
+      const saved = await pool.query(`${handoverSelect} WHERE h.id=$1::uuid`, [result.rows[0].id]);
+      json(response, 201, { entry: saved.rows[0] });
       return true;
     }
 
@@ -204,21 +232,22 @@ export async function handleApsMovementRoutes(request, response, pool, pathname,
       const body = await readJson(request);
       const entry = validateHandover(body);
       const siteId = await resolveSite(pool, account, body?.siteId);
+      await validateHandoverSignatories(pool, siteId, entry);
       const result = await pool.query(
         `UPDATE mouvement_aps_passation
          SET date_operation=$3::date,materiel=$4,chaine_est=$5,chaine_ouest=$6,cles_rendus=$7,
              cles_non_rendus=$8,etat_des_lieux=$9,consigne=$10,evenement=$11,remarque=$12,
-             utilisateur_id=$13::uuid,updated_at=NOW()
+             cp_descendant_matricule=$13,cp_montant_matricule=$14,
+             utilisateur_id=$15::uuid,updated_at=NOW()
          WHERE id=$1::uuid AND site_id=$2::uuid
-         RETURNING id,TO_CHAR(date_operation,'YYYY-MM-DD') AS date,materiel,
-           chaine_est AS "chaineEst",chaine_ouest AS "chaineOuest",
-           cles_rendus AS "clesRendus",cles_non_rendus AS "clesNonRendus",
-           etat_des_lieux AS "etatDesLieux",consigne,evenement,remarque,site_id AS "siteId"`,
+         RETURNING id`,
         [handoverRecordMatch[1], siteId, entry.date, entry.materiel, entry.chaineEst, entry.chaineOuest,
-          entry.clesRendus, entry.clesNonRendus, entry.etatDesLieux, entry.consigne, entry.evenement, entry.remarque, account.id],
+          entry.clesRendus, entry.clesNonRendus, entry.etatDesLieux, entry.consigne, entry.evenement,
+          entry.remarque, entry.cpDescendantMatricule, entry.cpMontantMatricule, account.id],
       );
       if (!result.rows[0]) throw Object.assign(new Error("Passation introuvable."), { status: 404 });
-      json(response, 200, { entry: result.rows[0] });
+      const saved = await pool.query(`${handoverSelect} WHERE h.id=$1::uuid`, [result.rows[0].id]);
+      json(response, 200, { entry: saved.rows[0] });
       return true;
     }
 

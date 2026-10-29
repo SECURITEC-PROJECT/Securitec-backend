@@ -690,6 +690,8 @@ model PassationServiceAps {
   consigne      String      @db.VarChar(5000)
   evenement     String      @db.VarChar(5000)
   remarque      String      @db.VarChar(5000)
+  cpDescendantMatricule String @map("cp_descendant_matricule") @db.VarChar(50)
+  cpMontantMatricule    String @map("cp_montant_matricule") @db.VarChar(50)
   siteId        String      @map("site_id") @db.Uuid
   utilisateurId String      @map("utilisateur_id") @db.Uuid
   updatedAt     DateTime    @default(now()) @map("updated_at") @db.Timestamp(6)
