@@ -3,7 +3,10 @@ import { json, readJson } from "../utils/helpers.js";
 
 const routePath = "/api/aps-movements";
 const configurationPath = `${routePath}/posts`;
+const eventsPath = `${routePath}/events`;
+const eventRecordPattern = /^\/api\/aps-movements\/events\/([0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/i;
 const datePattern = /^\d{4}-\d{2}-\d{2}$/;
+const timePattern = /^(?:[01]\d|2[0-3]):[0-5]\d$/;
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const services = new Set(["jour", "nuit"]);
 
@@ -39,6 +42,20 @@ function readService(value) {
     throw Object.assign(new Error("Service invalide."), { status: 400 });
   }
   return value;
+}
+
+function validateEvent(body) {
+  const date = typeof body?.date === "string" ? body.date : "";
+  const heureEntree = typeof body?.heureEntree === "string" ? body.heureEntree : "";
+  const mouvement = typeof body?.mouvement === "string" ? body.mouvement.trim() : "";
+  const observation = typeof body?.observation === "string" ? body.observation.trim() : "";
+  const heureSortie = typeof body?.heureSortie === "string" ? body.heureSortie : "";
+  if (!validDate(date) || !timePattern.test(heureEntree)
+    || (heureSortie && !timePattern.test(heureSortie))
+    || !mouvement || mouvement.length > 500 || observation.length > 1000) {
+    throw Object.assign(new Error("La date, l’heure d’entrée et le mouvement sont obligatoires et doivent être valides."), { status: 400 });
+  }
+  return { date, heureEntree, mouvement, observation, heureSortie };
 }
 
 function validatePostes(rawPostes) {
@@ -96,7 +113,8 @@ async function saveConfiguration(client, siteId, postes, userId) {
 }
 
 export async function handleApsMovementRoutes(request, response, pool, pathname, jwtSecret) {
-  if (pathname !== routePath && pathname !== configurationPath) return false;
+  const eventRecordMatch = pathname.match(eventRecordPattern);
+  if (pathname !== routePath && pathname !== configurationPath && pathname !== eventsPath && !eventRecordMatch) return false;
   const user = getRequestUser(request, jwtSecret);
   if (!user) {
     json(response, 401, { error: "Connectez-vous pour accéder aux mouvements APS." });
@@ -107,6 +125,70 @@ export async function handleApsMovementRoutes(request, response, pool, pathname,
     const account = await getAccount(pool, user.id);
     if (!account) throw Object.assign(new Error("Utilisateur introuvable."), { status: 401 });
     const url = new URL(request.url || "/", `http://${request.headers.host || "localhost"}`);
+
+    if (pathname === eventsPath && request.method === "GET") {
+      const date = url.searchParams.get("date") || "";
+      if (!validDate(date)) throw Object.assign(new Error("Date invalide."), { status: 400 });
+      const siteId = await resolveSite(pool, account, url.searchParams.get("siteId"));
+      const result = await pool.query(
+        `SELECT id,TO_CHAR(date_operation,'YYYY-MM-DD') AS date,
+           TO_CHAR(heure_entree,'HH24:MI') AS "heureEntree",mouvement,
+           observation,TO_CHAR(heure_sortie,'HH24:MI') AS "heureSortie",site_id AS "siteId"
+         FROM mouvement_aps_evenement
+         WHERE site_id=$1::uuid AND date_operation=$2::date
+         ORDER BY heure_entree,id`,
+        [siteId, date],
+      );
+      json(response, 200, { entries: result.rows });
+      return true;
+    }
+
+    if (pathname === eventsPath && request.method === "POST") {
+      const body = await readJson(request);
+      const entry = validateEvent(body);
+      const siteId = await resolveSite(pool, account, body?.siteId);
+      const result = await pool.query(
+        `INSERT INTO mouvement_aps_evenement
+           (site_id,date_operation,heure_entree,mouvement,observation,heure_sortie,utilisateur_id)
+         VALUES ($1::uuid,$2::date,$3::time,$4,$5,NULLIF($6,'')::time,$7::uuid)
+         RETURNING id,TO_CHAR(date_operation,'YYYY-MM-DD') AS date,
+           TO_CHAR(heure_entree,'HH24:MI') AS "heureEntree",mouvement,
+           observation,TO_CHAR(heure_sortie,'HH24:MI') AS "heureSortie",site_id AS "siteId"`,
+        [siteId, entry.date, entry.heureEntree, entry.mouvement, entry.observation, entry.heureSortie, account.id],
+      );
+      json(response, 201, { entry: result.rows[0] });
+      return true;
+    }
+
+    if (eventRecordMatch && request.method === "PUT") {
+      const body = await readJson(request);
+      const entry = validateEvent(body);
+      const siteId = await resolveSite(pool, account, body?.siteId);
+      const result = await pool.query(
+        `UPDATE mouvement_aps_evenement
+         SET date_operation=$3::date,heure_entree=$4::time,mouvement=$5,observation=$6,
+             heure_sortie=NULLIF($7,'')::time,utilisateur_id=$8::uuid,updated_at=NOW()
+         WHERE id=$1::uuid AND site_id=$2::uuid
+         RETURNING id,TO_CHAR(date_operation,'YYYY-MM-DD') AS date,
+           TO_CHAR(heure_entree,'HH24:MI') AS "heureEntree",mouvement,
+           observation,TO_CHAR(heure_sortie,'HH24:MI') AS "heureSortie",site_id AS "siteId"`,
+        [eventRecordMatch[1], siteId, entry.date, entry.heureEntree, entry.mouvement, entry.observation, entry.heureSortie, account.id],
+      );
+      if (!result.rows[0]) throw Object.assign(new Error("Mouvement introuvable."), { status: 404 });
+      json(response, 200, { entry: result.rows[0] });
+      return true;
+    }
+
+    if (eventRecordMatch && request.method === "DELETE") {
+      const siteId = await resolveSite(pool, account, url.searchParams.get("siteId"));
+      const result = await pool.query(
+        "DELETE FROM mouvement_aps_evenement WHERE id=$1::uuid AND site_id=$2::uuid RETURNING id",
+        [eventRecordMatch[1], siteId],
+      );
+      if (!result.rows[0]) throw Object.assign(new Error("Mouvement introuvable."), { status: 404 });
+      json(response, 200, { id: result.rows[0].id, deleted: true });
+      return true;
+    }
 
     if (request.method === "GET" && pathname === routePath) {
       const date = url.searchParams.get("date") || "";

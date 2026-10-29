@@ -60,6 +60,7 @@ model Site {
   mouvementsVelos         MouvementVelo[]
   mouvementsMoto          MouvementMoto[]
   mouvementsAps           MouvementAps[]
+  mouvementsEvenementsAps MouvementApsEvenement[]
   configurationsPostesMouvementAps ConfigurationPostesMouvementAps[]
 
   @@map("site")
@@ -101,6 +102,7 @@ model Utilisateur {
   mouvementsVelos         MouvementVelo[]
   mouvementsMoto          MouvementMoto[]
   mouvementsAps           MouvementAps[]
+  mouvementsEvenementsAps MouvementApsEvenement[]
   configurationsPostesMouvementAps ConfigurationPostesMouvementAps[]
 
   @@index([siteId], map: "idx_utilisateur_site")
@@ -653,6 +655,24 @@ model MouvementAps {
   @@unique([siteId, datePointage, service], map: "uq_mouvement_aps_site_date_service")
   @@index([siteId, datePointage], map: "idx_mouvement_aps_site_date")
   @@map("mouvement_aps")
+}
+
+model MouvementApsEvenement {
+  id            String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  creeLe        DateTime    @default(now()) @map("cree_le") @db.Timestamp(6)
+  dateOperation DateTime    @map("date_operation") @db.Date
+  heureEntree   DateTime    @map("heure_entree") @db.Time(0)
+  mouvement     String      @db.VarChar(500)
+  observation   String      @db.VarChar(1000)
+  heureSortie   DateTime?   @map("heure_sortie") @db.Time(0)
+  siteId        String      @map("site_id") @db.Uuid
+  utilisateurId String      @map("utilisateur_id") @db.Uuid
+  updatedAt     DateTime    @default(now()) @map("updated_at") @db.Timestamp(6)
+  site          Site        @relation(fields: [siteId], references: [id], onDelete: Restrict, map: "fk_mouvement_aps_evenement_site")
+  utilisateur   Utilisateur @relation(fields: [utilisateurId], references: [id], onDelete: Restrict, map: "fk_mouvement_aps_evenement_utilisateur")
+
+  @@index([siteId, dateOperation, heureEntree], map: "idx_mouvement_aps_evenement_site_date")
+  @@map("mouvement_aps_evenement")
 }
 
 model ConfigurationPostesMouvementAps {
