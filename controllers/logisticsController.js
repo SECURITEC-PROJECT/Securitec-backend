@@ -19,6 +19,10 @@ const maxBottleDesignationLines = 16;
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 const cleanText = (value, max = 255) => typeof value === "string" ? value.trim().slice(0, max) : "";
+const normalizeFuelDesignation = (value) => {
+  const normalized = cleanText(value, 160).toLocaleUpperCase("fr");
+  return normalized === "FUEL OIL" ? "Fuel oil" : normalized === "GASOIL" ? "Gasoil" : "";
+};
 const normalizeDate = (value) => {
   if (typeof value !== "string") return "";
   const input = value.trim();
@@ -67,7 +71,7 @@ async function querySiteForRead(pool, account, request) {
   return result.rows[0]?.id || null;
 }
 
-async function requireRegisteredWasteVehicle(pool, siteId, vehicule) {
+async function requireRegisteredDriverVehicle(pool, siteId, vehicule) {
   const result = await pool.query(
     `SELECT 1 FROM chauffeur
      WHERE site_id = $1::uuid AND LOWER(BTRIM(vehicule)) = LOWER($2)
@@ -77,6 +81,38 @@ async function requireRegisteredWasteVehicle(pool, siteId, vehicule) {
   if (!result.rows[0]) {
     throw Object.assign(
       new Error("Ce véhicule n’est pas enregistré dans le module Chauffeurs pour ce site."),
+      { status: 400 },
+    );
+  }
+}
+
+async function requireRegisteredDriverName(pool, siteId, nomPrenom) {
+  const result = await pool.query(
+    `SELECT 1 FROM chauffeur
+     WHERE site_id = $1::uuid AND LOWER(BTRIM(nom_prenom)) = LOWER($2)
+     LIMIT 1`,
+    [siteId, nomPrenom],
+  );
+  if (!result.rows[0]) {
+    throw Object.assign(
+      new Error("Ce chauffeur n’est pas enregistré dans le module Chauffeurs pour ce site."),
+      { status: 400 },
+    );
+  }
+}
+
+async function requireDriverForMatricule(pool, siteId, matricule, nomPrenom) {
+  const result = await pool.query(
+    `SELECT 1 FROM chauffeur
+     WHERE site_id = $1::uuid
+       AND LOWER(BTRIM(matricule)) = LOWER($2)
+       AND LOWER(BTRIM(nom_prenom)) = LOWER($3)
+     LIMIT 1`,
+    [siteId, matricule, nomPrenom],
+  );
+  if (!result.rows[0]) {
+    throw Object.assign(
+      new Error("Le chauffeur sélectionné ne correspond pas à ce matricule dans le module Chauffeurs."),
       { status: 400 },
     );
   }
@@ -182,6 +218,7 @@ export async function createStarParticulierLoading(request, response, pool, user
     await client.query("BEGIN");
     const account = await getAccount(client, userId);
     const siteId = await resolveSite(client, account, body);
+    await requireDriverForMatricule(client, siteId, entry.camion, entry.nomChauffeur);
     const result = await client.query(
       `INSERT INTO flux_logistique
          (date_operation, type_flux, heure_arrivee, heure_sortie, camion, proprietaire, nom_chauffeur,
@@ -220,6 +257,7 @@ export async function updateStarParticulierLoading(request, response, pool, user
     await client.query("BEGIN");
     const account = await getAccount(client, userId);
     const siteId = await resolveSite(client, account, body);
+    await requireDriverForMatricule(client, siteId, entry.camion, entry.nomChauffeur);
     const result = await client.query(
       `UPDATE flux_logistique
        SET heure_arrivee = $2::time, heure_sortie = $3::time, camion = $4,
@@ -392,7 +430,7 @@ export async function createLogisticsEntry(request, response, pool, userId) {
       if (!["LEVURE", "DRECHE"].includes(typeDechet) || !timePattern.test(time) || !numeroPesage || !facture || !Number.isFinite(poids) || poids <= 0 || poids > 9999999999.99 || !destinataire || !vehicule) {
         throw Object.assign(new Error("Choisissez le type de sortie et renseignez l’heure, le pesage, la facture, un poids positif, le destinataire et le véhicule."), { status: 400 });
       }
-      await requireRegisteredWasteVehicle(client, siteId, vehicule);
+      await requireRegisteredDriverVehicle(client, siteId, vehicule);
       const result = await client.query(
         `INSERT INTO flux_logistique
            (date_operation, type_flux, type_dechet, heure_sortie, numero_pesage, facture, poids, destinataire, vehicule, site_id, utilisateur_id)
@@ -420,6 +458,7 @@ export async function createLogisticsEntry(request, response, pool, userId) {
           quantity <= 0 || quantity > 9999999999.99 || !document || !provenance) {
         throw Object.assign(new Error("Renseignez l’heure de pointe, le véhicule, la désignation, une quantité positive, le bon de livraison/facture et la provenance."), { status: 400 });
       }
+      await requireRegisteredDriverVehicle(client, siteId, vehicule);
       const result = await client.query(
         `INSERT INTO flux_logistique
            (date_operation, type_flux, camion, heure_pointe, designation, quantite, document, provenance, site_id, utilisateur_id)
@@ -440,7 +479,7 @@ export async function createLogisticsEntry(request, response, pool, userId) {
       const time = cleanText(body.heurePointe, 5);
       const titre = cleanText(body.titre, 160);
       const plomb = cleanText(body.plomb, 100);
-      const designation = cleanText(body.designation, 160);
+      const designation = normalizeFuelDesignation(body.designation);
       const quantity = Number(body.quantite);
       const cree = cleanText(body.cree, 160);
       const chauffeur = cleanText(body.chauffeur, 160);
@@ -448,8 +487,9 @@ export async function createLogisticsEntry(request, response, pool, userId) {
       if (!timePattern.test(time) || !titre || !plomb || !designation || !cree ||
           !Number.isFinite(quantity) || quantity <= 0 || quantity > 9999999999.99 ||
           !chauffeur || !magasinier) {
-        throw Object.assign(new Error("Renseignez l’heure de pointe, le titre, le plomb, la désignation, une quantité positive, le nom du créateur, le chauffeur et le magasinier."), { status: 400 });
+        throw Object.assign(new Error("Renseignez l’heure de pointe, le titre, le plomb, une désignation Fuel oil ou Gasoil, une quantité positive, le nom du créateur, le chauffeur et le magasinier."), { status: 400 });
       }
+      await requireRegisteredDriverName(client, siteId, chauffeur);
       const result = await client.query(
         `INSERT INTO flux_logistique
            (date_operation, type_flux, heure_pointe, titre, plomb, designation, quantite, cree, chauffeur, magasinier, site_id, utilisateur_id)
@@ -752,7 +792,7 @@ export async function updateWasteEntry(request, response, pool, userId, entryId)
       await client.query("ROLLBACK");
       return json(response, 404, { error: "Sortie de déchets introuvable sur ce site." });
     }
-    await requireRegisteredWasteVehicle(client, siteId, vehicule);
+    await requireRegisteredDriverVehicle(client, siteId, vehicule);
     const result = await client.query(
       `UPDATE flux_logistique
        SET date_operation = $2::date, type_dechet = $3, heure_sortie = $4::time, numero_pesage = $5,
@@ -827,6 +867,7 @@ export async function updateMatierePremiereEntry(request, response, pool, userId
       await client.query("ROLLBACK");
       return json(response, 404, { error: "Déchargement introuvable sur ce site." });
     }
+    await requireRegisteredDriverVehicle(client, siteId, vehicule);
     const result = await client.query(
       `UPDATE flux_logistique
        SET date_operation = $2::date, camion = $3, heure_pointe = $4::time,
@@ -880,7 +921,7 @@ export async function updateDepotageFuelEntry(request, response, pool, userId, e
     const time = cleanText(body.heurePointe, 5);
     const titre = cleanText(body.titre, 160);
     const plomb = cleanText(body.plomb, 100);
-    const designation = cleanText(body.designation, 160);
+    const designation = normalizeFuelDesignation(body.designation);
     const quantity = Number(body.quantite);
     const cree = cleanText(body.cree, 160);
     const chauffeur = cleanText(body.chauffeur, 160);
@@ -888,7 +929,7 @@ export async function updateDepotageFuelEntry(request, response, pool, userId, e
     if (!validDate(date) || !timePattern.test(time) || !titre || !plomb || !designation || !cree ||
         !Number.isFinite(quantity) || quantity <= 0 || quantity > 9999999999.99 ||
         !chauffeur || !magasinier) {
-      return json(response, 400, { error: "Renseignez une date et une heure valides, le titre, le plomb, la désignation, une quantité positive, le créateur, le chauffeur et le magasinier." });
+      return json(response, 400, { error: "Renseignez une date et une heure valides, le titre, le plomb, une désignation Fuel oil ou Gasoil, une quantité positive, le créateur, le chauffeur et le magasinier." });
     }
 
     await client.query("BEGIN");
@@ -904,6 +945,7 @@ export async function updateDepotageFuelEntry(request, response, pool, userId, e
       await client.query("ROLLBACK");
       return json(response, 404, { error: "Dépotage fuel/gasoil introuvable sur ce site." });
     }
+    await requireRegisteredDriverName(client, siteId, chauffeur);
     const result = await client.query(
       `UPDATE flux_logistique
        SET date_operation = $2::date, heure_pointe = $3::time, titre = $4, plomb = $5,
