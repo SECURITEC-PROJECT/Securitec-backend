@@ -61,6 +61,7 @@ model Site {
   mouvementsMoto          MouvementMoto[]
   mouvementsAps           MouvementAps[]
   mouvementsEvenementsAps MouvementApsEvenement[]
+  passationsServiceAps     PassationServiceAps[]
   configurationsPostesMouvementAps ConfigurationPostesMouvementAps[]
 
   @@map("site")
@@ -103,6 +104,7 @@ model Utilisateur {
   mouvementsMoto          MouvementMoto[]
   mouvementsAps           MouvementAps[]
   mouvementsEvenementsAps MouvementApsEvenement[]
+  passationsServiceAps     PassationServiceAps[]
   configurationsPostesMouvementAps ConfigurationPostesMouvementAps[]
 
   @@index([siteId], map: "idx_utilisateur_site")
@@ -673,6 +675,29 @@ model MouvementApsEvenement {
 
   @@index([siteId, dateOperation, heureEntree], map: "idx_mouvement_aps_evenement_site_date")
   @@map("mouvement_aps_evenement")
+}
+
+model PassationServiceAps {
+  id            String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  creeLe        DateTime    @default(now()) @map("cree_le") @db.Timestamp(6)
+  dateOperation DateTime    @map("date_operation") @db.Date
+  materiel      String      @db.VarChar(3000)
+  chaineEst     String      @map("chaine_est") @db.VarChar(100)
+  chaineOuest   String      @map("chaine_ouest") @db.VarChar(100)
+  clesRendus    String      @map("cles_rendus") @db.VarChar(5000)
+  clesNonRendus String      @map("cles_non_rendus") @db.VarChar(5000)
+  etatDesLieux  String      @map("etat_des_lieux") @db.VarChar(5000)
+  consigne      String      @db.VarChar(5000)
+  evenement     String      @db.VarChar(5000)
+  remarque      String      @db.VarChar(5000)
+  siteId        String      @map("site_id") @db.Uuid
+  utilisateurId String      @map("utilisateur_id") @db.Uuid
+  updatedAt     DateTime    @default(now()) @map("updated_at") @db.Timestamp(6)
+  site          Site        @relation(fields: [siteId], references: [id], onDelete: Restrict, map: "fk_passation_service_aps_site")
+  utilisateur   Utilisateur @relation(fields: [utilisateurId], references: [id], onDelete: Restrict, map: "fk_passation_service_aps_utilisateur")
+
+  @@index([siteId, dateOperation], map: "idx_passation_service_aps_site_date")
+  @@map("mouvement_aps_passation")
 }
 
 model ConfigurationPostesMouvementAps {

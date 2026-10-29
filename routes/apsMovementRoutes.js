@@ -5,6 +5,8 @@ const routePath = "/api/aps-movements";
 const configurationPath = `${routePath}/posts`;
 const eventsPath = `${routePath}/events`;
 const eventRecordPattern = /^\/api\/aps-movements\/events\/([0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/i;
+const handoversPath = `${routePath}/service-handovers`;
+const handoverRecordPattern = /^\/api\/aps-movements\/service-handovers\/([0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/i;
 const datePattern = /^\d{4}-\d{2}-\d{2}$/;
 const timePattern = /^(?:[01]\d|2[0-3]):[0-5]\d$/;
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -56,6 +58,38 @@ function validateEvent(body) {
     throw Object.assign(new Error("La date, l’heure d’entrée et le mouvement sont obligatoires et doivent être valides."), { status: 400 });
   }
   return { date, heureEntree, mouvement, observation, heureSortie };
+}
+
+function validateHandover(body) {
+  const date = typeof body?.date === "string" ? body.date : "";
+  const textFields = [
+    ["materiel", 3000],
+    ["clesRendus", 5000],
+    ["clesNonRendus", 5000],
+    ["etatDesLieux", 5000],
+    ["consigne", 5000],
+    ["evenement", 5000],
+    ["remarque", 5000],
+  ];
+  const entry = { date };
+  for (const [field, maxLength] of textFields) {
+    const value = body?.[field] ?? "";
+    if (typeof value !== "string" || value.length > maxLength) {
+      throw Object.assign(new Error(`Le champ ${field} est invalide ou trop long.`), { status: 400 });
+    }
+    entry[field] = value.trim();
+  }
+  for (const field of ["chaineEst", "chaineOuest"]) {
+    const value = body?.[field] ?? "";
+    if (typeof value !== "string" || value.length > 100) {
+      throw Object.assign(new Error(`Le champ ${field} est invalide ou trop long.`), { status: 400 });
+    }
+    entry[field] = value.trim();
+  }
+  if (!validDate(date)) {
+    throw Object.assign(new Error("Date invalide."), { status: 400 });
+  }
+  return entry;
 }
 
 function validatePostes(rawPostes) {
@@ -114,7 +148,9 @@ async function saveConfiguration(client, siteId, postes, userId) {
 
 export async function handleApsMovementRoutes(request, response, pool, pathname, jwtSecret) {
   const eventRecordMatch = pathname.match(eventRecordPattern);
-  if (pathname !== routePath && pathname !== configurationPath && pathname !== eventsPath && !eventRecordMatch) return false;
+  const handoverRecordMatch = pathname.match(handoverRecordPattern);
+  if (pathname !== routePath && pathname !== configurationPath && pathname !== eventsPath
+    && !eventRecordMatch && pathname !== handoversPath && !handoverRecordMatch) return false;
   const user = getRequestUser(request, jwtSecret);
   if (!user) {
     json(response, 401, { error: "Connectez-vous pour accéder aux mouvements APS." });
@@ -125,6 +161,77 @@ export async function handleApsMovementRoutes(request, response, pool, pathname,
     const account = await getAccount(pool, user.id);
     if (!account) throw Object.assign(new Error("Utilisateur introuvable."), { status: 401 });
     const url = new URL(request.url || "/", `http://${request.headers.host || "localhost"}`);
+
+    if (pathname === handoversPath && request.method === "GET") {
+      const date = url.searchParams.get("date") || "";
+      if (!validDate(date)) throw Object.assign(new Error("Date invalide."), { status: 400 });
+      const siteId = await resolveSite(pool, account, url.searchParams.get("siteId"));
+      const result = await pool.query(
+        `SELECT id,TO_CHAR(date_operation,'YYYY-MM-DD') AS date,materiel,
+           chaine_est AS "chaineEst",chaine_ouest AS "chaineOuest",
+           cles_rendus AS "clesRendus",cles_non_rendus AS "clesNonRendus",
+           etat_des_lieux AS "etatDesLieux",consigne,evenement,remarque,site_id AS "siteId"
+         FROM mouvement_aps_passation
+         WHERE site_id=$1::uuid AND date_operation=$2::date
+         ORDER BY cree_le DESC,id`,
+        [siteId, date],
+      );
+      json(response, 200, { entries: result.rows });
+      return true;
+    }
+
+    if (pathname === handoversPath && request.method === "POST") {
+      const body = await readJson(request);
+      const entry = validateHandover(body);
+      const siteId = await resolveSite(pool, account, body?.siteId);
+      const result = await pool.query(
+        `INSERT INTO mouvement_aps_passation
+           (site_id,date_operation,materiel,chaine_est,chaine_ouest,cles_rendus,cles_non_rendus,
+            etat_des_lieux,consigne,evenement,remarque,utilisateur_id)
+         VALUES ($1::uuid,$2::date,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::uuid)
+         RETURNING id,TO_CHAR(date_operation,'YYYY-MM-DD') AS date,materiel,
+           chaine_est AS "chaineEst",chaine_ouest AS "chaineOuest",
+           cles_rendus AS "clesRendus",cles_non_rendus AS "clesNonRendus",
+           etat_des_lieux AS "etatDesLieux",consigne,evenement,remarque,site_id AS "siteId"`,
+        [siteId, entry.date, entry.materiel, entry.chaineEst, entry.chaineOuest, entry.clesRendus,
+          entry.clesNonRendus, entry.etatDesLieux, entry.consigne, entry.evenement, entry.remarque, account.id],
+      );
+      json(response, 201, { entry: result.rows[0] });
+      return true;
+    }
+
+    if (handoverRecordMatch && request.method === "PUT") {
+      const body = await readJson(request);
+      const entry = validateHandover(body);
+      const siteId = await resolveSite(pool, account, body?.siteId);
+      const result = await pool.query(
+        `UPDATE mouvement_aps_passation
+         SET date_operation=$3::date,materiel=$4,chaine_est=$5,chaine_ouest=$6,cles_rendus=$7,
+             cles_non_rendus=$8,etat_des_lieux=$9,consigne=$10,evenement=$11,remarque=$12,
+             utilisateur_id=$13::uuid,updated_at=NOW()
+         WHERE id=$1::uuid AND site_id=$2::uuid
+         RETURNING id,TO_CHAR(date_operation,'YYYY-MM-DD') AS date,materiel,
+           chaine_est AS "chaineEst",chaine_ouest AS "chaineOuest",
+           cles_rendus AS "clesRendus",cles_non_rendus AS "clesNonRendus",
+           etat_des_lieux AS "etatDesLieux",consigne,evenement,remarque,site_id AS "siteId"`,
+        [handoverRecordMatch[1], siteId, entry.date, entry.materiel, entry.chaineEst, entry.chaineOuest,
+          entry.clesRendus, entry.clesNonRendus, entry.etatDesLieux, entry.consigne, entry.evenement, entry.remarque, account.id],
+      );
+      if (!result.rows[0]) throw Object.assign(new Error("Passation introuvable."), { status: 404 });
+      json(response, 200, { entry: result.rows[0] });
+      return true;
+    }
+
+    if (handoverRecordMatch && request.method === "DELETE") {
+      const siteId = await resolveSite(pool, account, url.searchParams.get("siteId"));
+      const result = await pool.query(
+        "DELETE FROM mouvement_aps_passation WHERE id=$1::uuid AND site_id=$2::uuid RETURNING id",
+        [handoverRecordMatch[1], siteId],
+      );
+      if (!result.rows[0]) throw Object.assign(new Error("Passation introuvable."), { status: 404 });
+      json(response, 200, { id: result.rows[0].id, deleted: true });
+      return true;
+    }
 
     if (pathname === eventsPath && request.method === "GET") {
       const date = url.searchParams.get("date") || "";
