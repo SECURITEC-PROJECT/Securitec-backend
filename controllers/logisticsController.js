@@ -475,22 +475,24 @@ export async function createLogisticsEntry(request, response, pool, userId) {
       const designation = cleanText(body.designation, 20000);
       const nbr = cleanText(body.nbr, 255);
       const facture = cleanText(body.facture, 160);
-      if (!immatriculation || !timePattern.test(heureSortie) || !designation || !nbr || !/^\d{1,4}$/.test(facture)) {
-        throw Object.assign(new Error("Renseignez le matricule, une heure de sortie, la désignation, le nombre et une facture de 1 à 4 chiffres."), { status: 400 });
+      const destinataire = cleanText(body.destinataire, 255);
+      if (!immatriculation || !timePattern.test(heureSortie) || !designation || !nbr
+        || !/^\d{1,4}$/.test(facture) || !destinataire) {
+        throw Object.assign(new Error("Renseignez le matricule, l’heure de sortie, la désignation, le nombre, la facture et la destination."), { status: 400 });
       }
       const result = await client.query(
         `INSERT INTO flux_logistique
            (date_operation, type_flux, camion, immatriculation_vehicule, vehicule,
-            heure_sortie, designation, nbr, facture, document, site_id, utilisateur_id)
-         VALUES ($1::date, 'DECHARGEMENT', $2, $2, $2, $3::time, $4, $5, $6, $6, $7::uuid, $8::uuid)
+            heure_sortie, designation, nbr, facture, document, destinataire, site_id, utilisateur_id)
+         VALUES ($1::date, 'DECHARGEMENT', $2, $2, $2, $3::time, $4, $5, $6, $6, $7, $8::uuid, $9::uuid)
          RETURNING id, cree_le AS "createdAt"`,
-        [date, immatriculation, heureSortie, designation, nbr, facture, siteId, userId],
+        [date, immatriculation, heureSortie, designation, nbr, facture, destinataire, siteId, userId],
       );
       await client.query("COMMIT");
       return json(response, 201, {
         entry: {
           ...result.rows[0], date, type, immatriculationVehicule: immatriculation,
-          heureSortie, designation, nbr, facture, siteName: site.nom, siteType: site.type_site,
+          heureSortie, designation, nbr, facture, destinataire, siteName: site.nom, siteType: site.type_site,
         },
       });
     }
@@ -542,9 +544,10 @@ export async function updateTruckLogisticsEntry(request, response, pool, userId,
       const designation = cleanText(body.designation, 20000);
       const nbr = cleanText(body.nbr, 255);
       const facture = cleanText(body.facture, 160);
+      const destinataire = cleanText(body.destinataire, 255);
       if (!validDate(date) || !immatriculation || !timePattern.test(heureSortie)
-        || !designation || !nbr || !/^\d{1,4}$/.test(facture)) {
-        return json(response, 400, { error: "Renseignez une date, un matricule, une heure de sortie, une désignation, un nombre et une facture de 1 à 4 chiffres." });
+        || !designation || !nbr || !/^\d{1,4}$/.test(facture) || !destinataire) {
+        return json(response, 400, { error: "Renseignez la date, le matricule, l’heure de sortie, la désignation, le nombre, la facture et la destination." });
       }
 
       await client.query("BEGIN");
@@ -553,13 +556,13 @@ export async function updateTruckLogisticsEntry(request, response, pool, userId,
       const result = await client.query(
         `UPDATE flux_logistique
          SET date_operation = $2::date, camion = $3, immatriculation_vehicule = $3, vehicule = $3,
-             heure_sortie = $4::time, designation = $5, nbr = $6, facture = $7, document = $7
-         WHERE id = $1::uuid AND site_id = $8::uuid AND type_flux = 'DECHARGEMENT'
+             heure_sortie = $4::time, designation = $5, nbr = $6, facture = $7, document = $7, destinataire = $8
+         WHERE id = $1::uuid AND site_id = $9::uuid AND type_flux = 'DECHARGEMENT'
          RETURNING id, date_operation::text AS date, type_flux AS type,
                    immatriculation_vehicule AS "immatriculationVehicule",
                    to_char(heure_sortie, 'HH24:MI') AS "heureSortie",
-                   designation, nbr, facture`,
-        [entryId, date, immatriculation, heureSortie, designation, nbr, facture, siteId],
+                   designation, nbr, facture, destinataire`,
+        [entryId, date, immatriculation, heureSortie, designation, nbr, facture, destinataire, siteId],
       );
       if (!result.rows[0]) {
         await client.query("ROLLBACK");
