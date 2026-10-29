@@ -57,6 +57,8 @@ model Site {
   truckChecklists         TruckChecklist[]
   registreOrdures         RegistreOrdure[]
   registreFerrailles      RegistreFerraille[]
+  mouvementsVelos         MouvementVelo[]
+  mouvementsMoto          MouvementMoto[]
 
   @@map("site")
 }
@@ -94,6 +96,8 @@ model Utilisateur {
   truckChecklists         TruckChecklist[]
   registreOrdures         RegistreOrdure[]
   registreFerrailles      RegistreFerraille[]
+  mouvementsVelos         MouvementVelo[]
+  mouvementsMoto          MouvementMoto[]
 
   @@index([siteId], map: "idx_utilisateur_site")
   @@map("utilisateur")
@@ -593,6 +597,42 @@ model RegistreFerraille {
 
   @@index([siteId, dateOperation, heure], map: "idx_registre_ferrailles_site_date")
   @@map("registre_ferrailles")
+}
+
+model MouvementVelo {
+  id            String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  creeLe        DateTime    @default(now()) @map("cree_le") @db.Timestamp(6)
+  dateOperation DateTime    @map("date_operation") @db.Date
+  heureEntree   DateTime    @map("heure_entree") @db.Time(0)
+  heureSortie   DateTime?   @map("heure_sortie") @db.Time(0)
+  matricule     String      @db.VarChar(50)
+  prenom        String      @db.VarChar(100)
+  section       String      @db.VarChar(100)
+  marqueVelo    String      @map("marque_velo") @db.VarChar(255)
+  siteId        String      @map("site_id") @db.Uuid
+  utilisateurId String      @map("utilisateur_id") @db.Uuid
+  site          Site        @relation(fields: [siteId], references: [id], onDelete: Restrict, map: "fk_mouvement_velo_site")
+  utilisateur   Utilisateur @relation(fields: [utilisateurId], references: [id], onDelete: Restrict, map: "fk_mouvement_velo_utilisateur")
+
+  @@index([siteId, dateOperation, heureEntree], map: "idx_mouvement_velo_site_date")
+  @@map("mouvement_velo")
+}
+
+model MouvementMoto {
+  id            String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  creeLe        DateTime    @default(now()) @map("cree_le") @db.Timestamp(6)
+  dateOperation DateTime    @map("date_operation") @db.Date
+  heureEntree   DateTime    @map("heure_entree") @db.Time(0)
+  moto          String      @db.VarChar(255)
+  observation   String      @db.Text
+  heureSortie   DateTime?   @map("heure_sortie") @db.Time(0)
+  siteId        String      @map("site_id") @db.Uuid
+  utilisateurId String      @map("utilisateur_id") @db.Uuid
+  site          Site        @relation(fields: [siteId], references: [id], onDelete: Restrict, map: "fk_mouvement_moto_site")
+  utilisateur   Utilisateur @relation(fields: [utilisateurId], references: [id], onDelete: Restrict, map: "fk_mouvement_moto_utilisateur")
+
+  @@index([siteId, dateOperation, heureEntree], map: "idx_mouvement_moto_site_date")
+  @@map("mouvement_moto")
 }
 
 model SignalementLogistique {
