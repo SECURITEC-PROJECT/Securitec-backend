@@ -97,7 +97,7 @@ export async function handleAccessControl(request, response, pathname) {
     if (request.method === "GET") {
       try {
       const result = await pool.query(
-        `SELECT k.id, k.date_suivi AS date, k.lieu,
+        `SELECT k.id, k.date_suivi::text AS date, k.lieu,
           k.nom_personne AS "lastName", k.prenom_personne AS "firstName",
           k.matricule_personne AS matricule, k.type_cle AS "keyType", k.nombre_cles AS quantity,
           to_char(k.heure_sortie,'HH24:MI') AS "departureTime",

@@ -38,6 +38,7 @@ function validate(body) {
   const heure = cleanText(body.heure, 5);
   const matricule = cleanText(body.matricule, 100);
   const personne = cleanText(body.personne, 255);
+  const demandeur = cleanText(body.demandeur, 255);
   const fonction = cleanText(body.fonction, 40);
   const resultat = cleanText(body.resultat, 20);
   const civilite = cleanText(body.civilite, 10);
@@ -59,7 +60,7 @@ function validate(body) {
     throw Object.assign(new Error("Vérifiez la date, l’heure, les informations de la personne testée, le résultat, le taux et les informations du testeur."), { status: 400 });
   }
   return {
-    date, heure, matricule, personne, fonction, resultat, civilite, typeAppareil, tauxMesure,
+    date, heure, matricule, personne, demandeur, fonction, resultat, civilite, typeAppareil, tauxMesure,
     testeurNom, testeurMatricule, testeurFonction,
     temoinNom, temoinMatricule, temoinFonction, temoin2Nom, temoin2Matricule, temoin2Fonction,
   };
@@ -68,6 +69,7 @@ function validate(body) {
 const selectEntry = `
   SELECT c.id, c.date_controle::text AS date, to_char(c.heure, 'HH24:MI') AS heure,
          c.matricule, c.personne, c.fonction, c.resultat,
+         c.demandeur,
          c.taux_mesure AS "tauxMesure", c.civilite, c.type_appareil AS "typeAppareil",
          c.testeur_nom AS "testeurNom", c.testeur_matricule AS "testeurMatricule",
          c.testeur_fonction AS "testeurFonction",
@@ -104,15 +106,15 @@ export async function createAlcoholCheck(request, response, pool, userId) {
     const result = await pool.query(
       `INSERT INTO controle_alcoolemie
          (date_controle, heure, matricule, personne, fonction, resultat,
-          appartenance, type_demande, taux_mesure, civilite, type_appareil,
+          appartenance, demandeur, type_demande, taux_mesure, civilite, type_appareil,
           testeur_nom, testeur_matricule, testeur_fonction,
           temoin_nom, temoin_matricule, temoin_fonction,
           temoin2_nom, temoin2_matricule, temoin2_fonction, site_id, utilisateur_id)
-       VALUES ($1::date, $2::time, $3, $4, $5, $6, 'STAR', 'Test ordinaire (Entrée/Sortie)',
-          $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19::uuid, $20::uuid)
+       VALUES ($1::date, $2::time, $3, $4, $5, $6, 'STAR', $7, 'Test ordinaire (Entrée/Sortie)',
+          $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20::uuid, $21::uuid)
        RETURNING id`,
       [entry.date, entry.heure, entry.matricule, entry.personne, entry.fonction, entry.resultat,
-        entry.tauxMesure, entry.civilite, entry.typeAppareil, entry.testeurNom, entry.testeurMatricule,
+        entry.demandeur || null, entry.tauxMesure, entry.civilite, entry.typeAppareil, entry.testeurNom, entry.testeurMatricule,
         entry.testeurFonction, entry.temoinNom, entry.temoinMatricule, entry.temoinFonction,
         entry.temoin2Nom, entry.temoin2Matricule, entry.temoin2Fonction, siteId, userId],
     );
@@ -136,15 +138,15 @@ export async function updateAlcoholCheck(request, response, pool, userId, entryI
     const result = await pool.query(
       `UPDATE controle_alcoolemie
        SET date_controle = $2::date, heure = $3::time, matricule = $4,
-           personne = $5, fonction = $6, resultat = $7, taux_mesure = $8,
-           civilite = $9, type_appareil = $10, testeur_nom = $11, testeur_matricule = $12,
-           testeur_fonction = $13, temoin_nom = $14, temoin_matricule = $15,
-           temoin_fonction = $16, temoin2_nom = $17, temoin2_matricule = $18,
-           temoin2_fonction = $19
-       WHERE id = $1::uuid AND site_id = $20::uuid
+           personne = $5, demandeur = $6, fonction = $7, resultat = $8, taux_mesure = $9,
+           civilite = $10, type_appareil = $11, testeur_nom = $12, testeur_matricule = $13,
+           testeur_fonction = $14, temoin_nom = $15, temoin_matricule = $16,
+           temoin_fonction = $17, temoin2_nom = $18, temoin2_matricule = $19,
+           temoin2_fonction = $20
+       WHERE id = $1::uuid AND site_id = $21::uuid
        RETURNING id`,
-      [entryId, entry.date, entry.heure, entry.matricule, entry.personne, entry.fonction,
-        entry.resultat, entry.tauxMesure, entry.civilite, entry.typeAppareil, entry.testeurNom,
+      [entryId, entry.date, entry.heure, entry.matricule, entry.personne, entry.demandeur || null,
+        entry.fonction, entry.resultat, entry.tauxMesure, entry.civilite, entry.typeAppareil, entry.testeurNom,
         entry.testeurMatricule, entry.testeurFonction, entry.temoinNom, entry.temoinMatricule,
         entry.temoinFonction, entry.temoin2Nom, entry.temoin2Matricule, entry.temoin2Fonction, siteId],
     );
