@@ -97,6 +97,23 @@ async function requireRegisteredDriverName(pool, siteId, nomPrenom) {
   }
 }
 
+async function requireDriverForMatricule(pool, siteId, matricule, nomPrenom) {
+  const result = await pool.query(
+    `SELECT 1 FROM chauffeur
+     WHERE site_id = $1::uuid
+       AND LOWER(BTRIM(matricule)) = LOWER($2)
+       AND LOWER(BTRIM(nom_prenom)) = LOWER($3)
+     LIMIT 1`,
+    [siteId, matricule, nomPrenom],
+  );
+  if (!result.rows[0]) {
+    throw Object.assign(
+      new Error("Le chauffeur sélectionné ne correspond pas à ce matricule dans le module Chauffeurs."),
+      { status: 400 },
+    );
+  }
+}
+
 export async function getLogisticsEntries(request, response, pool, userId) {
   try {
     const account = await getAccount(pool, userId);
@@ -197,6 +214,7 @@ export async function createStarParticulierLoading(request, response, pool, user
     await client.query("BEGIN");
     const account = await getAccount(client, userId);
     const siteId = await resolveSite(client, account, body);
+    await requireDriverForMatricule(client, siteId, entry.camion, entry.nomChauffeur);
     const result = await client.query(
       `INSERT INTO flux_logistique
          (date_operation, type_flux, heure_arrivee, heure_sortie, camion, proprietaire, nom_chauffeur,
@@ -235,6 +253,7 @@ export async function updateStarParticulierLoading(request, response, pool, user
     await client.query("BEGIN");
     const account = await getAccount(client, userId);
     const siteId = await resolveSite(client, account, body);
+    await requireDriverForMatricule(client, siteId, entry.camion, entry.nomChauffeur);
     const result = await client.query(
       `UPDATE flux_logistique
        SET heure_arrivee = $2::time, heure_sortie = $3::time, camion = $4,
