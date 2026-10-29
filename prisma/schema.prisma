@@ -54,6 +54,7 @@ model Site {
   pointagesApsNuit        PointageApsNuit[]
   configurationsPostesAps ConfigurationPostesAps[]
   consignesJournal        ConsigneJournal[]
+  chauffeurs              Chauffeur[]
   truckChecklists         TruckChecklist[]
   registreOrdures         RegistreOrdure[]
   registreFerrailles      RegistreFerraille[]
@@ -97,6 +98,7 @@ model Utilisateur {
   pointagesApsNuit        PointageApsNuit[]
   configurationsPostesAps ConfigurationPostesAps[]
   consignesJournal        ConsigneJournal[]
+  chauffeurs              Chauffeur[]
   truckChecklists         TruckChecklist[]
   registreOrdures         RegistreOrdure[]
   registreFerrailles      RegistreFerraille[]
@@ -948,4 +950,24 @@ model DocumentSite {
 
   @@index([siteId, creeLe(sort: Desc)], map: "document_site_site_id_cree_le_idx")
   @@map("document_site")
+}
+
+model Chauffeur {
+  id                    String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  nomPrenom             String      @map("nom_prenom") @db.VarChar(255)
+  telephone             String?     @db.VarChar(40)
+  cin                   String?     @db.VarChar(80)
+  numeroPermis          String?     @map("numero_permis") @db.VarChar(100)
+  expirationPermis      DateTime?   @map("expiration_permis") @db.Date
+  vehicule              String?     @db.VarChar(160)
+  matricule             String?     @db.VarChar(40)
+  siteId                String      @map("site_id") @db.Uuid
+  utilisateurId         String      @map("utilisateur_id") @db.Uuid
+  creeLe                DateTime    @default(now()) @map("cree_le") @db.Timestamptz(6)
+  modifieLe             DateTime    @default(now()) @map("modifie_le") @db.Timestamptz(6)
+  site                  Site        @relation(fields: [siteId], references: [id], onDelete: Cascade, map: "chauffeur_site_id_fkey")
+  utilisateur           Utilisateur @relation(fields: [utilisateurId], references: [id], onDelete: Restrict, map: "chauffeur_utilisateur_id_fkey")
+
+  @@index([siteId, nomPrenom], map: "chauffeur_site_nom_idx")
+  @@map("chauffeur")
 }

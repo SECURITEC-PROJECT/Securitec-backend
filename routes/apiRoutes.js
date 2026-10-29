@@ -3,6 +3,7 @@ import { getRequestUser } from "../utils/auth.js";
 import { handleAnomalieRoutes } from "./anomalieRoutes.js";
 import { handleAuthRoutes } from "./authRoutes.js";
 import { handleCameraRoutes } from "./cameraRoutes.js";
+import { handleChauffeurRoutes } from "./chauffeurRoutes.js";
 import { handleControlRoutes } from "./controlRoutes.js";
 import { handleCourrierRoutes } from "./courrierRoutes.js";
 import { handleConsigneJournalRoutes } from "./consigneJournalRoutes.js";
@@ -48,6 +49,7 @@ export async function handleApiRoutes(request, response, pool, jwtSecret) {
   if (await handleMovementRoutes(request, response, pool, pathname, jwtSecret)) return true;
   if (await handleProviderRoutes(request, response, pool, pathname, jwtSecret)) return true;
   if (await handleCameraRoutes(request, response, pool, pathname, jwtSecret)) return true;
+  if (await handleChauffeurRoutes(request, response, pool, pathname, jwtSecret)) return true;
   if (await handleDocumentRoutes(request, response, pool, pathname, jwtSecret)) return true;
   if (await handleSiteRoutes(request, response, pool, pathname, jwtSecret)) return true;
   if (await handleEntryExitRoutes(request, response, pool, pathname, jwtSecret)) return true;
