@@ -20,6 +20,7 @@ import { handleMaterielsStarRoutes } from "./materielsStarRoutes.js";
 import { handleVisitorQuestionnaireRoutes } from "./visitorQuestionnaireRoutes.js";
 import { handleObjectDeclarationRoutes } from "./objectDeclarationRoutes.js";
 import { handleApsAttendanceRoutes } from "./apsAttendanceRoutes.js";
+import { handleApsMovementRoutes } from "./apsMovementRoutes.js";
 import { handlePatrolRoutes } from "./patrolRoutes.js";
 import { handleShiftRoutes } from "./shiftRoutes.js";
 import { handleSiteRoutes } from "./siteRoutes.js";
@@ -63,6 +64,7 @@ export async function handleApiRoutes(request, response, pool, jwtSecret) {
   if (await handleVigilanceRoutes(request, response, pool, pathname, jwtSecret)) return true;
   if (await handleMainCouranteRoutes(request, response, pool, pathname, jwtSecret)) return true;
   if (await handleApsAttendanceRoutes(request, response, pool, pathname, jwtSecret)) return true;
+  if (await handleApsMovementRoutes(request, response, pool, pathname, jwtSecret)) return true;
   if (await handleCrjRoutes(request, response, pool, pathname, jwtSecret)) return true;
   if (await handleAnomalieRoutes(request, response, pool, pathname, jwtSecret)) return true;
 

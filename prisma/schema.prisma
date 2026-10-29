@@ -59,6 +59,8 @@ model Site {
   registreFerrailles      RegistreFerraille[]
   mouvementsVelos         MouvementVelo[]
   mouvementsMoto          MouvementMoto[]
+  mouvementsAps           MouvementAps[]
+  configurationsPostesMouvementAps ConfigurationPostesMouvementAps[]
 
   @@map("site")
 }
@@ -98,6 +100,8 @@ model Utilisateur {
   registreFerrailles      RegistreFerraille[]
   mouvementsVelos         MouvementVelo[]
   mouvementsMoto          MouvementMoto[]
+  mouvementsAps           MouvementAps[]
+  configurationsPostesMouvementAps ConfigurationPostesMouvementAps[]
 
   @@index([siteId], map: "idx_utilisateur_site")
   @@map("utilisateur")
@@ -633,6 +637,35 @@ model MouvementMoto {
 
   @@index([siteId, dateOperation, heureEntree], map: "idx_mouvement_moto_site_date")
   @@map("mouvement_moto")
+}
+
+model MouvementAps {
+  id            String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  siteId        String      @map("site_id") @db.Uuid
+  datePointage  DateTime    @map("date_pointage") @db.Date
+  service       String      @db.VarChar(10)
+  data          Json        @db.JsonB
+  utilisateurId String      @map("utilisateur_id") @db.Uuid
+  updatedAt     DateTime    @default(now()) @map("updated_at") @db.Timestamp(6)
+  site          Site        @relation(fields: [siteId], references: [id], onDelete: Restrict, map: "fk_mouvement_aps_site")
+  utilisateur   Utilisateur @relation(fields: [utilisateurId], references: [id], onDelete: Restrict, map: "fk_mouvement_aps_utilisateur")
+
+  @@unique([siteId, datePointage, service], map: "uq_mouvement_aps_site_date_service")
+  @@index([siteId, datePointage], map: "idx_mouvement_aps_site_date")
+  @@map("mouvement_aps")
+}
+
+model ConfigurationPostesMouvementAps {
+  id            String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  siteId        String      @map("site_id") @db.Uuid
+  postes        Json        @db.JsonB
+  utilisateurId String      @map("utilisateur_id") @db.Uuid
+  updatedAt     DateTime    @default(now()) @map("updated_at") @db.Timestamp(6)
+  site          Site        @relation(fields: [siteId], references: [id], onDelete: Restrict, map: "fk_configuration_postes_mouvement_aps_site")
+  utilisateur   Utilisateur @relation(fields: [utilisateurId], references: [id], onDelete: Restrict, map: "fk_configuration_postes_mouvement_aps_utilisateur")
+
+  @@unique([siteId], map: "uq_configuration_postes_mouvement_aps_site")
+  @@map("configuration_postes_mouvement_aps")
 }
 
 model SignalementLogistique {
