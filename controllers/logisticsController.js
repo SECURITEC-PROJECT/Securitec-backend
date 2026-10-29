@@ -67,12 +67,13 @@ export async function getLogisticsEntries(request, response, pool, userId) {
       `SELECT f.id, f.date_operation::text AS date, f.type_flux AS type,
               f.camion, f.transporteur, f.document, f.plomb,
               to_char(COALESCE(f.heure_sortie, f.heure_arrivee), 'HH24:MI') AS "heureSortie", f.numero_pesage AS "numeroPesage",
+              to_char(f.heure_sortie, 'HH24:MI') AS "heureFin",
               COALESCE(f.facture, f.document) AS facture, f.type_dechet AS "typeDechet", f.poids, f.destinataire,
               COALESCE(f.vehicule, f.camion) AS vehicule,
               to_char(f.heure_arrivee, 'HH24:MI') AS "heureArrivee",
               COALESCE(f.immatriculation_vehicule, f.vehicule, f.camion) AS "immatriculationVehicule",
               f.nom_chauffeur AS "nomChauffeur", f.nbr,
-              f.numero_titre AS "numeroTitre", f.provenance,
+              f.numero_titre AS "numeroTitre", f.plomb, f.provenance,
               f.details_bouteilles AS "detailsBouteilles",
               to_char(f.heure_pointe, 'HH24:MI') AS "heurePointe", f.designation, f.provenance,
               f.titre, f.cree, f.chauffeur, f.magasinier,
@@ -100,10 +101,11 @@ export async function getStarParticulierLoadings(request, response, pool, userId
     const result = await pool.query(
       `SELECT f.id, f.site_id AS "siteId", f.date_operation::text AS date,
               f.type_flux AS type, f.type_chargement AS "typeChargement",
+              to_char(f.heure_arrivee, 'HH24:MI') AS "heureDebut",
               to_char(f.heure_sortie, 'HH24:MI') AS "heureSortie", f.camion,
               f.proprietaire, f.nom_chauffeur AS "nomChauffeur", f.designation,
               f.quantite_texte AS "quantiteTexte", f.poids, f.destinataire,
-              f.lp, f.titre, f.plomb, s.nom AS "siteName"
+              f.provenance, f.lp, f.titre, f.plomb, s.nom AS "siteName"
        FROM flux_logistique f JOIN site s ON s.id = f.site_id
        WHERE f.site_id = $1::uuid
          AND f.type_flux = 'CHARGEMENT'
@@ -119,6 +121,7 @@ export async function getStarParticulierLoadings(request, response, pool, userId
 }
 
 function validateStarParticulierLoading(body) {
+  const heureDebut = cleanText(body.heureDebut, 5);
   const heureSortie = cleanText(body.heureSortie, 5);
   const camion = cleanText(body.camion, 160);
   const proprietaire = cleanText(body.proprietaire, 255);
@@ -131,17 +134,19 @@ function validateStarParticulierLoading(body) {
     : Number.NaN;
   const poidsHasValidPrecision = /^\d{1,10}(?:\.\d{1,2})?$/.test(String(poidsInput));
   const destinataire = cleanText(body.destinataire, 255);
+  const provenance = cleanText(body.provenance, 255);
   const lp = cleanText(body.lp, 6);
   const titre = cleanText(body.titre, 8);
   const plomb = cleanText(body.plomb, 8);
   const typeChargement = cleanText(body.typeChargement, 20).toUpperCase();
-  if (!timePattern.test(heureSortie) || !camion || !proprietaire || !nomChauffeur || !designation
+  if (!timePattern.test(heureDebut) || !timePattern.test(heureSortie)
+    || !camion || !proprietaire || !nomChauffeur || !designation
     || !quantiteTexte || !poidsHasValidPrecision || !Number.isFinite(poids) || poids < 0 || poids > 9999999999.99
-    || !destinataire || !/^\d{1,6}$/.test(lp) || !/^\d{1,8}$/.test(titre)
+    || !destinataire || !provenance || !/^\d{1,6}$/.test(lp) || !/^\d{1,8}$/.test(titre)
     || !/^\d{1,8}$/.test(plomb) || !["STAR", "PARTICULIER"].includes(typeChargement)) {
-    throw Object.assign(new Error("Vérifiez le type de chargement, l’heure, le véhicule, le propriétaire, le chauffeur, la désignation, la quantité, le poids, la destination et les numéros LP/titre/plomb."), { status: 400 });
+    throw Object.assign(new Error("Vérifiez le type de chargement, les heures HD/HF, le véhicule, le propriétaire, le chauffeur, la désignation, la quantité, le poids, la destination, la provenance et les numéros LP/titre/plomb."), { status: 400 });
   }
-  return { heureSortie, camion, proprietaire, nomChauffeur, designation, quantiteTexte, poids, destinataire, lp, titre, plomb, typeChargement };
+  return { heureDebut, heureSortie, camion, proprietaire, nomChauffeur, designation, quantiteTexte, poids, destinataire, provenance, lp, titre, plomb, typeChargement };
 }
 
 export async function createStarParticulierLoading(request, response, pool, userId) {
@@ -155,18 +160,19 @@ export async function createStarParticulierLoading(request, response, pool, user
     const siteId = await resolveSite(client, account, body);
     const result = await client.query(
       `INSERT INTO flux_logistique
-         (date_operation, type_flux, heure_sortie, camion, proprietaire, nom_chauffeur,
-          designation, quantite_texte, poids, destinataire, lp, titre, plomb,
+         (date_operation, type_flux, heure_arrivee, heure_sortie, camion, proprietaire, nom_chauffeur,
+          designation, quantite_texte, poids, destinataire, provenance, lp, titre, plomb,
           type_chargement, site_id, utilisateur_id)
-       VALUES (timezone('Indian/Antananarivo', CURRENT_TIMESTAMP)::date, 'CHARGEMENT', $1::time,
-          $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13::uuid, $14::uuid)
+       VALUES (timezone('Indian/Antananarivo', CURRENT_TIMESTAMP)::date, 'CHARGEMENT', $1::time, $2::time,
+          $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15::uuid, $16::uuid)
        RETURNING id, site_id AS "siteId", date_operation::text AS date, type_flux AS type,
+          to_char(heure_arrivee, 'HH24:MI') AS "heureDebut",
           to_char(heure_sortie, 'HH24:MI') AS "heureSortie", camion, proprietaire,
           nom_chauffeur AS "nomChauffeur", designation, quantite_texte AS "quantiteTexte",
-          poids, destinataire, lp, titre, plomb, type_chargement AS "typeChargement"`,
-      [entry.heureSortie, entry.camion, entry.proprietaire, entry.nomChauffeur, entry.designation,
-        entry.quantiteTexte, entry.poids, entry.destinataire, entry.lp, entry.titre, entry.plomb,
-        entry.typeChargement, siteId, userId],
+          poids, destinataire, provenance, lp, titre, plomb, type_chargement AS "typeChargement"`,
+      [entry.heureDebut, entry.heureSortie, entry.camion, entry.proprietaire, entry.nomChauffeur,
+        entry.designation, entry.quantiteTexte, entry.poids, entry.destinataire, entry.provenance,
+        entry.lp, entry.titre, entry.plomb, entry.typeChargement, siteId, userId],
     );
     const site = await client.query("SELECT nom AS \"siteName\" FROM site WHERE id = $1::uuid", [siteId]);
     await client.query("COMMIT");
@@ -192,18 +198,21 @@ export async function updateStarParticulierLoading(request, response, pool, user
     const siteId = await resolveSite(client, account, body);
     const result = await client.query(
       `UPDATE flux_logistique
-       SET heure_sortie = $2::time, camion = $3, proprietaire = $4, nom_chauffeur = $5,
-           designation = $6, quantite_texte = $7, poids = $8, destinataire = $9,
-           lp = $10, titre = $11, plomb = $12, type_chargement = $13
-       WHERE id = $1::uuid AND site_id = $14::uuid
+       SET heure_arrivee = $2::time, heure_sortie = $3::time, camion = $4,
+           proprietaire = $5, nom_chauffeur = $6, designation = $7,
+           quantite_texte = $8, poids = $9, destinataire = $10, provenance = $11,
+           lp = $12, titre = $13, plomb = $14, type_chargement = $15
+       WHERE id = $1::uuid AND site_id = $16::uuid
          AND type_flux = 'CHARGEMENT' AND type_chargement IS NOT NULL
        RETURNING id, site_id AS "siteId", date_operation::text AS date, type_flux AS type,
+          to_char(heure_arrivee, 'HH24:MI') AS "heureDebut",
           to_char(heure_sortie, 'HH24:MI') AS "heureSortie", camion, proprietaire,
           nom_chauffeur AS "nomChauffeur", designation, quantite_texte AS "quantiteTexte",
-          poids, destinataire, lp, titre, plomb, type_chargement AS "typeChargement"`,
-      [entryId, entry.heureSortie, entry.camion, entry.proprietaire, entry.nomChauffeur,
-        entry.designation, entry.quantiteTexte, entry.poids, entry.destinataire, entry.lp,
-        entry.titre, entry.plomb, entry.typeChargement, siteId],
+          poids, destinataire, provenance, lp, titre, plomb, type_chargement AS "typeChargement"`,
+      [entryId, entry.heureDebut, entry.heureSortie, entry.camion, entry.proprietaire,
+        entry.nomChauffeur, entry.designation, entry.quantiteTexte, entry.poids,
+        entry.destinataire, entry.provenance, entry.lp, entry.titre, entry.plomb,
+        entry.typeChargement, siteId],
     );
     if (!result.rows[0]) {
       await client.query("ROLLBACK");
@@ -265,9 +274,12 @@ export async function createLogisticsEntry(request, response, pool, userId) {
 
     if (type === "BOUTEILLES_VIDES") {
       const time = cleanText(body.heureArrivee, 5);
+      const endTimeInput = typeof body.heureFin === "string" ? body.heureFin.trim() : "";
+      const endTime = endTimeInput || null;
       const immatriculation = cleanText(body.immatriculationVehicule, 100);
       const nomChauffeur = cleanText(body.nomChauffeur, 255);
       const numeroTitre = cleanText(body.numeroTitre, 100);
+      const plomb = cleanText(body.plomb, 100);
       const provenance = typeof body.provenance === "number"
         ? String(body.provenance)
         : cleanText(body.provenance, 100);
@@ -284,7 +296,8 @@ export async function createLogisticsEntry(request, response, pool, userId) {
         seenDesignations.add(designation);
         return { designation, quantite: quantity };
       });
-      if (!timePattern.test(time) || !immatriculation || !nomChauffeur || !/^\d+$/.test(numeroTitre)
+      if (!timePattern.test(time) || (endTime && !timePattern.test(endTime))
+        || !immatriculation || !nomChauffeur || !/^\d+$/.test(numeroTitre)
         || !/^\d+$/.test(provenance)
         || !Number.isFinite(poids) || poids <= 0 || poids > 9999999999.99
         || normalizedDetails.length === 0 || normalizedDetails.length > bottleDesignations.size) {
@@ -292,18 +305,18 @@ export async function createLogisticsEntry(request, response, pool, userId) {
       }
       const result = await client.query(
         `INSERT INTO flux_logistique
-           (date_operation, type_flux, heure_arrivee, immatriculation_vehicule,
-            nom_chauffeur, numero_titre, provenance, poids, details_bouteilles, site_id, utilisateur_id)
-         VALUES ($1::date, 'BOUTEILLES_VIDES', $2::time, $3, $4, $5, $6, $7, $8::jsonb, $9::uuid, $10::uuid)
+           (date_operation, type_flux, heure_arrivee, heure_sortie, immatriculation_vehicule,
+            nom_chauffeur, numero_titre, plomb, provenance, poids, details_bouteilles, site_id, utilisateur_id)
+         VALUES ($1::date, 'BOUTEILLES_VIDES', $2::time, $3::time, $4, $5, $6, $7, $8, $9, $10::jsonb, $11::uuid, $12::uuid)
          RETURNING id, cree_le AS "createdAt"`,
-        [date, time, immatriculation, nomChauffeur, numeroTitre, provenance, poids,
+        [date, time, endTime, immatriculation, nomChauffeur, numeroTitre, plomb, provenance, poids,
           JSON.stringify(normalizedDetails), siteId, userId],
       );
       await client.query("COMMIT");
       return json(response, 201, {
         entry: {
-          ...result.rows[0], date, type, heureArrivee: time,
-          immatriculationVehicule: immatriculation, nomChauffeur, numeroTitre, provenance,
+          ...result.rows[0], date, type, heureArrivee: time, heureFin: endTime,
+          immatriculationVehicule: immatriculation, nomChauffeur, numeroTitre, plomb, provenance,
           poids, detailsBouteilles: normalizedDetails,
           siteName: site.nom, siteType: site.type_site,
         },
@@ -599,9 +612,12 @@ export async function updateEmptyBottleEntry(request, response, pool, userId, en
     const body = await readJson(request);
     const date = cleanText(body.date, 10);
     const time = cleanText(body.heureArrivee, 5);
+    const endTimeInput = typeof body.heureFin === "string" ? body.heureFin.trim() : "";
+    const endTime = endTimeInput || null;
     const immatriculation = cleanText(body.immatriculationVehicule, 100);
     const nomChauffeur = cleanText(body.nomChauffeur, 255);
     const numeroTitre = cleanText(body.numeroTitre, 100);
+    const plomb = cleanText(body.plomb, 100);
     const provenance = typeof body.provenance === "number"
       ? String(body.provenance)
       : cleanText(body.provenance, 100);
@@ -618,7 +634,8 @@ export async function updateEmptyBottleEntry(request, response, pool, userId, en
       seenDesignations.add(designation);
       return { designation, quantite: quantity };
     });
-    if (!validDate(date) || !timePattern.test(time) || !immatriculation || !nomChauffeur
+    if (!validDate(date) || !timePattern.test(time) || (endTime && !timePattern.test(endTime))
+      || !immatriculation || !nomChauffeur
       || !/^\d+$/.test(numeroTitre) || !/^\d+$/.test(provenance)
       || !Number.isFinite(poids) || poids <= 0 || poids > 9999999999.99
       || normalizedDetails.length === 0 || normalizedDetails.length > bottleDesignations.size) {
@@ -630,12 +647,12 @@ export async function updateEmptyBottleEntry(request, response, pool, userId, en
     const siteId = await resolveSite(client, account, body);
     const result = await client.query(
       `UPDATE flux_logistique
-       SET date_operation = $2::date, heure_arrivee = $3::time,
-           immatriculation_vehicule = $4, nom_chauffeur = $5, numero_titre = $6,
-           provenance = $7, poids = $8, details_bouteilles = $9::jsonb
-       WHERE id = $1::uuid AND site_id = $10::uuid AND type_flux = 'BOUTEILLES_VIDES'
+       SET date_operation = $2::date, heure_arrivee = $3::time, heure_sortie = $4::time,
+           immatriculation_vehicule = $5, nom_chauffeur = $6, numero_titre = $7,
+           plomb = $8, provenance = $9, poids = $10, details_bouteilles = $11::jsonb
+       WHERE id = $1::uuid AND site_id = $12::uuid AND type_flux = 'BOUTEILLES_VIDES'
        RETURNING id`,
-      [entryId, date, time, immatriculation, nomChauffeur, numeroTitre, provenance,
+      [entryId, date, time, endTime, immatriculation, nomChauffeur, numeroTitre, plomb, provenance,
         poids, JSON.stringify(normalizedDetails), siteId],
     );
     if (!result.rows[0]) {
@@ -644,8 +661,8 @@ export async function updateEmptyBottleEntry(request, response, pool, userId, en
     }
     await client.query("COMMIT");
     json(response, 200, { entry: {
-      id: entryId, date, type: "BOUTEILLES_VIDES", heureArrivee: time,
-      immatriculationVehicule: immatriculation, nomChauffeur, numeroTitre, provenance,
+      id: entryId, date, type: "BOUTEILLES_VIDES", heureArrivee: time, heureFin: endTime,
+      immatriculationVehicule: immatriculation, nomChauffeur, numeroTitre, plomb, provenance,
       poids, detailsBouteilles: normalizedDetails,
     } });
   } catch (error) {

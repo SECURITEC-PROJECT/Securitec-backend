@@ -32,7 +32,7 @@ export async function getKeyTracking(request, response, pool, userId) {
   try {
     const siteId = await getUserSiteId(pool, userId, new URL(request.url || "/", `http://${request.headers.host || "localhost"}`).searchParams.get("siteId"));
     const result = await pool.query(
-      `SELECT k.id, k.date_suivi AS date,
+      `SELECT k.id, k.date_suivi::text AS date,
               k.nom_personne AS "lastName", k.prenom_personne AS "firstName",
               k.matricule_personne AS matricule, k.type_cle AS "keyType",
               k.nombre_cles AS quantity,

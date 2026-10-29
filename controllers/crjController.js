@@ -4,10 +4,6 @@
 // ---------------------------------------------------------------------------
 const TZ = "Indian/Antananarivo";
 
-// Types de flux logistiques (comparés sans accents ni majuscules, début de mot)
-const DECHARGEMENT = /^(DECH|RECEP|ENTR)/;
-const CHARGEMENT = /^(CHARG|EXPED|SORT)/;
-
 // Articles du stock extérieur (Agence) : clé du rapport -> début du code article
 const ARTICLES_STOCK = {
   cv12: "CV12",
@@ -29,16 +25,10 @@ const DATE = /^\d{4}-\d{2}-\d{2}$/;
 const fail = (status, message) => Object.assign(new Error(message), { status });
 const txt = (v) => (v === null || v === undefined ? "" : String(v).trim());
 const norm = (v) => txt(v).normalize("NFD").replace(/[\u0300-\u036f]/g, "").toUpperCase();
-const hhmm = (v) => {
-  const m = /(\d{1,2})[:h](\d{2})/.exec(txt(v));
-  return m ? `${m[1].padStart(2, "0")}:${m[2]}` : "";
-};
 const aujourdhui = () => new Intl.DateTimeFormat("en-CA", { timeZone: TZ }).format(new Date());
 
 // Colonne "timestamp sans fuseau" (écrite en UTC par le serveur) -> heure locale
 const local = (col) => `((${col} AT TIME ZONE 'UTC') AT TIME ZONE '${TZ}')`;
-// Colonne "timestamptz" -> heure locale
-const localTz = (col) => `(${col} AT TIME ZONE '${TZ}')`;
 
 // ---------------------------------------------------------------------------
 // Options des sélecteurs (prestataire + site de travail) : UNE seule requête
@@ -117,27 +107,40 @@ SELECT
     WHERE pa.site_id = $1::uuid AND pa.date_pointage = $3::date
   ) AS pointage_aps_nuit_enregistre,
 
-  -- 2 - Clés : perceptions du jour + leur réintégration (via perception_id)
+  -- 2 - Clés : reprend les mêmes champs que le registre Mouvements clés
   COALESCE((
-    SELECT json_agg(k ORDER BY k.created_at) FROM (
-      SELECT sc.id, COALESCE(sc.type_cle, sc.trousse_cle) AS trousse_cle,
-             COALESCE(sc.lieu, '') AS lieu,
+    SELECT json_agg(json_build_object(
+      'date', k.date_suivi,
+      'personne', k.personne,
+      'matricule', k.matricule,
+      'heureSortie', k.heure_sortie,
+      'typeCle', k.type_cle,
+      'nombreCles', k.nombre_cles,
+      'heureRetour', k.heure_retour,
+      'lieu', k.lieu
+    ) ORDER BY k.heure_sortie NULLS LAST, k.created_at)
+    FROM (
+      SELECT sc.id, sc.date_suivi,
              COALESCE(
                NULLIF(TRIM(CONCAT_WS(' ', NULLIF(sc.nom_personne, ''), NULLIF(sc.prenom_personne, ''))), ''),
-               sc.personne_habilitee
-             ) AS personne_habilitee,
-             COALESCE(NULLIF(sc.heure, ''), to_char(sc.heure_sortie, 'HH24:MI')) AS heure,
-             COALESCE(sc.cree_le, sc.created_at) AS created_at,
-             to_char(${localTz("COALESCE(sc.cree_le, sc.created_at)")}, 'HH24:MI') AS heure_saisie,
+               sc.personne_habilitee,
+               ''
+             ) AS personne,
+             COALESCE(sc.matricule_personne, '') AS matricule,
              COALESCE(
-               r.personne_habilitee,
-               NULLIF(TRIM(CONCAT_WS(' ', NULLIF(sc.nom_personne, ''), NULLIF(sc.prenom_personne, ''))), '')
-             ) AS reint_personne,
-             COALESCE(r.heure, to_char(sc.heure_retour, 'HH24:MI')) AS reint_heure,
+               to_char(sc.heure_sortie, 'HH24:MI'),
+               NULLIF(sc.heure, ''),
+               ''
+             ) AS heure_sortie,
+             COALESCE(NULLIF(sc.type_cle, ''), NULLIF(sc.trousse_cle, ''), '') AS type_cle,
+             COALESCE(sc.nombre_cles, 1) AS nombre_cles,
              COALESCE(
-               to_char(${localTz("r.created_at")}, 'HH24:MI'),
-               to_char(sc.heure_retour, 'HH24:MI')
-             ) AS reint_heure_saisie
+               to_char(sc.heure_retour, 'HH24:MI'),
+               r.heure,
+               ''
+             ) AS heure_retour,
+             COALESCE(sc.lieu, '') AS lieu,
+             COALESCE(sc.cree_le, sc.created_at) AS created_at
       FROM suivi_cle sc
       LEFT JOIN LATERAL (
         SELECT r1.personne_habilitee, r1.heure, r1.created_at
@@ -146,34 +149,18 @@ SELECT
         ORDER BY r1.created_at
         LIMIT 1
       ) r ON true
-      CROSS JOIN s
-      CROSS JOIN p
-      WHERE (sc.action = 'Perception' OR sc.type_cle IS NOT NULL)
-    AND sc.date_suivi = $3::date
-        AND (
-          EXISTS (
-            SELECT 1 FROM employe e
-          WHERE UPPER(TRIM(e.matricule)) = UPPER(TRIM(COALESCE(NULLIF(sc.agent_gardien, ''), sc.matricule_personne)))
-            AND (e.site_id = s.id OR (e.site_id IS NULL AND sc.site_id = s.id))
-            AND e.prestataire_id = p.id
-        )
-        OR EXISTS (
-          SELECT 1 FROM prise_de_poste pp2
-          WHERE UPPER(TRIM(pp2.matricule)) = UPPER(TRIM(COALESCE(NULLIF(sc.agent_gardien, ''), sc.matricule_personne)))
-            AND UPPER(TRIM(pp2.site_de_travail)) = UPPER(TRIM(s.nom))
-            AND UPPER(TRIM(pp2.prestataire)) = UPPER(TRIM(p.nom))
-            AND ${local("pp2.started_at")}::date = $3::date
-          )
-        )
+      WHERE sc.site_id = $1::uuid
+        AND sc.date_suivi = $3::date
+        AND (sc.action = 'Perception' OR sc.type_cle IS NOT NULL)
     ) k
   ), '[]'::json) AS cles,
 
   -- 3, 4, 5 - Flux logistiques
   COALESCE((
     SELECT json_agg(f ORDER BY f.cree_le) FROM (
-      SELECT type_flux, camion, immatriculation_vehicule, vehicule, transporteur,
+      SELECT type_flux, type_chargement, camion, immatriculation_vehicule, vehicule, transporteur,
              nom_chauffeur, chauffeur, magasinier, cree, proprietaire,
-             document, facture, numero_titre, titre, plomb,
+             document, facture, numero_titre, titre, plomb, lp,
              article, quantite, categorie_stock, cree_le,
              to_char(heure_arrivee, 'HH24:MI') AS heure_arrivee,
              to_char(heure_sortie, 'HH24:MI') AS heure_sortie,
@@ -200,23 +187,23 @@ SELECT
   -- Alcootests
   COALESCE((
     SELECT json_agg(a ORDER BY a.heure) FROM (
-      SELECT to_char(heure, 'HH24:MI') AS heure, personne, appartenance, demandeur,
-             type_demande, resultat, taux_mesure
-      FROM controle_alcoolemie
-      WHERE site_id = $1::uuid AND date_controle = $3::date
+      SELECT to_char(c.heure, 'HH24:MI') AS heure, c.personne, c.appartenance,
+             c.demandeur, c.resultat
+      FROM controle_alcoolemie c
+      WHERE c.site_id = $1::uuid AND c.date_controle = $3::date
     ) a
   ), '[]'::json) AS alcootests,
 
   -- Rondes
   COALESCE((
     SELECT json_agg(r ORDER BY r.debut) FROM (
-      SELECT nom_parcours, observations,
-             to_char(${local("debut")}, 'HH24:MI') AS debut,
-             to_char(${local("fin")}, 'HH24:MI') AS fin
-      FROM ronde
-      WHERE site_id = $1::uuid
-        AND ${local("debut")} < ($3::date + INTERVAL '1 day')
-        AND COALESCE(${local("fin")}, ${local("debut")}) >= $3::date
+      SELECT r.observations,
+             to_char(${local("r.debut")}, 'HH24:MI') AS debut,
+             to_char(${local("r.fin")}, 'HH24:MI') AS fin
+      FROM ronde r
+      WHERE r.site_id = $1::uuid
+        AND ${local("r.debut")} < ($3::date + INTERVAL '1 day')
+        AND COALESCE(${local("r.fin")}, ${local("r.debut")}) >= $3::date
     ) r
   ), '[]'::json) AS rondes,
 
@@ -328,26 +315,45 @@ export async function generateCrj({ prestataireId, siteId, date }, pool) {
   const chargements = [];
   const stock = Object.fromEntries(Object.keys(ARTICLES_STOCK).map((k) => [k, 0]));
   for (const f of d.flux) {
-    const detailsBouteilles = Array.isArray(f.details_bouteilles)
-      ? f.details_bouteilles.map((b) => `${txt(b.designation)}: ${txt(b.quantite)}`).filter(Boolean).join(", ")
-      : "";
-    const ligne = {
-      camion: txt(f.camion) || txt(f.immatriculation_vehicule) || txt(f.vehicule) || "-",
-      transporteur: txt(f.transporteur) || txt(f.nom_chauffeur) || txt(f.chauffeur) || txt(f.proprietaire) || "-",
-      titre: txt(f.numero_titre) || txt(f.document) || txt(f.titre) || txt(f.facture) || txt(f.numero_pesage) || "-",
-      plomb: txt(f.plomb) || "-",
-      heureDebut: txt(f.heure_arrivee) || txt(f.heure_pointe) || txt(f.heure_sortie) || "-",
-      heureFin: txt(f.heure_sortie) || "-",
-      comptage: txt(f.nbr) || txt(f.quantite_texte) || detailsBouteilles
-        || [txt(f.designation), f.quantite == null ? "" : String(f.quantite), f.poids == null ? "" : `${f.poids} kg`].filter(Boolean).join(" : ")
-        || "-",
-      destination: txt(f.destinataire) || txt(f.provenance) || "-",
-    };
     const type = norm(f.type_flux);
-    if (DECHARGEMENT.test(type) || ["BOUTEILLES_VIDES", "MATIERE_PREMIERE", "DEPOTAGE_FUEL"].includes(type)) {
-      dechargements.push(ligne);
-    } else if (CHARGEMENT.test(type) || type === "DECHETS") {
-      chargements.push(ligne);
+    if (type === "BOUTEILLES_VIDES") {
+      dechargements.push({
+        camion: txt(f.immatriculation_vehicule) || txt(f.vehicule) || txt(f.camion) || "-",
+        transporteur: txt(f.nom_chauffeur) || txt(f.transporteur) || txt(f.chauffeur) || "-",
+        titre: txt(f.numero_titre) || "-",
+        plomb: txt(f.plomb) || "-",
+        heureDebut: txt(f.heure_arrivee) || "-",
+        heureFin: txt(f.heure_sortie) || "-",
+        comptage: Array.isArray(f.details_bouteilles)
+          ? f.details_bouteilles.map((b) => `${txt(b.designation)}: ${txt(b.quantite)}`).filter(Boolean).join(", ") || "-"
+          : "-",
+        provenance: txt(f.provenance) || "-",
+      });
+      continue;
+    }
+
+    if (type === "CHARGEMENT" && ["STAR", "PARTICULIER"].includes(norm(f.type_chargement))) {
+      const chargementDetails = [
+        txt(f.designation),
+        txt(f.quantite_texte),
+        f.poids == null ? "" : `${f.poids} kg`,
+      ].filter(Boolean).join(" · ");
+      chargements.push({
+        camion: txt(f.camion) || "-",
+        transporteur: [
+          norm(f.type_chargement) === "STAR" ? "STAR" : "PARTICULIER",
+          txt(f.proprietaire),
+          txt(f.nom_chauffeur),
+        ].filter(Boolean).join(" · "),
+        titre: [txt(f.lp) ? `LP ${txt(f.lp)}` : "", txt(f.titre) ? `N° ${txt(f.titre)}` : ""].filter(Boolean).join(" · ") || "-",
+        plomb: txt(f.plomb) || "-",
+        heureDebut: txt(f.heure_arrivee) || "-",
+        heureFin: txt(f.heure_sortie) || "-",
+        comptage: chargementDetails || "-",
+        provenance: txt(f.provenance) || "-",
+        destination: txt(f.destinataire) || "-",
+      });
+      continue;
     }
   }
 
@@ -368,15 +374,13 @@ export async function generateCrj({ prestataireId, siteId, date }, pool) {
     isStar: /^STAR/.test(norm(a.appartenance)),
     demandeur: txt(a.demandeur) || undefined,
     resultat: txt(a.resultat),
-    typeControle: txt(a.type_demande),
-    taux: a.taux_mesure === null || a.taux_mesure === undefined ? undefined : String(a.taux_mesure),
   }));
 
   // --- Rondes ---
   const rondes = d.rondes.map((r) => ({
     debut: r.debut || "-",
     fin: r.fin || "-",
-    obs: txt(r.observations) || txt(r.nom_parcours) || "-",
+    obs: txt(r.observations) || "-",
   }));
 
   // --- Points de vigilance ---
@@ -441,7 +445,7 @@ export async function generateCrj({ prestataireId, siteId, date }, pool) {
     agentsPostes,
     pointageApsJourEnregistre: d.pointage_aps_jour_enregistre,
     pointageApsNuitEnregistre: d.pointage_aps_nuit_enregistre,
-    cles: construireCles(d.cles),
+    cles: d.cles ?? [],
     dechargements,
     chargements,
     stockExterieur: siteType === "Agence" ? stock : undefined,
@@ -452,44 +456,4 @@ export async function generateCrj({ prestataireId, siteId, date }, pool) {
     violations,
     divers,
   };
-}
-
-// ---------------------------------------------------------------------------
-// Clés : une ligne par trousseau, avec les cycles MATIN et APRES-MIDI.
-// Le cycle d'une clé dépend de l'heure de sa perception (avant 12h = matin).
-// Sa réintégration (reint_*) est rattachée à la même ligne et au même cycle.
-// Une clé appartient au site/prestataire de son agent gardien (matricule).
-// ---------------------------------------------------------------------------
-function construireCles(perceptions) {
-  const lignes = [];
-  const index = new Map(); // trousseau -> lignes existantes
-
-  for (const p of perceptions) {
-    const heurePerception = hhmm(p.heure) || p.heure_saisie;
-    const cycle = parseInt(heurePerception.slice(0, 2), 10) < 12 ? "Matin" : "ApresMidi";
-
-    const trousseau = txt(p.trousse_cle);
-    const lieu = txt(p.lieu);
-    const libelle = lieu ? `${lieu} (${trousseau})` : trousseau;
-    const cle = norm(`${trousseau}|${lieu}`);
-
-    const existantes = index.get(cle) ?? [];
-    let ligne = existantes.find((l) => !l[`perc${cycle}`]);
-    if (!ligne) {
-      ligne = { lieu: libelle };
-      existantes.push(ligne);
-      lignes.push(ligne);
-      index.set(cle, existantes);
-    }
-
-    ligne[`perc${cycle}`] = heurePerception;
-    ligne[`respPerc${cycle}`] = txt(p.personne_habilitee);
-
-    if (p.reint_heure_saisie || p.reint_personne) {
-      ligne[`reint${cycle}`] = hhmm(p.reint_heure) || p.reint_heure_saisie;
-      ligne[`respReint${cycle}`] = txt(p.reint_personne);
-    }
-  }
-
-  return lignes;
 }
