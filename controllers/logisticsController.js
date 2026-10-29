@@ -2,8 +2,9 @@ import { json, readJson } from "../utils/helpers.js";
 
 const datePattern = /^\d{4}-\d{2}-\d{2}$/;
 const timePattern = /^(?:[01]\d|2[0-3]):[0-5]\d$/;
-const truckTypes = new Set(["DECHARGEMENT", "CHARGEMENT"]);
-const fluxTypes = new Set(["DECHARGEMENT", "CHARGEMENT", "INVENTAIRE", "DECHETS", "BOUTEILLES_VIDES", "MATIERE_PREMIERE", "DEPOTAGE_FUEL"]);
+const truckTypes = new Set(["DECHARGEMENT", "CHARGEMENT", "ORDURES"]);
+const fluxTypes = new Set(["DECHARGEMENT", "CHARGEMENT", "INVENTAIRE", "DECHETS", "BOUTEILLES_VIDES", "MATIERE_PREMIERE", "DEPOTAGE_FUEL", "ORDURES"]);
+const wasteRegisterDesignations = new Set(["Verres cassées", "Ordures", "Gravat"]);
 const incidentTypes = new Set(["ANOMALIE", "VIOLATION_PROCEDURE"]);
 const stockCategories = new Set(["VIDES", "PLEINS_EAUX"]);
 const bottleDesignations = new Set([
@@ -506,6 +507,33 @@ export async function createLogisticsEntry(request, response, pool, userId) {
       });
     }
 
+    if (type === "ORDURES") {
+      const immatriculation = cleanText(body.immatriculationVehicule, 100);
+      const designation = cleanText(body.designation, 80);
+      const nbr = cleanText(body.nbr, 255);
+      const facture = cleanText(body.facture, 160);
+      const destinataire = cleanText(body.destinataire, 255);
+      if (!immatriculation || !wasteRegisterDesignations.has(designation) || !nbr
+        || !/^\d+$/.test(facture) || !destinataire) {
+        throw Object.assign(new Error("Renseignez le véhicule, une désignation autorisée, le nombre, le numéro de facture et la destination."), { status: 400 });
+      }
+      const result = await client.query(
+        `INSERT INTO flux_logistique
+           (date_operation, type_flux, camion, immatriculation_vehicule, vehicule,
+            designation, nbr, facture, document, destinataire, site_id, utilisateur_id)
+         VALUES ($1::date, 'ORDURES', $2, $2, $2, $3, $4, $5, $5, $6, $7::uuid, $8::uuid)
+         RETURNING id, cree_le AS "createdAt"`,
+        [date, immatriculation, designation, nbr, facture, destinataire, siteId, userId],
+      );
+      await client.query("COMMIT");
+      return json(response, 201, {
+        entry: {
+          ...result.rows[0], date, type, immatriculationVehicule: immatriculation,
+          designation, nbr, facture, destinataire, siteName: site.nom, siteType: site.type_site,
+        },
+      });
+    }
+
     if (!truckTypes.has(type)) {
       throw Object.assign(new Error("Le type de flux camion est invalide."), { status: 400 });
     }
@@ -515,22 +543,24 @@ export async function createLogisticsEntry(request, response, pool, userId) {
       const designation = cleanText(body.designation, 20000);
       const nbr = cleanText(body.nbr, 255);
       const facture = cleanText(body.facture, 160);
-      if (!immatriculation || !timePattern.test(heureSortie) || !designation || !nbr || !/^\d{1,4}$/.test(facture)) {
-        throw Object.assign(new Error("Renseignez le matricule, une heure de sortie, la désignation, le nombre et une facture de 1 à 4 chiffres."), { status: 400 });
+      const destinataire = cleanText(body.destinataire, 255);
+      if (!immatriculation || !timePattern.test(heureSortie) || !designation || !nbr
+        || !/^\d{1,4}$/.test(facture) || !destinataire) {
+        throw Object.assign(new Error("Renseignez le matricule, l’heure de sortie, la désignation, le nombre, la facture et la destination."), { status: 400 });
       }
       const result = await client.query(
         `INSERT INTO flux_logistique
            (date_operation, type_flux, camion, immatriculation_vehicule, vehicule,
-            heure_sortie, designation, nbr, facture, document, site_id, utilisateur_id)
-         VALUES ($1::date, 'DECHARGEMENT', $2, $2, $2, $3::time, $4, $5, $6, $6, $7::uuid, $8::uuid)
+            heure_sortie, designation, nbr, facture, document, destinataire, site_id, utilisateur_id)
+         VALUES ($1::date, 'DECHARGEMENT', $2, $2, $2, $3::time, $4, $5, $6, $6, $7, $8::uuid, $9::uuid)
          RETURNING id, cree_le AS "createdAt"`,
-        [date, immatriculation, heureSortie, designation, nbr, facture, siteId, userId],
+        [date, immatriculation, heureSortie, designation, nbr, facture, destinataire, siteId, userId],
       );
       await client.query("COMMIT");
       return json(response, 201, {
         entry: {
           ...result.rows[0], date, type, immatriculationVehicule: immatriculation,
-          heureSortie, designation, nbr, facture, siteName: site.nom, siteType: site.type_site,
+          heureSortie, designation, nbr, facture, destinataire, siteName: site.nom, siteType: site.type_site,
         },
       });
     }
@@ -576,15 +606,47 @@ export async function updateTruckLogisticsEntry(request, response, pool, userId,
     const body = await readJson(request);
     const date = normalizeDate(body.date);
     const type = cleanText(body.type, 20).toUpperCase();
+    if (type === "ORDURES") {
+      const immatriculation = cleanText(body.immatriculationVehicule, 100);
+      const designation = cleanText(body.designation, 80);
+      const nbr = cleanText(body.nbr, 255);
+      const facture = cleanText(body.facture, 160);
+      const destinataire = cleanText(body.destinataire, 255);
+      if (!validDate(date) || !immatriculation || !wasteRegisterDesignations.has(designation)
+        || !nbr || !/^\d+$/.test(facture) || !destinataire) {
+        return json(response, 400, { error: "Renseignez la date, le véhicule, une désignation autorisée, le nombre, le numéro de facture et la destination." });
+      }
+
+      await client.query("BEGIN");
+      const account = await getAccount(client, userId);
+      const siteId = await resolveSite(client, account, body);
+      const result = await client.query(
+        `UPDATE flux_logistique
+         SET date_operation = $2::date, camion = $3, immatriculation_vehicule = $3,
+             vehicule = $3, designation = $4, nbr = $5, facture = $6, document = $6, destinataire = $7
+         WHERE id = $1::uuid AND site_id = $8::uuid AND type_flux = 'ORDURES'
+         RETURNING id, date_operation::text AS date, type_flux AS type,
+                   immatriculation_vehicule AS "immatriculationVehicule",
+                   designation, nbr, facture, destinataire`,
+        [entryId, date, immatriculation, designation, nbr, facture, destinataire, siteId],
+      );
+      if (!result.rows[0]) {
+        await client.query("ROLLBACK");
+        return json(response, 404, { error: "Enregistrement ordures introuvable sur ce site." });
+      }
+      await client.query("COMMIT");
+      return json(response, 200, { entry: result.rows[0] });
+    }
     if (type === "DECHARGEMENT") {
       const immatriculation = cleanText(body.immatriculationVehicule, 100);
       const heureSortie = cleanText(body.heureSortie, 5);
       const designation = cleanText(body.designation, 20000);
       const nbr = cleanText(body.nbr, 255);
       const facture = cleanText(body.facture, 160);
+      const destinataire = cleanText(body.destinataire, 255);
       if (!validDate(date) || !immatriculation || !timePattern.test(heureSortie)
-        || !designation || !nbr || !/^\d{1,4}$/.test(facture)) {
-        return json(response, 400, { error: "Renseignez une date, un matricule, une heure de sortie, une désignation, un nombre et une facture de 1 à 4 chiffres." });
+        || !designation || !nbr || !/^\d{1,4}$/.test(facture) || !destinataire) {
+        return json(response, 400, { error: "Renseignez la date, le matricule, l’heure de sortie, la désignation, le nombre, la facture et la destination." });
       }
 
       await client.query("BEGIN");
@@ -593,13 +655,13 @@ export async function updateTruckLogisticsEntry(request, response, pool, userId,
       const result = await client.query(
         `UPDATE flux_logistique
          SET date_operation = $2::date, camion = $3, immatriculation_vehicule = $3, vehicule = $3,
-             heure_sortie = $4::time, designation = $5, nbr = $6, facture = $7, document = $7
-         WHERE id = $1::uuid AND site_id = $8::uuid AND type_flux = 'DECHARGEMENT'
+             heure_sortie = $4::time, designation = $5, nbr = $6, facture = $7, document = $7, destinataire = $8
+         WHERE id = $1::uuid AND site_id = $9::uuid AND type_flux = 'DECHARGEMENT'
          RETURNING id, date_operation::text AS date, type_flux AS type,
                    immatriculation_vehicule AS "immatriculationVehicule",
                    to_char(heure_sortie, 'HH24:MI') AS "heureSortie",
-                   designation, nbr, facture`,
-        [entryId, date, immatriculation, heureSortie, designation, nbr, facture, siteId],
+                   designation, nbr, facture, destinataire`,
+        [entryId, date, immatriculation, heureSortie, designation, nbr, facture, destinataire, siteId],
       );
       if (!result.rows[0]) {
         await client.query("ROLLBACK");
@@ -652,15 +714,18 @@ export async function updateTruckLogisticsEntry(request, response, pool, userId,
 export async function deleteTruckLogisticsEntry(request, response, pool, userId, entryId) {
   try {
     if (!uuidPattern.test(entryId)) return json(response, 404, { error: "Mouvement camion introuvable." });
+    const url = new URL(request.url || "/", `http://${request.headers.host || "localhost"}`);
+    const type = cleanText(url.searchParams.get("type"), 20).toUpperCase();
+    if (!truckTypes.has(type)) return json(response, 400, { error: "Le type de mouvement est invalide." });
     const account = await getAccount(pool, userId);
     const siteId = await querySiteForRead(pool, account, request);
     if (!siteId) return json(response, 400, { error: "Sélectionnez un site pour supprimer le mouvement." });
     const result = await pool.query(
       `DELETE FROM flux_logistique
        WHERE id = $1::uuid AND site_id = $2::uuid
-         AND type_flux IN ('DECHARGEMENT', 'CHARGEMENT')
+         AND type_flux = $3
        RETURNING id`,
-      [entryId, siteId],
+      [entryId, siteId, type],
     );
     if (!result.rows[0]) return json(response, 404, { error: "Mouvement camion introuvable sur ce site." });
     json(response, 200, { id: result.rows[0].id, deleted: true });
