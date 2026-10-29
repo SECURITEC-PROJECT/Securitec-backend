@@ -57,6 +57,12 @@ model Site {
   truckChecklists         TruckChecklist[]
   registreOrdures         RegistreOrdure[]
   registreFerrailles      RegistreFerraille[]
+  mouvementsVelos         MouvementVelo[]
+  mouvementsMoto          MouvementMoto[]
+  mouvementsAps           MouvementAps[]
+  mouvementsEvenementsAps MouvementApsEvenement[]
+  passationsServiceAps     PassationServiceAps[]
+  configurationsPostesMouvementAps ConfigurationPostesMouvementAps[]
 
   @@map("site")
 }
@@ -94,6 +100,12 @@ model Utilisateur {
   truckChecklists         TruckChecklist[]
   registreOrdures         RegistreOrdure[]
   registreFerrailles      RegistreFerraille[]
+  mouvementsVelos         MouvementVelo[]
+  mouvementsMoto          MouvementMoto[]
+  mouvementsAps           MouvementAps[]
+  mouvementsEvenementsAps MouvementApsEvenement[]
+  passationsServiceAps     PassationServiceAps[]
+  configurationsPostesMouvementAps ConfigurationPostesMouvementAps[]
 
   @@index([siteId], map: "idx_utilisateur_site")
   @@map("utilisateur")
@@ -593,6 +605,114 @@ model RegistreFerraille {
 
   @@index([siteId, dateOperation, heure], map: "idx_registre_ferrailles_site_date")
   @@map("registre_ferrailles")
+}
+
+model MouvementVelo {
+  id            String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  creeLe        DateTime    @default(now()) @map("cree_le") @db.Timestamp(6)
+  dateOperation DateTime    @map("date_operation") @db.Date
+  heureEntree   DateTime    @map("heure_entree") @db.Time(0)
+  heureSortie   DateTime?   @map("heure_sortie") @db.Time(0)
+  matricule     String      @db.VarChar(50)
+  prenom        String      @db.VarChar(100)
+  section       String      @db.VarChar(100)
+  marqueVelo    String      @map("marque_velo") @db.VarChar(255)
+  siteId        String      @map("site_id") @db.Uuid
+  utilisateurId String      @map("utilisateur_id") @db.Uuid
+  site          Site        @relation(fields: [siteId], references: [id], onDelete: Restrict, map: "fk_mouvement_velo_site")
+  utilisateur   Utilisateur @relation(fields: [utilisateurId], references: [id], onDelete: Restrict, map: "fk_mouvement_velo_utilisateur")
+
+  @@index([siteId, dateOperation, heureEntree], map: "idx_mouvement_velo_site_date")
+  @@map("mouvement_velo")
+}
+
+model MouvementMoto {
+  id            String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  creeLe        DateTime    @default(now()) @map("cree_le") @db.Timestamp(6)
+  dateOperation DateTime    @map("date_operation") @db.Date
+  heureEntree   DateTime    @map("heure_entree") @db.Time(0)
+  moto          String      @db.VarChar(255)
+  observation   String      @db.Text
+  heureSortie   DateTime?   @map("heure_sortie") @db.Time(0)
+  siteId        String      @map("site_id") @db.Uuid
+  utilisateurId String      @map("utilisateur_id") @db.Uuid
+  site          Site        @relation(fields: [siteId], references: [id], onDelete: Restrict, map: "fk_mouvement_moto_site")
+  utilisateur   Utilisateur @relation(fields: [utilisateurId], references: [id], onDelete: Restrict, map: "fk_mouvement_moto_utilisateur")
+
+  @@index([siteId, dateOperation, heureEntree], map: "idx_mouvement_moto_site_date")
+  @@map("mouvement_moto")
+}
+
+model MouvementAps {
+  id            String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  siteId        String      @map("site_id") @db.Uuid
+  datePointage  DateTime    @map("date_pointage") @db.Date
+  service       String      @db.VarChar(10)
+  data          Json        @db.JsonB
+  utilisateurId String      @map("utilisateur_id") @db.Uuid
+  updatedAt     DateTime    @default(now()) @map("updated_at") @db.Timestamp(6)
+  site          Site        @relation(fields: [siteId], references: [id], onDelete: Restrict, map: "fk_mouvement_aps_site")
+  utilisateur   Utilisateur @relation(fields: [utilisateurId], references: [id], onDelete: Restrict, map: "fk_mouvement_aps_utilisateur")
+
+  @@unique([siteId, datePointage, service], map: "uq_mouvement_aps_site_date_service")
+  @@index([siteId, datePointage], map: "idx_mouvement_aps_site_date")
+  @@map("mouvement_aps")
+}
+
+model MouvementApsEvenement {
+  id            String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  creeLe        DateTime    @default(now()) @map("cree_le") @db.Timestamp(6)
+  dateOperation DateTime    @map("date_operation") @db.Date
+  heureEntree   DateTime    @map("heure_entree") @db.Time(0)
+  mouvement     String      @db.VarChar(500)
+  observation   String      @db.VarChar(1000)
+  heureSortie   DateTime?   @map("heure_sortie") @db.Time(0)
+  siteId        String      @map("site_id") @db.Uuid
+  utilisateurId String      @map("utilisateur_id") @db.Uuid
+  updatedAt     DateTime    @default(now()) @map("updated_at") @db.Timestamp(6)
+  site          Site        @relation(fields: [siteId], references: [id], onDelete: Restrict, map: "fk_mouvement_aps_evenement_site")
+  utilisateur   Utilisateur @relation(fields: [utilisateurId], references: [id], onDelete: Restrict, map: "fk_mouvement_aps_evenement_utilisateur")
+
+  @@index([siteId, dateOperation, heureEntree], map: "idx_mouvement_aps_evenement_site_date")
+  @@map("mouvement_aps_evenement")
+}
+
+model PassationServiceAps {
+  id            String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  creeLe        DateTime    @default(now()) @map("cree_le") @db.Timestamp(6)
+  dateOperation DateTime    @map("date_operation") @db.Date
+  materiel      String      @db.VarChar(3000)
+  chaineEst     String      @map("chaine_est") @db.VarChar(100)
+  chaineOuest   String      @map("chaine_ouest") @db.VarChar(100)
+  clesRendus    String      @map("cles_rendus") @db.VarChar(5000)
+  clesNonRendus String      @map("cles_non_rendus") @db.VarChar(5000)
+  etatDesLieux  String      @map("etat_des_lieux") @db.VarChar(5000)
+  consigne      String      @db.VarChar(5000)
+  evenement     String      @db.VarChar(5000)
+  remarque      String      @db.VarChar(5000)
+  cpDescendantMatricule String @map("cp_descendant_matricule") @db.VarChar(50)
+  cpMontantMatricule    String @map("cp_montant_matricule") @db.VarChar(50)
+  siteId        String      @map("site_id") @db.Uuid
+  utilisateurId String      @map("utilisateur_id") @db.Uuid
+  updatedAt     DateTime    @default(now()) @map("updated_at") @db.Timestamp(6)
+  site          Site        @relation(fields: [siteId], references: [id], onDelete: Restrict, map: "fk_passation_service_aps_site")
+  utilisateur   Utilisateur @relation(fields: [utilisateurId], references: [id], onDelete: Restrict, map: "fk_passation_service_aps_utilisateur")
+
+  @@index([siteId, dateOperation], map: "idx_passation_service_aps_site_date")
+  @@map("mouvement_aps_passation")
+}
+
+model ConfigurationPostesMouvementAps {
+  id            String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  siteId        String      @map("site_id") @db.Uuid
+  postes        Json        @db.JsonB
+  utilisateurId String      @map("utilisateur_id") @db.Uuid
+  updatedAt     DateTime    @default(now()) @map("updated_at") @db.Timestamp(6)
+  site          Site        @relation(fields: [siteId], references: [id], onDelete: Restrict, map: "fk_configuration_postes_mouvement_aps_site")
+  utilisateur   Utilisateur @relation(fields: [utilisateurId], references: [id], onDelete: Restrict, map: "fk_configuration_postes_mouvement_aps_utilisateur")
+
+  @@unique([siteId], map: "uq_configuration_postes_mouvement_aps_site")
+  @@map("configuration_postes_mouvement_aps")
 }
 
 model SignalementLogistique {

@@ -28,9 +28,26 @@ function employeeValues(body) {
 export async function handleEmployeeRoutes(request, response, pool, pathname, jwtSecret) {
   const idMatch = /^\/api\/employees\/([0-9a-f-]{36})$/i.exec(pathname);
   const lookupMatch = /^\/api\/employees\/by-matricule\/([^/]+)$/i.exec(pathname);
+  const legacyLookupMatch = /^\/api\/employes\/([^/]+)$/i.exec(pathname);
   const optionsPath = `${path}/options`;
-  if (pathname !== path && pathname !== optionsPath && !idMatch && !lookupMatch) return false;
+  if (pathname !== path && pathname !== optionsPath && !idMatch && !lookupMatch && !legacyLookupMatch) return false;
   try {
+    if (legacyLookupMatch && request.method === "GET") {
+      const user = getRequestUser(request, jwtSecret);
+      if (!user) throw Object.assign(new Error("Connectez-vous pour rechercher un employé."), { status: 401 });
+      const matricule = decodeURIComponent(legacyLookupMatch[1]).trim();
+      const result = await pool.query(
+        `SELECT a.id,a.matricule,a.nom,a.prenom,p.nom AS prestataire
+         FROM employe a
+         LEFT JOIN prestataire p ON p.id=a.prestataire_id
+         WHERE UPPER(BTRIM(a.matricule))=UPPER($1)
+         LIMIT 1`,
+        [matricule],
+      );
+      if (!result.rows[0]) throw Object.assign(new Error("Matricule non trouvé."), { status: 404 });
+      json(response, 200, result.rows[0]);
+      return true;
+    }
     if (pathname === optionsPath && request.method === "GET") {
       const tokenUser = getRequestUser(request, jwtSecret);
       if (!tokenUser) throw Object.assign(new Error("Connectez-vous pour charger les employés."), { status: 401 });
