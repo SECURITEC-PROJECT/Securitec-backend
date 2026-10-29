@@ -219,10 +219,12 @@ SELECT
   -- Anomalies = signalements logistiques
   COALESCE((
     SELECT json_agg(x ORDER BY x.heure) FROM (
-      SELECT to_char(heure, 'HH24:MI') AS heure, type_signalement, camion, transporteur, document,
-             casse, manquant, vides, phn, description_faits, observations, mesures_prises
+      SELECT date_operation::text AS date, to_char(heure, 'HH24:MI') AS heure,
+             personne, observations, description_faits, mesures_prises
       FROM signalement_logistique
-      WHERE site_id = $1::uuid AND date_operation = $3::date
+      WHERE site_id = $1::uuid
+        AND date_operation = $3::date
+        AND type_signalement = 'ANOMALIE'
     ) x
   ), '[]'::json) AS signalements,
 
@@ -395,23 +397,12 @@ export async function generateCrj({ prestataireId, siteId, date }, pool) {
 
   // --- Anomalies ---
   const anomalies = d.signalements.map((s) => ({
+    date: txt(s.date) || day,
     heure: s.heure,
-    camion: txt(s.camion) || "-",
-    transporteur: txt(s.transporteur) || "-",
-    titre: txt(s.document) || "-",
-    obs:
-      [
-        txt(s.type_signalement),
-        txt(s.casse) && `Casse : ${txt(s.casse)}`,
-        txt(s.manquant) && `Manquant : ${txt(s.manquant)}`,
-        txt(s.vides) && `Vides : ${txt(s.vides)}`,
-        txt(s.phn) && `PHN : ${txt(s.phn)}`,
-        txt(s.description_faits),
-        txt(s.observations),
-        txt(s.mesures_prises) && `Mesures : ${txt(s.mesures_prises)}`,
-      ]
-        .filter(Boolean)
-        .join(" — ") || "-",
+    poste: txt(s.personne) || "-",
+    nature: txt(s.observations) || "-",
+    anomalie: txt(s.description_faits) || "-",
+    mesures: txt(s.mesures_prises) || "-",
   }));
 
   // --- Violations de procédure / divers (main courante) ---
