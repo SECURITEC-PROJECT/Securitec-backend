@@ -8,7 +8,7 @@ const incidentTypes = new Set(["ANOMALIE", "VIOLATION_PROCEDURE"]);
 const stockCategories = new Set(["VIDES", "PLEINS_EAUX"]);
 const bottleDesignations = new Set([
   "Bouteilles vides - 65 Cl", "Bouteilles vides - 50 Cl", "Bouteilles vides - 33 Cl",
-  "Fût - 30 L", "Fût - 20 L",
+  "Fût - 30 L", "Fût - 20 L", "Fût - 20L export", "Fût - 30L export",
   "Cageau jaune - C20", "Cageau jaune - C24",
   "Bouteilles neuves - 65 Cl", "Bouteilles neuves - 50 Cl", "Bouteilles neuves - 33 Cl",
   "Palette neuve - 1310 x 1055", "Palette neuve - 1000 x 1200", "Palette neuve - 800 x 1200",
