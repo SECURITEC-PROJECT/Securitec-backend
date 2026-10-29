@@ -19,6 +19,10 @@ const maxBottleDesignationLines = 16;
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 const cleanText = (value, max = 255) => typeof value === "string" ? value.trim().slice(0, max) : "";
+const normalizeFuelDesignation = (value) => {
+  const normalized = cleanText(value, 160).toLocaleUpperCase("fr");
+  return normalized === "FUEL OIL" ? "Fuel oil" : normalized === "GASOIL" ? "Gasoil" : "";
+};
 const normalizeDate = (value) => {
   if (typeof value !== "string") return "";
   const input = value.trim();
@@ -475,7 +479,7 @@ export async function createLogisticsEntry(request, response, pool, userId) {
       const time = cleanText(body.heurePointe, 5);
       const titre = cleanText(body.titre, 160);
       const plomb = cleanText(body.plomb, 100);
-      const designation = cleanText(body.designation, 160);
+      const designation = normalizeFuelDesignation(body.designation);
       const quantity = Number(body.quantite);
       const cree = cleanText(body.cree, 160);
       const chauffeur = cleanText(body.chauffeur, 160);
@@ -483,7 +487,7 @@ export async function createLogisticsEntry(request, response, pool, userId) {
       if (!timePattern.test(time) || !titre || !plomb || !designation || !cree ||
           !Number.isFinite(quantity) || quantity <= 0 || quantity > 9999999999.99 ||
           !chauffeur || !magasinier) {
-        throw Object.assign(new Error("Renseignez l’heure de pointe, le titre, le plomb, la désignation, une quantité positive, le nom du créateur, le chauffeur et le magasinier."), { status: 400 });
+        throw Object.assign(new Error("Renseignez l’heure de pointe, le titre, le plomb, une désignation Fuel oil ou Gasoil, une quantité positive, le nom du créateur, le chauffeur et le magasinier."), { status: 400 });
       }
       await requireRegisteredDriverName(client, siteId, chauffeur);
       const result = await client.query(
@@ -917,7 +921,7 @@ export async function updateDepotageFuelEntry(request, response, pool, userId, e
     const time = cleanText(body.heurePointe, 5);
     const titre = cleanText(body.titre, 160);
     const plomb = cleanText(body.plomb, 100);
-    const designation = cleanText(body.designation, 160);
+    const designation = normalizeFuelDesignation(body.designation);
     const quantity = Number(body.quantite);
     const cree = cleanText(body.cree, 160);
     const chauffeur = cleanText(body.chauffeur, 160);
@@ -925,7 +929,7 @@ export async function updateDepotageFuelEntry(request, response, pool, userId, e
     if (!validDate(date) || !timePattern.test(time) || !titre || !plomb || !designation || !cree ||
         !Number.isFinite(quantity) || quantity <= 0 || quantity > 9999999999.99 ||
         !chauffeur || !magasinier) {
-      return json(response, 400, { error: "Renseignez une date et une heure valides, le titre, le plomb, la désignation, une quantité positive, le créateur, le chauffeur et le magasinier." });
+      return json(response, 400, { error: "Renseignez une date et une heure valides, le titre, le plomb, une désignation Fuel oil ou Gasoil, une quantité positive, le créateur, le chauffeur et le magasinier." });
     }
 
     await client.query("BEGIN");
