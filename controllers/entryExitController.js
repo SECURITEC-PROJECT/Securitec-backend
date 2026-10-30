@@ -79,7 +79,7 @@ export async function createVisitor(request, response, pool, userId) {
     await client.query("BEGIN");
     const account = await getAccount(client, userId);
     const siteId = await resolveSite(client, account, body);
-    const servicePosteId = await resolveServicePosteId(client, siteId, body.priseDePosteId);
+    const servicePosteId = await resolveServicePosteId(client, siteId, body.priseDePosteId, body.posteId || null);
     const banned = await client.query(
       `SELECT identite FROM visiteur
        WHERE site_id=$1::uuid AND liste_noire=true
@@ -346,7 +346,7 @@ export async function createVehicle(request, response, pool, userId) {
     await client.query("BEGIN");
     const account = await getAccount(client, userId);
     const siteId = await resolveSite(client, account, body);
-    const servicePosteId = await resolveServicePosteId(client, siteId, body.priseDePosteId);
+    const servicePosteId = await resolveServicePosteId(client, siteId, body.priseDePosteId, body.posteId || null);
     const type = cleanText(body.type, 100) || "Véhicule";
     const vehicle = await client.query(
       `INSERT INTO vehicule (immatriculation, type) VALUES ($1,$2)

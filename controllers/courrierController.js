@@ -89,7 +89,7 @@ export async function createCourrierMovement(request, response, pool, userId) {
     await client.query("BEGIN");
     const account = await getAccount(client, userId);
     const siteId = await resolveSite(client, account, body.siteId);
-    const servicePosteId = await resolveServicePosteId(client, siteId, body.priseDePosteId);
+    const servicePosteId = await resolveServicePosteId(client, siteId, body.priseDePosteId, body.posteId || null);
     const result = await client.query(
       `INSERT INTO mouvement_courrier
          (date_operation, heure_entree, prenom, designation, nombre, site_id, utilisateur_id, service_poste_id)
