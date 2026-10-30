@@ -7,10 +7,10 @@ const entryPath = /^\/api\/consignes-journal\/([0-9a-f-]+)$/i;
 const entryColumns = `cj.id, cj.date_consigne AS date, to_char(cj.heure, 'HH24:MI') AS heure,
   cj.consigne, cj.emetteur, cj.destinataire, cj.date_fin AS "dateFin",
   cj.jusquau_nouvel_ordre AS "jusquauNouvelOrdre", cj.prise_de_poste_id AS "priseDePosteId",
-  p.poste_id AS "posteId", po.nom AS "posteNom", p.shift_type AS "shiftType", cj.cree_le AS "createdAt"`;
+  COALESCE(cj.poste_id, p.poste_id) AS "posteId", po.nom AS "posteNom", p.shift_type AS "shiftType", cj.cree_le AS "createdAt"`;
 const entryReturningColumns = `id, date_consigne AS date, to_char(heure, 'HH24:MI') AS heure,
   consigne, emetteur, destinataire, date_fin AS "dateFin", jusquau_nouvel_ordre AS "jusquauNouvelOrdre",
-  prise_de_poste_id AS "priseDePosteId", cree_le AS "createdAt"`;
+  poste_id AS "posteId", prise_de_poste_id AS "priseDePosteId", cree_le AS "createdAt"`;
 const datePattern = /^\d{4}-\d{2}-\d{2}$/;
 const timePattern = /^(?:[01]\d|2[0-3]):[0-5]\d$/;
 const cleanText = (value, max = 255) => typeof value === "string" ? value.trim().slice(0, max) : "";
@@ -54,7 +54,7 @@ export async function handleConsigneJournalRoutes(request, response, pool, pathn
         `SELECT ${entryColumns}
          FROM consigne_journal cj
          LEFT JOIN prise_de_poste p ON p.id=cj.prise_de_poste_id
-         LEFT JOIN poste po ON po.id=p.poste_id
+         LEFT JOIN poste po ON po.id=COALESCE(cj.poste_id,p.poste_id)
          WHERE cj.site_id=$1::uuid
            AND (NOT $2::boolean OR cj.jusquau_nouvel_ordre=true OR cj.date_fin >= CURRENT_DATE)
          ORDER BY date_consigne DESC, heure DESC, cree_le DESC LIMIT 1000`,

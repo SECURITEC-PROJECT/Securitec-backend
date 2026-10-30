@@ -42,7 +42,7 @@ const validDate = (value) => {
 
 async function getAccount(pool, userId) {
   const result = await pool.query(
-    "SELECT id, site_id, role FROM utilisateur WHERE id = $1::uuid LIMIT 1",
+    "SELECT id, nom, site_id, role FROM utilisateur WHERE id = $1::uuid LIMIT 1",
     [userId],
   );
   if (!result.rows[0]) throw Object.assign(new Error("Utilisateur introuvable."), { status: 401 });
@@ -1278,6 +1278,11 @@ export async function createLogisticsIncident(request, response, pool, userId) {
       observations: cleanText(body.observations, 20000) || null,
       measures: cleanText(body.measures, 20000) || null,
     };
+    const rawPostIds = Array.isArray(body.posteIds) ? body.posteIds : [];
+    const requestedPostIds = [...new Set(rawPostIds)];
+    if (requestedPostIds.length > 10 || requestedPostIds.some((value) => typeof value !== "string" || !uuidPattern.test(value))) {
+      return json(response, 400, { error: "Sélectionnez au maximum dix postes pour diffuser la consigne." });
+    }
     if (type === "ANOMALIE" && !values.facts) {
       return json(response, 400, { error: "Décrivez les faits de l’anomalie." });
     }
@@ -1293,6 +1298,17 @@ export async function createLogisticsIncident(request, response, pool, userId) {
     const siteResult = await client.query("SELECT nom, type_site FROM site WHERE id = $1::uuid", [siteId]);
     const site = siteResult.rows[0];
     if (!site) throw Object.assign(new Error("Site de travail introuvable."), { status: 404 });
+    let targetPostIds = [];
+    if (requestedPostIds.length) {
+      const postsResult = await client.query(
+        "SELECT id, nom FROM poste WHERE site_id=$1::uuid AND actif=true AND id=ANY($2::uuid[])",
+        [siteId, requestedPostIds],
+      );
+      if (postsResult.rows.length !== requestedPostIds.length) {
+        throw Object.assign(new Error("Un ou plusieurs postes sélectionnés ne sont pas actifs sur ce site."), { status: 400 });
+      }
+      targetPostIds = postsResult.rows;
+    }
     const result = await client.query(
       `INSERT INTO signalement_logistique
          (date_operation, heure, type_signalement, camion, transporteur, document,
@@ -1303,6 +1319,28 @@ export async function createLogisticsIncident(request, response, pool, userId) {
       [date, time, type, values.camion, values.transporteur, values.document, values.broken,
         values.missing, values.empty, values.phn, values.facts, values.person,
         values.observations, values.measures, siteId, userId, priseDePosteId],
+    );
+    const incidentDescription = values.facts || values.observations || "Incident signalé";
+    const instruction = `Incident ${type === "ANOMALIE" ? "/ anomalie" : "de procédure"} : ${incidentDescription}\nMesures : ${values.measures || "Informer le responsable et appliquer les consignes de sécurité du site."}`.slice(0, 20000);
+    const postTargets = targetPostIds.length ? targetPostIds : [{ id: null, nom: null }];
+    for (const post of postTargets) {
+      await client.query(
+        `INSERT INTO consigne_journal
+           (site_id, date_consigne, heure, consigne, emetteur, destinataire, utilisateur_id,
+            jusquau_nouvel_ordre, prise_de_poste_id, poste_id)
+         VALUES ($1::uuid, CURRENT_DATE, CURRENT_TIME, $2, $3, $4, $5::uuid, true, $6::uuid, $7::uuid)`,
+        [siteId, instruction, account.nom, post.nom ? `Poste : ${post.nom}` : "Tous les postes du site", userId, priseDePosteId, post.id],
+      );
+    }
+    const notificationTitle = type === "ANOMALIE" ? "Nouvelle anomalie signalée" : "Nouvelle violation de procédure";
+    const notificationMessage = `${incidentDescription}${targetPostIds.length ? ` · ${targetPostIds.map((post) => post.nom).join(", ")}` : " · Tous les postes du site"}`.slice(0, 2000);
+    await client.query(
+      `INSERT INTO notification_interne (utilisateur_id, site_id, titre, message, type, entite_id)
+       SELECT u.id, $1::uuid, $2, $3, 'INCIDENT', $4::uuid
+       FROM utilisateur u
+       WHERE u.actif=true
+         AND (u.role=1 OR (u.role=2 AND u.site_id=$1::uuid))`,
+      [siteId, notificationTitle, notificationMessage, result.rows[0].id],
     );
     await client.query("COMMIT");
     json(response, 201, {

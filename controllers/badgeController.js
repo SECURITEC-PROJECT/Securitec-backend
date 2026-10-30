@@ -8,6 +8,7 @@ const badgeSelect = `
               WHEN b.utilisateur_id IS NOT NULL THEN 'Personnel'
               ELSE COALESCE(b.couleur, 'Prestataire') END AS level,
          (b.statut = 1 AND b.validite >= NOW() AND NOT COALESCE(v.liste_noire, false)) AS active,
+         COALESCE(v.liste_noire, false) AS "siteBanned",
          b.validite
   FROM badge b
   LEFT JOIN utilisateur u ON u.id = b.utilisateur_id
@@ -44,8 +45,8 @@ export async function scanBadge(request, response, pool) {
 
     json(response, 200, {
       allowed: badge.active,
-      title: badge.active ? "Accès autorisé" : "Accès refusé",
-      text: `${badge.holder} · ${badge.zone} · validité jusqu'au ${new Date(badge.validite).toLocaleDateString("fr-FR")}`,
+      title: badge.siteBanned ? "Accès interdit sur ce site" : badge.active ? "Accès autorisé" : "Accès refusé",
+      text: `${badge.holder} · ${badge.zone}${badge.siteBanned ? " · Cette personne est inscrite sur la liste d’interdiction du site." : ` · validité jusqu'au ${new Date(badge.validite).toLocaleDateString("fr-FR")}`}`,
       badge,
     });
   } catch (error) {

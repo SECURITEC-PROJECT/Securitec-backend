@@ -46,7 +46,8 @@ export async function getVisitors(request, response, pool, userId) {
               COALESCE(p.badge_numero,b.uid_nfc) AS badge, COALESCE(p.immatriculation,'') AS vehicle,
               COALESCE(p.zone,'') AS zone, COALESCE(p.materiel,'') AS equipment,
               p.entree AS entered_at, p.sortie AS exited_at, p.notes_sortie AS exit_notes,
-              v.site_id, s.nom AS site_name, s.type_site AS site_type
+              v.site_id, s.nom AS site_name, s.type_site AS site_type,
+              v.liste_noire AS site_banned
        FROM passage p JOIN visiteur v ON v.id=p.visiteur_id JOIN badge b ON b.id=p.badge_id
        LEFT JOIN site s ON s.id=v.site_id
        WHERE ($1::uuid IS NULL OR v.site_id=$1::uuid)
@@ -76,6 +77,16 @@ export async function createVisitor(request, response, pool, userId) {
     await client.query("BEGIN");
     const account = await getAccount(client, userId);
     const siteId = await resolveSite(client, account, body);
+    const banned = await client.query(
+      `SELECT identite FROM visiteur
+       WHERE site_id=$1::uuid AND liste_noire=true
+         AND LOWER(BTRIM(identite))=LOWER(BTRIM($2)) LIMIT 1`,
+      [siteId, name],
+    );
+    if (banned.rows[0]) {
+      await client.query("ROLLBACK");
+      return json(response, 403, { error: `Accès interdit sur ce site pour ${banned.rows[0].identite}.` });
+    }
     const badgeNumber = cleanText(body.badge, 80) || `V-${randomUUID().slice(0, 8).toUpperCase()}`;
     const badge = await client.query(
       "INSERT INTO badge (uid_nfc, statut, validite) VALUES ($1,1,NOW() + INTERVAL '1 year') RETURNING id",
@@ -108,6 +119,43 @@ export async function createVisitor(request, response, pool, userId) {
     if (client) await client.query("ROLLBACK").catch(() => {});
     console.error("POST /visitors failed:", error.code || error.name, error.message || "");
     json(response, error.status || 500, { error: error.status ? error.message : "Impossible d’enregistrer l’entrée visiteur." });
+  } finally { client?.release(); }
+}
+
+export async function setVisitorSiteBan(request, response, pool, userId, passageId) {
+  let client;
+  try {
+    if (!uuidPattern.test(passageId)) return json(response, 404, { error: "Passage visiteur introuvable." });
+    const body = await readJson(request);
+    if (typeof body.banned !== "boolean") return json(response, 400, { error: "Indiquez si l’interdiction doit être activée." });
+    client = await pool.connect();
+    await client.query("BEGIN");
+    const account = await getAccount(client, userId);
+    if (![1, 2].includes(Number(account.role))) {
+      await client.query("ROLLBACK");
+      return json(response, 403, { error: "Seuls les administrateurs et superviseurs peuvent gérer les interdictions de site." });
+    }
+    const identity = await client.query(
+      `SELECT v.identite, v.site_id
+       FROM passage p JOIN visiteur v ON v.id=p.visiteur_id
+       WHERE p.id=$1::uuid AND ($2::uuid IS NULL OR v.site_id=$2::uuid)
+       LIMIT 1 FOR UPDATE OF v`,
+      [passageId, account.site_id || body.siteId || null],
+    );
+    if (!identity.rows[0]) {
+      await client.query("ROLLBACK");
+      return json(response, 404, { error: "Visiteur introuvable sur ce site." });
+    }
+    await client.query(
+      `UPDATE visiteur SET liste_noire=$1
+       WHERE site_id=$2::uuid AND LOWER(BTRIM(identite))=LOWER(BTRIM($3))`,
+      [body.banned, identity.rows[0].site_id, identity.rows[0].identite],
+    );
+    await client.query("COMMIT");
+    json(response, 200, { visitorId: passageId, siteId: identity.rows[0].site_id, banned: body.banned });
+  } catch (error) {
+    if (client) await client.query("ROLLBACK").catch(() => {});
+    json(response, error.status || 500, { error: error.status ? error.message : "Mise à jour de l’interdiction impossible." });
   } finally { client?.release(); }
 }
 

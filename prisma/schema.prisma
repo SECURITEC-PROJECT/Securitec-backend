@@ -136,6 +136,7 @@ model ConsigneJournal {
   destinataire  String      @db.VarChar(255)
   dateFin       DateTime?   @map("date_fin") @db.Date
   jusquauNouvelOrdre Boolean @default(false) @map("jusquau_nouvel_ordre")
+  posteId       String?     @map("poste_id") @db.Uuid
   priseDePosteId String?    @map("prise_de_poste_id") @db.Uuid
   utilisateurId String      @map("utilisateur_id") @db.Uuid
   creeLe        DateTime    @default(now()) @map("cree_le") @db.Timestamp(6)
@@ -143,6 +144,7 @@ model ConsigneJournal {
   utilisateur   Utilisateur @relation(fields: [utilisateurId], references: [id], onDelete: Restrict, map: "fk_consigne_journal_utilisateur")
 
   @@index([siteId, dateConsigne, heure], map: "idx_consigne_journal_site_date")
+  @@index([siteId, posteId, dateFin], map: "idx_consigne_journal_site_poste_active")
   @@map("consigne_journal")
 }
 
@@ -844,6 +846,21 @@ model MainCourante {
 
   @@index([siteId, creeLe], map: "idx_main_courante_site_date")
   @@map("main_courante")
+}
+
+model NotificationInterne {
+  id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  utilisateurId String   @map("utilisateur_id") @db.Uuid
+  siteId       String    @map("site_id") @db.Uuid
+  titre        String    @db.VarChar(200)
+  message      String    @db.Text
+  type         String    @db.VarChar(40)
+  entiteId     String?   @map("entite_id") @db.Uuid
+  lueLe        DateTime? @map("lue_le") @db.Timestamptz(6)
+  creeLe       DateTime  @default(now()) @map("cree_le") @db.Timestamptz(6)
+
+  @@index([utilisateurId, creeLe(sort: Desc)], map: "idx_notification_interne_user_unread")
+  @@map("notification_interne")
 }
 
 model MouvementCourrier {

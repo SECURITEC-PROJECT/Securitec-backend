@@ -12,6 +12,7 @@ import { handleDocumentRoutes } from "./documentRoutes.js";
 import { handleEmployeeRoutes } from "./employeeRoutes.js";
 import { handleWasteScrapRegisterRoutes } from "./wasteScrapRegisterRoutes.js";
 import { handleMovementRoutes } from "./movementRoutes.js";
+import { handleNotificationRoutes } from "./notificationRoutes.js";
 import { handleProviderRoutes } from "./providerRoutes.js";
 import { handleEntryExitRoutes } from "./entryExitRoutes.js";
 import { handleFluxRoutes } from "./fluxRoutes.js";
@@ -43,6 +44,7 @@ export async function handleApiRoutes(request, response, pool, jwtSecret) {
   }
 
   if (await handleAuthRoutes(request, response, pool, pathname, jwtSecret)) return true;
+  if (await handleNotificationRoutes(request, response, pool, pathname, jwtSecret)) return true;
   if (await handleUserRoutes(request, response, pool, pathname, jwtSecret)) return true;
   if (await handleEmployeeRoutes(request, response, pool, pathname, jwtSecret)) return true;
   if (await handleWasteScrapRegisterRoutes(request, response, pool, pathname, jwtSecret)) return true;
