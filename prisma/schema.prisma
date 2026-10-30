@@ -371,6 +371,7 @@ model Passation {
   utilisateurId       String      @map("utilisateur_id") @db.Uuid
   siteId              String?     @map("site_id") @db.Uuid
   vacationId          String?     @map("vacation_id") @db.Uuid
+  priseDePosteServiceId String?    @map("prise_de_poste_service_id") @db.Uuid
   utilisateur         Utilisateur @relation(fields: [utilisateurId], references: [id], onDelete: Restrict, map: "fk_passation_utilisateur")
   site                Site?       @relation(fields: [siteId], references: [id], onDelete: SetNull, map: "fk_passation_site")
   vacation            Vacation?   @relation(fields: [vacationId], references: [id], onDelete: SetNull, map: "fk_passation_vacation")
@@ -990,6 +991,26 @@ model DocumentSite {
 
   @@index([siteId, creeLe(sort: Desc)], map: "document_site_site_id_cree_le_idx")
   @@map("document_site")
+}
+
+model PriseDePoste {
+  id               String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  matricule        String     @db.VarChar(50)
+  nom              String     @db.VarChar(100)
+  prenom           String     @db.VarChar(100)
+  prestataire      String     @db.VarChar(160)
+  siteDeTravail    String     @map("site_de_travail") @db.VarChar(255)
+  notes            String?    @db.Text
+  startedAt        DateTime   @default(now()) @map("started_at") @db.Timestamp(6)
+  endedAt          DateTime?  @map("ended_at") @db.Timestamp(6)
+  posteId          String?    @map("poste_id") @db.Uuid
+  serviceId        String?    @map("service_id") @db.Uuid
+  shiftType        ShiftAgent? @map("shift_type")
+  fonctionService  String?    @map("fonction_service") @db.VarChar(20)
+  ouvertPar        String?    @map("ouvert_par") @db.Uuid
+
+  @@index([serviceId, startedAt], map: "idx_prise_de_poste_service")
+  @@map("prise_de_poste")
 }
 
 model Chauffeur {

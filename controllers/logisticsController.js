@@ -169,9 +169,12 @@ export async function getLogisticsEntries(request, response, pool, userId) {
               f.categorie_stock AS "categorieStock", f.article, f.quantite,
               s.nom AS "siteName", s.type_site AS "siteType", f.cree_le AS "createdAt",
               u.nom AS "createdBy", f.prise_de_poste_id AS "priseDePosteId",
+              po.nom AS "posteNom", pp.shift_type AS "shiftType",
               (SELECT COUNT(*)::int FROM flux_logistique_document fd WHERE fd.flux_id=f.id) AS "attachmentCount"
        FROM flux_logistique f JOIN site s ON s.id = f.site_id
        JOIN utilisateur u ON u.id=f.utilisateur_id
+       LEFT JOIN prise_de_poste pp ON pp.id=f.prise_de_poste_id
+       LEFT JOIN poste po ON po.id=pp.poste_id
        WHERE f.site_id = $1::uuid AND f.annule_le IS NULL
          AND ($2::date IS NULL OR f.date_operation >= $2::date)
          AND ($3::date IS NULL OR f.date_operation <= $3::date)

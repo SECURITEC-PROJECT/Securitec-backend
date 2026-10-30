@@ -38,9 +38,15 @@ export async function createHandover(request, response, pool, userId) {
     const shiftId = typeof body.agent_sortant_id === "string" ? body.agent_sortant_id : null;
     const shiftResult = shiftId
       ? await pool.query(
-          `SELECT v.id, v.site_id, COALESCE(NULLIF(v.poste_nom, ''), s.nom, 'Non renseigné') AS poste_nom
-           FROM vacation v LEFT JOIN site s ON s.id = v.site_id
-           WHERE v.id = $1::uuid LIMIT 1`,
+          `SELECT COALESCE(p.service_id,p.id) AS id, s.id AS site_id,
+                  COALESCE(po.nom,s.nom,'Non renseigné') AS poste_nom,
+                  p.poste_id AS poste_id, p.shift_type
+           FROM prise_de_poste p
+           LEFT JOIN site s ON LOWER(BTRIM(s.nom))=LOWER(BTRIM(p.site_de_travail))
+           LEFT JOIN poste po ON po.id=p.poste_id
+           WHERE p.id=$1::uuid OR p.service_id=$1::uuid
+           ORDER BY CASE WHEN p.fonction_service='CHEF' THEN 0 ELSE 1 END
+           LIMIT 1`,
           [shiftId],
         )
       : { rows: [] };
@@ -49,7 +55,7 @@ export async function createHandover(request, response, pool, userId) {
     const result = await pool.query(
       `INSERT INTO passation
          (sortant_nom, sortant_matricule, entrant_nom, entrant_matricule,
-          poste_nom, materiel, evenements, consignes, utilisateur_id, site_id, vacation_id)
+          poste_nom, materiel, evenements, consignes, utilisateur_id, site_id, prise_de_poste_service_id)
        VALUES ($1, 'Non renseigné', $2, 'Non renseigné', $3, $4, $5, $6, $7::uuid, $8::uuid, $9::uuid)
        RETURNING id, sortant_nom AS agent_sortant_nom, entrant_nom AS incoming_nom,
                  materiel AS equipment, evenements AS ongoing_events,
