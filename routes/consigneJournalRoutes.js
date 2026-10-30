@@ -1,13 +1,24 @@
 import { getRequestUser } from "../utils/auth.js";
 import { json, readJson } from "../utils/helpers.js";
+import { resolvePriseDePosteId } from "../utils/priseDePoste.js";
 
 const routePath = "/api/consignes-journal";
 const entryPath = /^\/api\/consignes-journal\/([0-9a-f-]+)$/i;
-const entryColumns = `id, date_consigne AS date, to_char(heure, 'HH24:MI') AS heure,
-  consigne, emetteur, destinataire, cree_le AS "createdAt"`;
+const entryColumns = `cj.id, cj.date_consigne AS date, to_char(cj.heure, 'HH24:MI') AS heure,
+  cj.consigne, cj.emetteur, cj.destinataire, cj.date_fin AS "dateFin",
+  cj.jusquau_nouvel_ordre AS "jusquauNouvelOrdre", cj.prise_de_poste_id AS "priseDePosteId",
+  p.poste_id AS "posteId", po.nom AS "posteNom", p.shift_type AS "shiftType", cj.cree_le AS "createdAt"`;
+const entryReturningColumns = `id, date_consigne AS date, to_char(heure, 'HH24:MI') AS heure,
+  consigne, emetteur, destinataire, date_fin AS "dateFin", jusquau_nouvel_ordre AS "jusquauNouvelOrdre",
+  prise_de_poste_id AS "priseDePosteId", cree_le AS "createdAt"`;
 const datePattern = /^\d{4}-\d{2}-\d{2}$/;
 const timePattern = /^(?:[01]\d|2[0-3]):[0-5]\d$/;
 const cleanText = (value, max = 255) => typeof value === "string" ? value.trim().slice(0, max) : "";
+const validDate = (value) => {
+  if (!datePattern.test(value)) return false;
+  const parsed = new Date(`${value}T00:00:00.000Z`);
+  return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
+};
 
 async function getAccount(pool, userId) {
   const result = await pool.query("SELECT id, role, site_id FROM utilisateur WHERE id=$1::uuid AND actif=true LIMIT 1", [userId]);
@@ -38,11 +49,16 @@ export async function handleConsigneJournalRoutes(request, response, pool, pathn
     if (request.method === "GET" && pathname === routePath) {
       const url = new URL(request.url || "/", `http://${request.headers.host || "localhost"}`);
       const siteId = await resolveSite(pool, account, url.searchParams.get("siteId"));
+      const activeOnly = url.searchParams.get("activeOnly") === "true";
       const result = await pool.query(
         `SELECT ${entryColumns}
-         FROM consigne_journal WHERE site_id=$1::uuid
+         FROM consigne_journal cj
+         LEFT JOIN prise_de_poste p ON p.id=cj.prise_de_poste_id
+         LEFT JOIN poste po ON po.id=p.poste_id
+         WHERE cj.site_id=$1::uuid
+           AND (NOT $2::boolean OR cj.jusquau_nouvel_ordre=true OR cj.date_fin >= CURRENT_DATE)
          ORDER BY date_consigne DESC, heure DESC, cree_le DESC LIMIT 1000`,
-        [siteId],
+        [siteId, activeOnly],
       );
       json(response, 200, { entries: result.rows });
       return true;
@@ -74,18 +90,26 @@ export async function handleConsigneJournalRoutes(request, response, pool, pathn
     const consigne = cleanText(body?.consigne, 20000);
     const emetteur = cleanText(body?.emetteur);
     const destinataire = cleanText(body?.destinataire);
+    const jusquauNouvelOrdre = body?.jusquauNouvelOrdre === true;
+    const dateFin = jusquauNouvelOrdre ? null : cleanText(body?.dateFin, 10);
     if (!datePattern.test(date) || !timePattern.test(heure) || !consigne || !emetteur || !destinataire) {
       json(response, 400, { error: "Tous les champs sont obligatoires et la date et l'heure doivent etre valides." });
       return true;
     }
+    if (!jusquauNouvelOrdre && (!validDate(dateFin) || dateFin < date)) {
+      json(response, 400, { error: "Indiquez une date de fin valide ou choisissez « Jusqu’à nouvel ordre »." });
+      return true;
+    }
     const siteId = await resolveSite(pool, account, body.siteId);
+    const priseDePosteId = await resolvePriseDePosteId(pool, siteId, body.priseDePosteId);
     if (request.method === "PUT") {
       const result = await pool.query(
         `UPDATE consigne_journal
-         SET date_consigne=$2::date, heure=$3::time, consigne=$4, emetteur=$5, destinataire=$6
-         WHERE id=$1::uuid AND site_id=$7::uuid
-         RETURNING ${entryColumns}`,
-        [entryMatch[1], date, heure, consigne, emetteur, destinataire, siteId],
+         SET date_consigne=$2::date, heure=$3::time, consigne=$4, emetteur=$5, destinataire=$6,
+             date_fin=$7::date, jusquau_nouvel_ordre=$8, prise_de_poste_id=$9::uuid
+         WHERE id=$1::uuid AND site_id=$10::uuid
+         RETURNING ${entryReturningColumns}`,
+        [entryMatch[1], date, heure, consigne, emetteur, destinataire, dateFin, jusquauNouvelOrdre, priseDePosteId, siteId],
       );
       if (!result.rows[0]) {
         json(response, 404, { error: "Consigne introuvable pour ce site." });
@@ -97,10 +121,11 @@ export async function handleConsigneJournalRoutes(request, response, pool, pathn
 
     const result = await pool.query(
       `INSERT INTO consigne_journal
-         (site_id, date_consigne, heure, consigne, emetteur, destinataire, utilisateur_id)
-       VALUES ($1::uuid, $2::date, $3::time, $4, $5, $6, $7::uuid)
-       RETURNING ${entryColumns}`,
-      [siteId, date, heure, consigne, emetteur, destinataire, account.id],
+         (site_id, date_consigne, heure, consigne, emetteur, destinataire, utilisateur_id,
+          date_fin, jusquau_nouvel_ordre, prise_de_poste_id)
+       VALUES ($1::uuid, $2::date, $3::time, $4, $5, $6, $7::uuid, $8::date, $9, $10::uuid)
+       RETURNING ${entryReturningColumns}`,
+      [siteId, date, heure, consigne, emetteur, destinataire, account.id, dateFin, jusquauNouvelOrdre, priseDePosteId],
     );
     json(response, 201, { entry: result.rows[0] });
   } catch (error) {

@@ -1,4 +1,5 @@
 import { json, readJson } from "../utils/helpers.js";
+import { resolvePriseDePosteId } from "../utils/priseDePoste.js";
 
 const cleanText = (value, max = 255) => typeof value === "string" ? value.trim().slice(0, max) : "";
 
@@ -43,11 +44,15 @@ export async function getPatrols(request, response, pool, userId) {
     const result = await pool.query(
       `SELECT r.id, r.nom_parcours AS route_name, r.debut AS started_at, r.fin AS ended_at,
               r.points AS checkpoints, r.observations AS anomalies, r.site_id AS "siteId",
-              s.nom AS site_name, r.utilisateur_id AS agent_id, u.nom AS agent_name
+              s.nom AS site_name, r.utilisateur_id AS agent_id, u.nom AS agent_name,
+              p.poste_id AS "posteId", po.nom AS "posteNom", p.shift_type AS "shiftType"
        FROM ronde r JOIN site s ON s.id = r.site_id JOIN utilisateur u ON u.id = r.utilisateur_id
-       WHERE r.utilisateur_id = $2::uuid AND ($1::uuid IS NULL OR r.site_id = $1::uuid)
+       LEFT JOIN prise_de_poste p ON p.id=r.prise_de_poste_id
+       LEFT JOIN poste po ON po.id=p.poste_id
+       WHERE ($1::uuid IS NULL OR r.site_id = $1::uuid)
+         AND ($2::int=1 OR r.utilisateur_id = $3::uuid)
        ORDER BY r.debut DESC LIMIT 500`,
-      [siteId, userId],
+      [siteId, account.role, userId],
     );
     json(response, 200, { patrols: result.rows });
   } catch (error) {
@@ -66,12 +71,13 @@ export async function createPatrol(request, response, pool, userId) {
     await client.query("BEGIN");
     const account = await getAccount(client, userId);
     const siteId = await resolveSite(client, account, body.siteId);
+    const priseDePosteId = await resolvePriseDePosteId(client, siteId, body.priseDePosteId);
     const result = await client.query(
-      `INSERT INTO ronde (nom_parcours, points, site_id, utilisateur_id)
-       VALUES ($1, $2::jsonb, $3::uuid, $4::uuid)
+      `INSERT INTO ronde (nom_parcours, points, site_id, utilisateur_id, prise_de_poste_id)
+       VALUES ($1, $2::jsonb, $3::uuid, $4::uuid, $5::uuid)
        RETURNING id, nom_parcours AS route_name, debut AS started_at, fin AS ended_at,
                  points AS checkpoints, observations AS anomalies, site_id AS "siteId"`,
-      [routeName, JSON.stringify(points), siteId, userId],
+      [routeName, JSON.stringify(points), siteId, userId, priseDePosteId],
     );
     await client.query("COMMIT");
     json(response, 201, { patrol: result.rows[0] });

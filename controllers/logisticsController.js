@@ -1,10 +1,12 @@
 import { json, readJson } from "../utils/helpers.js";
+import { resolvePriseDePosteId } from "../utils/priseDePoste.js";
 
 const datePattern = /^\d{4}-\d{2}-\d{2}$/;
 const timePattern = /^(?:[01]\d|2[0-3]):[0-5]\d$/;
 const truckTypes = new Set(["DECHARGEMENT", "CHARGEMENT", "ORDURES"]);
 const fluxTypes = new Set(["DECHARGEMENT", "CHARGEMENT", "INVENTAIRE", "DECHETS", "BOUTEILLES_VIDES", "MATIERE_PREMIERE", "DEPOTAGE_FUEL", "ORDURES"]);
 const wasteRegisterDesignations = new Set(["Verres cassées", "Ordures", "Gravat"]);
+const logisticsDocumentTypes = new Set(["BON", "FACTURE", "BON_SORTIE"]);
 const incidentTypes = new Set(["ANOMALIE", "VIOLATION_PROCEDURE"]);
 const stockCategories = new Set(["VIDES", "PLEINS_EAUX"]);
 const bottleDesignations = new Set([
@@ -61,6 +63,26 @@ async function resolveSite(pool, account, body = {}) {
   }
   if (account.site_id) return account.site_id;
   throw Object.assign(new Error("Sélectionnez un site de travail actif."), { status: 400 });
+}
+
+async function resolveOpenPostShift(client, siteId, requestedId = null) {
+  if (requestedId && !uuidPattern.test(requestedId)) {
+    throw Object.assign(new Error("La prise de poste sélectionnée est invalide."), { status: 400 });
+  }
+  const result = await client.query(
+    `SELECT p.id
+     FROM prise_de_poste p
+     JOIN site s ON LOWER(BTRIM(s.nom)) = LOWER(BTRIM(p.site_de_travail))
+     WHERE s.id=$1::uuid AND s.actif=true
+       AND ($2::uuid IS NULL OR p.id=$2::uuid)
+       AND ($2::uuid IS NOT NULL OR p.ended_at IS NULL)
+     ORDER BY p.started_at DESC LIMIT 1`,
+    [siteId, requestedId],
+  );
+  if (!result.rows[0]) {
+    throw Object.assign(new Error("Ouvrez une prise de poste pour ce site avant d’enregistrer un flux logistique."), { status: 409 });
+  }
+  return result.rows[0].id;
 }
 
 async function querySiteForRead(pool, account, request) {
@@ -124,12 +146,17 @@ export async function getLogisticsEntries(request, response, pool, userId) {
     const account = await getAccount(pool, userId);
     const siteId = await querySiteForRead(pool, account, request);
     if (!siteId) return json(response, 200, { entries: [] });
+    const url = new URL(request.url || "/", `http://${request.headers.host || "localhost"}`);
+    const from = validDate(url.searchParams.get("from")) ? url.searchParams.get("from") : null;
+    const to = validDate(url.searchParams.get("to")) ? url.searchParams.get("to") : null;
+    const type = fluxTypes.has(url.searchParams.get("type")) ? url.searchParams.get("type") : null;
     const result = await pool.query(
       `SELECT f.id, f.date_operation::text AS date, f.type_flux AS type,
               f.camion, f.transporteur, f.document, f.plomb,
               to_char(COALESCE(f.heure_sortie, f.heure_arrivee), 'HH24:MI') AS "heureSortie", f.numero_pesage AS "numeroPesage",
               to_char(f.heure_sortie, 'HH24:MI') AS "heureFin",
               COALESCE(f.facture, f.document) AS facture, f.type_dechet AS "typeDechet", f.poids, f.destinataire,
+              f.type_document AS "typeDocument", f.emetteur, f.verification, f.visa_agent AS "visaAgent",
               COALESCE(f.vehicule, f.camion) AS vehicule,
               to_char(f.heure_arrivee, 'HH24:MI') AS "heureArrivee",
               COALESCE(f.immatriculation_vehicule, f.vehicule, f.camion) AS "immatriculationVehicule",
@@ -141,11 +168,20 @@ export async function getLogisticsEntries(request, response, pool, userId) {
               f.type_chargement AS "typeChargement", f.proprietaire,
               f.quantite_texte AS "quantiteTexte", f.lp,
               f.categorie_stock AS "categorieStock", f.article, f.quantite,
-              s.nom AS "siteName", s.type_site AS "siteType", f.cree_le AS "createdAt"
+              s.nom AS "siteName", s.type_site AS "siteType", f.cree_le AS "createdAt",
+              u.nom AS "createdBy", f.prise_de_poste_id AS "priseDePosteId",
+              po.nom AS "posteNom", pp.shift_type AS "shiftType",
+              (SELECT COUNT(*)::int FROM flux_logistique_document fd WHERE fd.flux_id=f.id) AS "attachmentCount"
        FROM flux_logistique f JOIN site s ON s.id = f.site_id
-       WHERE f.site_id = $1::uuid
-       ORDER BY f.date_operation DESC, f.cree_le DESC LIMIT 1000`,
-      [siteId],
+       JOIN utilisateur u ON u.id=f.utilisateur_id
+       LEFT JOIN prise_de_poste pp ON pp.id=f.prise_de_poste_id
+       LEFT JOIN poste po ON po.id=pp.poste_id
+       WHERE f.site_id = $1::uuid AND f.annule_le IS NULL
+         AND ($2::date IS NULL OR f.date_operation >= $2::date)
+         AND ($3::date IS NULL OR f.date_operation <= $3::date)
+         AND ($4::varchar IS NULL OR f.type_flux = $4::varchar)
+       ORDER BY f.date_operation DESC, f.cree_le DESC LIMIT 5000`,
+      [siteId, from, to, type],
     );
     json(response, 200, { entries: result.rows });
   } catch (error) {
@@ -168,7 +204,7 @@ export async function getStarParticulierLoadings(request, response, pool, userId
               f.quantite_texte AS "quantiteTexte", f.poids, f.destinataire,
               f.provenance, f.lp, f.titre, f.plomb, s.nom AS "siteName"
        FROM flux_logistique f JOIN site s ON s.id = f.site_id
-       WHERE f.site_id = $1::uuid
+       WHERE f.site_id = $1::uuid AND f.annule_le IS NULL
          AND f.type_flux = 'CHARGEMENT'
          AND f.type_chargement IN ('STAR', 'PARTICULIER')
        ORDER BY f.date_operation DESC, f.cree_le DESC LIMIT 1000`,
@@ -178,6 +214,91 @@ export async function getStarParticulierLoadings(request, response, pool, userId
   } catch (error) {
     console.error("GET star/particulier loadings failed:", error.code || error.name, error.message || "");
     json(response, error.status || 500, { error: error.status ? error.message : "Impossible de charger le registre des chargements." });
+  }
+}
+
+export async function getLogisticsAudit(request, response, pool, userId, entryId) {
+  try {
+    if (!uuidPattern.test(entryId)) return json(response, 404, { error: "Enregistrement introuvable." });
+    const account = await getAccount(pool, userId);
+    const siteId = await querySiteForRead(pool, account, request);
+    if (!siteId) return json(response, 404, { error: "Enregistrement introuvable." });
+    const result = await pool.query(
+      `SELECT a.id, a.action, a.avant AS "before", a.apres AS "after", a.cree_le AS "createdAt",
+              u.nom AS "createdBy"
+       FROM audit_flux_logistique a
+       JOIN flux_logistique f ON f.id=a.flux_id
+       LEFT JOIN utilisateur u ON u.id=a.utilisateur_id
+       WHERE a.flux_id=$1::uuid AND f.site_id=$2::uuid
+       ORDER BY a.cree_le DESC LIMIT 200`,
+      [entryId, siteId],
+    );
+    json(response, 200, { entries: result.rows });
+  } catch (error) {
+    console.error("GET logistics audit failed:", error.code || error.name, error.message || "");
+    json(response, error.status || 500, { error: error.status ? error.message : "Impossible de charger l’historique." });
+  }
+}
+
+export async function getLogisticsAttachments(request, response, pool, userId, entryId) {
+  try {
+    if (!uuidPattern.test(entryId)) return json(response, 404, { error: "Enregistrement introuvable." });
+    const account = await getAccount(pool, userId);
+    const siteId = await querySiteForRead(pool, account, request);
+    if (!siteId) return json(response, 404, { error: "Enregistrement introuvable." });
+    const result = await pool.query(
+      `SELECT d.id, d.nom AS name, d.extension, d.mime_type AS "mimeType", d.taille AS size,
+              d.cree_le AS "createdAt", u.nom AS "createdBy"
+       FROM flux_logistique_document fd
+       JOIN flux_logistique f ON f.id=fd.flux_id
+       JOIN document_site d ON d.id=fd.document_id
+       LEFT JOIN utilisateur u ON u.id=fd.utilisateur_id
+       WHERE fd.flux_id=$1::uuid AND f.site_id=$2::uuid AND d.site_id=$2::uuid
+       ORDER BY fd.cree_le`,
+      [entryId, siteId],
+    );
+    json(response, 200, { attachments: result.rows });
+  } catch (error) {
+    console.error("GET logistics attachments failed:", error.code || error.name, error.message || "");
+    json(response, error.status || 500, { error: error.status ? error.message : "Impossible de charger les pièces jointes." });
+  }
+}
+
+export async function linkLogisticsAttachment(request, response, pool, userId, entryId) {
+  const client = await pool.connect();
+  try {
+    if (!uuidPattern.test(entryId)) return json(response, 404, { error: "Enregistrement introuvable." });
+    const body = await readJson(request);
+    const documentId = cleanText(body.documentId, 36);
+    if (!uuidPattern.test(documentId)) return json(response, 400, { error: "Document invalide." });
+    await client.query("BEGIN");
+    const account = await getAccount(client, userId);
+    const siteId = await resolveSite(client, account, body);
+    const entry = await client.query(
+      "SELECT id FROM flux_logistique WHERE id=$1::uuid AND site_id=$2::uuid AND annule_le IS NULL FOR UPDATE",
+      [entryId, siteId],
+    );
+    if (!entry.rows[0]) throw Object.assign(new Error("Enregistrement introuvable sur ce site."), { status: 404 });
+    const document = await client.query(
+      "SELECT id FROM document_site WHERE id=$1::uuid AND site_id=$2::uuid",
+      [documentId, siteId],
+    );
+    if (!document.rows[0]) throw Object.assign(new Error("Document introuvable sur ce site."), { status: 404 });
+    const result = await client.query(
+      `INSERT INTO flux_logistique_document (flux_id, document_id, utilisateur_id)
+       VALUES ($1::uuid, $2::uuid, $3::uuid)
+       ON CONFLICT (flux_id, document_id) DO NOTHING
+       RETURNING id, cree_le AS "createdAt"`,
+      [entryId, documentId, userId],
+    );
+    await client.query("COMMIT");
+    json(response, 201, { linked: true, attachment: result.rows[0] || { documentId } });
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => {});
+    console.error("POST logistics attachment failed:", error.code || error.name, error.message || "");
+    json(response, error.status || 500, { error: error.status ? error.message : "Impossible d’associer la pièce jointe." });
+  } finally {
+    client.release();
   }
 }
 
@@ -215,10 +336,27 @@ export async function createStarParticulierLoading(request, response, pool, user
   try {
     const body = await readJson(request);
     const entry = validateStarParticulierLoading(body);
+    const clientRequestId = uuidPattern.test(body.clientRequestId || "") ? body.clientRequestId : null;
     client = await pool.connect();
     await client.query("BEGIN");
+    await client.query("SELECT set_config('app.user_id', $1, true)", [userId]);
+    await client.query("SELECT set_config('app.client_request_id', $1, true)", [clientRequestId || ""]);
     const account = await getAccount(client, userId);
     const siteId = await resolveSite(client, account, body);
+    if (clientRequestId) {
+      const duplicate = await client.query(
+        `SELECT id, site_id AS "siteId", date_operation::text AS date, type_flux AS type,
+                type_chargement AS "typeChargement", cree_le AS "createdAt"
+         FROM flux_logistique WHERE client_request_id=$1::uuid AND site_id=$2::uuid LIMIT 1`,
+        [clientRequestId, siteId],
+      );
+      if (duplicate.rows[0]) {
+        await client.query("COMMIT");
+        return json(response, 200, { entry: duplicate.rows[0], duplicate: true });
+      }
+    }
+    const postShiftId = await resolveOpenPostShift(client, siteId, body.priseDePosteId || null);
+    await client.query("SELECT set_config('app.prise_de_poste_id', $1, true)", [postShiftId]);
     await requireDriverForMatricule(client, siteId, entry.camion, entry.nomChauffeur);
     const result = await client.query(
       `INSERT INTO flux_logistique
@@ -256,6 +394,7 @@ export async function updateStarParticulierLoading(request, response, pool, user
     const entry = validateStarParticulierLoading(body);
     client = await pool.connect();
     await client.query("BEGIN");
+    await client.query("SELECT set_config('app.user_id', $1, true)", [userId]);
     const account = await getAccount(client, userId);
     const siteId = await resolveSite(client, account, body);
     await requireDriverForMatricule(client, siteId, entry.camion, entry.nomChauffeur);
@@ -265,7 +404,7 @@ export async function updateStarParticulierLoading(request, response, pool, user
            proprietaire = $5, nom_chauffeur = $6, designation = $7,
            quantite_texte = $8, poids = $9, destinataire = $10, provenance = $11,
            lp = $12, titre = $13, plomb = $14, type_chargement = $15
-       WHERE id = $1::uuid AND site_id = $16::uuid
+       WHERE id = $1::uuid AND site_id = $16::uuid AND annule_le IS NULL
          AND type_flux = 'CHARGEMENT' AND type_chargement IS NOT NULL
        RETURNING id, site_id AS "siteId", date_operation::text AS date, type_flux AS type,
           to_char(heure_arrivee, 'HH24:MI') AS "heureDebut",
@@ -300,11 +439,11 @@ export async function deleteStarParticulierLoading(request, response, pool, user
     const siteId = await querySiteForRead(pool, account, request);
     if (!siteId) return json(response, 400, { error: "Sélectionnez un site pour supprimer le chargement." });
     const result = await pool.query(
-      `DELETE FROM flux_logistique
+      `UPDATE flux_logistique SET annule_le=CURRENT_TIMESTAMP, modifie_par=$3::uuid
        WHERE id = $1::uuid AND site_id = $2::uuid
-         AND type_flux = 'CHARGEMENT' AND type_chargement IS NOT NULL
+         AND type_flux = 'CHARGEMENT' AND type_chargement IS NOT NULL AND annule_le IS NULL
        RETURNING id`,
-      [entryId, siteId],
+      [entryId, siteId, userId],
     );
     if (!result.rows[0]) return json(response, 404, { error: "Chargement introuvable sur ce site." });
     json(response, 200, { id: result.rows[0].id, deleted: true });
@@ -328,12 +467,28 @@ export async function createLogisticsEntry(request, response, pool, userId) {
       return json(response, 400, { error: "La date est invalide. Choisissez une date valide dans le formulaire." });
     }
 
+    const clientRequestId = uuidPattern.test(body.clientRequestId || "") ? body.clientRequestId : null;
     await client.query("BEGIN");
+    await client.query("SELECT set_config('app.user_id', $1, true)", [userId]);
+    await client.query("SELECT set_config('app.client_request_id', $1, true)", [clientRequestId || ""]);
     const account = await getAccount(client, userId);
     const siteId = await resolveSite(client, account, body);
     const siteResult = await client.query("SELECT nom, type_site FROM site WHERE id = $1::uuid", [siteId]);
     const site = siteResult.rows[0];
     if (!site) throw Object.assign(new Error("Site de travail introuvable."), { status: 404 });
+    if (clientRequestId) {
+      const duplicate = await client.query(
+        `SELECT id, date_operation::text AS date, type_flux AS type, cree_le AS "createdAt"
+         FROM flux_logistique WHERE client_request_id=$1::uuid AND site_id=$2::uuid LIMIT 1`,
+        [clientRequestId, siteId],
+      );
+      if (duplicate.rows[0]) {
+        await client.query("COMMIT");
+        return json(response, 200, { entry: duplicate.rows[0], duplicate: true });
+      }
+    }
+    const postShiftId = await resolveOpenPostShift(client, siteId, body.priseDePosteId || null);
+    await client.query("SELECT set_config('app.prise_de_poste_id', $1, true)", [postShiftId]);
 
     if (type === "BOUTEILLES_VIDES") {
       const time = cleanText(body.heureArrivee, 5);
@@ -544,23 +699,29 @@ export async function createLogisticsEntry(request, response, pool, userId) {
       const nbr = cleanText(body.nbr, 255);
       const facture = cleanText(body.facture, 160);
       const destinataire = cleanText(body.destinataire, 255);
+      const typeDocument = cleanText(body.typeDocument, 30).toUpperCase();
+      const emetteur = cleanText(body.emetteur, 255);
+      const verification = cleanText(body.verification, 2000);
+      const visaAgent = cleanText(body.visaAgent, 255);
       if (!immatriculation || !timePattern.test(heureSortie) || !designation || !nbr
-        || !/^\d{1,4}$/.test(facture) || !destinataire) {
-        throw Object.assign(new Error("Renseignez le matricule, l’heure de sortie, la désignation, le nombre, la facture et la destination."), { status: 400 });
+        || !facture || !destinataire || !logisticsDocumentTypes.has(typeDocument) || !emetteur || !verification || !visaAgent) {
+        throw Object.assign(new Error("Renseignez le type et le numéro du document, l’émetteur, l’objet, la vérification et le visa de l’agent."), { status: 400 });
       }
       const result = await client.query(
         `INSERT INTO flux_logistique
            (date_operation, type_flux, camion, immatriculation_vehicule, vehicule,
-            heure_sortie, designation, nbr, facture, document, destinataire, site_id, utilisateur_id)
-         VALUES ($1::date, 'DECHARGEMENT', $2, $2, $2, $3::time, $4, $5, $6, $6, $7, $8::uuid, $9::uuid)
+            heure_sortie, designation, nbr, facture, document, destinataire,
+            type_document, emetteur, verification, visa_agent, site_id, utilisateur_id)
+         VALUES ($1::date, 'DECHARGEMENT', $2, $2, $2, $3::time, $4, $5, $6, $6, $7, $8, $9, $10, $11, $12::uuid, $13::uuid)
          RETURNING id, cree_le AS "createdAt"`,
-        [date, immatriculation, heureSortie, designation, nbr, facture, destinataire, siteId, userId],
+        [date, immatriculation, heureSortie, designation, nbr, facture, destinataire, typeDocument, emetteur, verification, visaAgent, siteId, userId],
       );
       await client.query("COMMIT");
       return json(response, 201, {
         entry: {
           ...result.rows[0], date, type, immatriculationVehicule: immatriculation,
-          heureSortie, designation, nbr, facture, destinataire, siteName: site.nom, siteType: site.type_site,
+          heureSortie, designation, nbr, facture, destinataire, typeDocument, emetteur, verification, visaAgent,
+          siteName: site.nom, siteType: site.type_site,
         },
       });
     }
@@ -618,13 +779,14 @@ export async function updateTruckLogisticsEntry(request, response, pool, userId,
       }
 
       await client.query("BEGIN");
+    await client.query("SELECT set_config('app.user_id', $1, true)", [userId]);
       const account = await getAccount(client, userId);
       const siteId = await resolveSite(client, account, body);
       const result = await client.query(
         `UPDATE flux_logistique
          SET date_operation = $2::date, camion = $3, immatriculation_vehicule = $3,
              vehicule = $3, designation = $4, nbr = $5, facture = $6, document = $6, destinataire = $7
-         WHERE id = $1::uuid AND site_id = $8::uuid AND type_flux = 'ORDURES'
+         WHERE id = $1::uuid AND site_id = $8::uuid AND type_flux = 'ORDURES' AND annule_le IS NULL
          RETURNING id, date_operation::text AS date, type_flux AS type,
                    immatriculation_vehicule AS "immatriculationVehicule",
                    designation, nbr, facture, destinataire`,
@@ -644,24 +806,31 @@ export async function updateTruckLogisticsEntry(request, response, pool, userId,
       const nbr = cleanText(body.nbr, 255);
       const facture = cleanText(body.facture, 160);
       const destinataire = cleanText(body.destinataire, 255);
+      const typeDocument = cleanText(body.typeDocument, 30).toUpperCase();
+      const emetteur = cleanText(body.emetteur, 255);
+      const verification = cleanText(body.verification, 2000);
+      const visaAgent = cleanText(body.visaAgent, 255);
       if (!validDate(date) || !immatriculation || !timePattern.test(heureSortie)
-        || !designation || !nbr || !/^\d{1,4}$/.test(facture) || !destinataire) {
-        return json(response, 400, { error: "Renseignez la date, le matricule, l’heure de sortie, la désignation, le nombre, la facture et la destination." });
+        || !designation || !nbr || !facture || !destinataire || !logisticsDocumentTypes.has(typeDocument)
+        || !emetteur || !verification || !visaAgent) {
+        return json(response, 400, { error: "Renseignez la date, le véhicule, l’heure, le type/numéro du document, l’émetteur, l’objet, la vérification et le visa de l’agent." });
       }
 
       await client.query("BEGIN");
+    await client.query("SELECT set_config('app.user_id', $1, true)", [userId]);
       const account = await getAccount(client, userId);
       const siteId = await resolveSite(client, account, body);
       const result = await client.query(
         `UPDATE flux_logistique
          SET date_operation = $2::date, camion = $3, immatriculation_vehicule = $3, vehicule = $3,
-             heure_sortie = $4::time, designation = $5, nbr = $6, facture = $7, document = $7, destinataire = $8
-         WHERE id = $1::uuid AND site_id = $9::uuid AND type_flux = 'DECHARGEMENT'
+             heure_sortie = $4::time, designation = $5, nbr = $6, facture = $7, document = $7,
+             destinataire = $8, type_document = $9, emetteur = $10, verification = $11, visa_agent = $12
+         WHERE id = $1::uuid AND site_id = $13::uuid AND type_flux = 'DECHARGEMENT' AND annule_le IS NULL
          RETURNING id, date_operation::text AS date, type_flux AS type,
                    immatriculation_vehicule AS "immatriculationVehicule",
                    to_char(heure_sortie, 'HH24:MI') AS "heureSortie",
-                   designation, nbr, facture, destinataire`,
-        [entryId, date, immatriculation, heureSortie, designation, nbr, facture, destinataire, siteId],
+                   designation, nbr, facture, destinataire, type_document AS "typeDocument", emetteur, verification, visa_agent AS "visaAgent"`,
+        [entryId, date, immatriculation, heureSortie, designation, nbr, facture, destinataire, typeDocument, emetteur, verification, visaAgent, siteId],
       );
       if (!result.rows[0]) {
         await client.query("ROLLBACK");
@@ -683,13 +852,14 @@ export async function updateTruckLogisticsEntry(request, response, pool, userId,
     }
 
     await client.query("BEGIN");
+    await client.query("SELECT set_config('app.user_id', $1, true)", [userId]);
     const account = await getAccount(client, userId);
     const siteId = await resolveSite(client, account, body);
     const result = await client.query(
       `UPDATE flux_logistique
        SET date_operation = $2::date, type_flux = $3, camion = $4, nom_chauffeur = $5,
            heure_arrivee = $6::time, designation = $7, nbr = $8, document = $9, destinataire = $10
-       WHERE id = $1::uuid AND site_id = $11::uuid
+       WHERE id = $1::uuid AND site_id = $11::uuid AND annule_le IS NULL
          AND type_flux IN ('DECHARGEMENT', 'CHARGEMENT')
        RETURNING id, date_operation::text AS date, type_flux AS type, camion,
                  nom_chauffeur AS "nomChauffeur", to_char(heure_arrivee, 'HH24:MI') AS "heureArrivee",
@@ -721,11 +891,11 @@ export async function deleteTruckLogisticsEntry(request, response, pool, userId,
     const siteId = await querySiteForRead(pool, account, request);
     if (!siteId) return json(response, 400, { error: "Sélectionnez un site pour supprimer le mouvement." });
     const result = await pool.query(
-      `DELETE FROM flux_logistique
+      `UPDATE flux_logistique SET annule_le=CURRENT_TIMESTAMP, modifie_par=$4::uuid
        WHERE id = $1::uuid AND site_id = $2::uuid
-         AND type_flux = $3
+         AND type_flux = $3 AND annule_le IS NULL
        RETURNING id`,
-      [entryId, siteId, type],
+      [entryId, siteId, type, userId],
     );
     if (!result.rows[0]) return json(response, 404, { error: "Mouvement camion introuvable sur ce site." });
     json(response, 200, { id: result.rows[0].id, deleted: true });
@@ -773,6 +943,7 @@ export async function updateEmptyBottleEntry(request, response, pool, userId, en
     }
 
     await client.query("BEGIN");
+    await client.query("SELECT set_config('app.user_id', $1, true)", [userId]);
     const account = await getAccount(client, userId);
     const siteId = await resolveSite(client, account, body);
     const result = await client.query(
@@ -780,7 +951,7 @@ export async function updateEmptyBottleEntry(request, response, pool, userId, en
        SET date_operation = $2::date, heure_arrivee = $3::time, heure_sortie = $4::time,
            immatriculation_vehicule = $5, nom_chauffeur = $6, numero_titre = $7,
            plomb = $8, provenance = $9, poids = $10, details_bouteilles = $11::jsonb
-       WHERE id = $1::uuid AND site_id = $12::uuid AND type_flux = 'BOUTEILLES_VIDES'
+       WHERE id = $1::uuid AND site_id = $12::uuid AND type_flux = 'BOUTEILLES_VIDES' AND annule_le IS NULL
        RETURNING id`,
       [entryId, date, time, endTime, immatriculation, nomChauffeur, numeroTitre, plomb, provenance,
         poids, JSON.stringify(normalizedDetails), siteId],
@@ -811,10 +982,10 @@ export async function deleteEmptyBottleEntry(request, response, pool, userId, en
     const siteId = await querySiteForRead(pool, account, request);
     if (!siteId) return json(response, 400, { error: "Sélectionnez un site pour supprimer la réception." });
     const result = await pool.query(
-      `DELETE FROM flux_logistique
-       WHERE id = $1::uuid AND site_id = $2::uuid AND type_flux = 'BOUTEILLES_VIDES'
+      `UPDATE flux_logistique SET annule_le=CURRENT_TIMESTAMP, modifie_par=$3::uuid
+       WHERE id = $1::uuid AND site_id = $2::uuid AND type_flux = 'BOUTEILLES_VIDES' AND annule_le IS NULL
        RETURNING id`,
-      [entryId, siteId],
+      [entryId, siteId, userId],
     );
     if (!result.rows[0]) return json(response, 404, { error: "Réception de bouteilles introuvable sur ce site." });
     json(response, 200, { id: result.rows[0].id, deleted: true });
@@ -845,11 +1016,12 @@ export async function updateWasteEntry(request, response, pool, userId, entryId)
     }
 
     await client.query("BEGIN");
+    await client.query("SELECT set_config('app.user_id', $1, true)", [userId]);
     const account = await getAccount(client, userId);
     const siteId = await resolveSite(client, account, body);
     const existing = await client.query(
       `SELECT id FROM flux_logistique
-       WHERE id = $1::uuid AND type_flux = 'DECHETS' AND site_id = $2::uuid
+       WHERE id = $1::uuid AND type_flux = 'DECHETS' AND site_id = $2::uuid AND annule_le IS NULL
        FOR UPDATE`,
       [entryId, siteId],
     );
@@ -862,7 +1034,7 @@ export async function updateWasteEntry(request, response, pool, userId, entryId)
       `UPDATE flux_logistique
        SET date_operation = $2::date, type_dechet = $3, heure_sortie = $4::time, numero_pesage = $5,
            facture = $6, poids = $7, destinataire = $8, vehicule = $9
-       WHERE id = $1::uuid
+       WHERE id = $1::uuid AND annule_le IS NULL
        RETURNING id, date_operation AS date, to_char(heure_sortie, 'HH24:MI') AS "heureSortie",
                  type_dechet AS "typeDechet", numero_pesage AS "numeroPesage", facture, poids, destinataire, vehicule`,
       [entryId, date, typeDechet, time, numeroPesage, facture, poids, destinataire, vehicule],
@@ -887,10 +1059,10 @@ export async function deleteWasteEntry(request, response, pool, userId, entryId)
     const siteId = await querySiteForRead(pool, account, request);
     if (!siteId) return json(response, 400, { error: "Sélectionnez un site pour supprimer la sortie." });
     const result = await pool.query(
-      `DELETE FROM flux_logistique
-       WHERE id = $1::uuid AND type_flux = 'DECHETS' AND site_id = $2::uuid
+      `UPDATE flux_logistique SET annule_le=CURRENT_TIMESTAMP, modifie_par=$3::uuid
+       WHERE id = $1::uuid AND type_flux = 'DECHETS' AND site_id = $2::uuid AND annule_le IS NULL
        RETURNING id`,
-      [entryId, siteId],
+      [entryId, siteId, userId],
     );
     if (!result.rows[0]) return json(response, 404, { error: "Sortie de déchets introuvable sur ce site." });
     json(response, 200, { id: result.rows[0].id, deleted: true });
@@ -920,11 +1092,12 @@ export async function updateMatierePremiereEntry(request, response, pool, userId
     }
 
     await client.query("BEGIN");
+    await client.query("SELECT set_config('app.user_id', $1, true)", [userId]);
     const account = await getAccount(client, userId);
     const siteId = await resolveSite(client, account, body);
     const existing = await client.query(
       `SELECT id FROM flux_logistique
-       WHERE id = $1::uuid AND type_flux = 'MATIERE_PREMIERE' AND site_id = $2::uuid
+       WHERE id = $1::uuid AND type_flux = 'MATIERE_PREMIERE' AND site_id = $2::uuid AND annule_le IS NULL
        FOR UPDATE`,
       [entryId, siteId],
     );
@@ -937,7 +1110,7 @@ export async function updateMatierePremiereEntry(request, response, pool, userId
       `UPDATE flux_logistique
        SET date_operation = $2::date, camion = $3, heure_pointe = $4::time,
            designation = $5, quantite = $6, document = $7, provenance = $8
-       WHERE id = $1::uuid
+       WHERE id = $1::uuid AND annule_le IS NULL
        RETURNING id, date_operation::text AS date, to_char(heure_pointe, 'HH24:MI') AS "heurePointe",
                  camion AS vehicule, designation, quantite, document, provenance`,
       [entryId, date, vehicule, time, designation, quantity, document, provenance],
@@ -962,10 +1135,10 @@ export async function deleteMatierePremiereEntry(request, response, pool, userId
     const siteId = await querySiteForRead(pool, account, request);
     if (!siteId) return json(response, 400, { error: "Sélectionnez un site pour supprimer le déchargement." });
     const result = await pool.query(
-      `DELETE FROM flux_logistique
-       WHERE id = $1::uuid AND type_flux = 'MATIERE_PREMIERE' AND site_id = $2::uuid
+      `UPDATE flux_logistique SET annule_le=CURRENT_TIMESTAMP, modifie_par=$3::uuid
+       WHERE id = $1::uuid AND type_flux = 'MATIERE_PREMIERE' AND site_id = $2::uuid AND annule_le IS NULL
        RETURNING id`,
-      [entryId, siteId],
+      [entryId, siteId, userId],
     );
     if (!result.rows[0]) return json(response, 404, { error: "Déchargement introuvable sur ce site." });
     json(response, 200, { id: result.rows[0].id, deleted: true });
@@ -998,11 +1171,12 @@ export async function updateDepotageFuelEntry(request, response, pool, userId, e
     }
 
     await client.query("BEGIN");
+    await client.query("SELECT set_config('app.user_id', $1, true)", [userId]);
     const account = await getAccount(client, userId);
     const siteId = await resolveSite(client, account, body);
     const existing = await client.query(
       `SELECT id FROM flux_logistique
-       WHERE id = $1::uuid AND type_flux = 'DEPOTAGE_FUEL' AND site_id = $2::uuid
+       WHERE id = $1::uuid AND type_flux = 'DEPOTAGE_FUEL' AND site_id = $2::uuid AND annule_le IS NULL
        FOR UPDATE`,
       [entryId, siteId],
     );
@@ -1015,7 +1189,7 @@ export async function updateDepotageFuelEntry(request, response, pool, userId, e
       `UPDATE flux_logistique
        SET date_operation = $2::date, heure_pointe = $3::time, titre = $4, plomb = $5,
            designation = $6, quantite = $7, cree = $8, chauffeur = $9, magasinier = $10
-       WHERE id = $1::uuid
+       WHERE id = $1::uuid AND annule_le IS NULL
        RETURNING id, date_operation::text AS date, to_char(heure_pointe, 'HH24:MI') AS "heurePointe",
                  titre, plomb, designation, quantite, cree, chauffeur, magasinier`,
       [entryId, date, time, titre, plomb, designation, quantity, cree, chauffeur, magasinier],
@@ -1040,10 +1214,10 @@ export async function deleteDepotageFuelEntry(request, response, pool, userId, e
     const siteId = await querySiteForRead(pool, account, request);
     if (!siteId) return json(response, 400, { error: "Sélectionnez un site pour supprimer le dépotage." });
     const result = await pool.query(
-      `DELETE FROM flux_logistique
-       WHERE id = $1::uuid AND type_flux = 'DEPOTAGE_FUEL' AND site_id = $2::uuid
+      `UPDATE flux_logistique SET annule_le=CURRENT_TIMESTAMP, modifie_par=$3::uuid
+       WHERE id = $1::uuid AND type_flux = 'DEPOTAGE_FUEL' AND site_id = $2::uuid AND annule_le IS NULL
        RETURNING id`,
-      [entryId, siteId],
+      [entryId, siteId, userId],
     );
     if (!result.rows[0]) return json(response, 404, { error: "Dépotage fuel/gasoil introuvable sur ce site." });
     json(response, 200, { id: result.rows[0].id, deleted: true });
@@ -1066,8 +1240,10 @@ export async function getLogisticsIncidents(request, response, pool, userId) {
               e.casse AS broken, e.manquant AS missing, e.vides AS empty, e.phn,
               e.description_faits AS facts, e.personne AS person, e.observations,
               e.mesures_prises AS measures, s.nom AS "siteName", s.type_site AS "siteType",
-              e.cree_le AS "createdAt"
+              e.cree_le AS "createdAt", p.poste_id AS "posteId", po.nom AS "posteNom", p.shift_type AS "shiftType"
        FROM signalement_logistique e JOIN site s ON s.id = e.site_id
+       LEFT JOIN prise_de_poste p ON p.id=e.prise_de_poste_id
+       LEFT JOIN poste po ON po.id=p.poste_id
        WHERE e.site_id = $1::uuid AND ($2::varchar IS NULL OR e.type_signalement = $2::varchar)
        ORDER BY e.date_operation DESC, e.heure DESC, e.cree_le DESC LIMIT 1000`,
       [siteId, filterType],
@@ -1110,8 +1286,10 @@ export async function createLogisticsIncident(request, response, pool, userId) {
     }
 
     await client.query("BEGIN");
+    await client.query("SELECT set_config('app.user_id', $1, true)", [userId]);
     const account = await getAccount(client, userId);
     const siteId = await resolveSite(client, account, body);
+    const priseDePosteId = await resolvePriseDePosteId(client, siteId, body.priseDePosteId);
     const siteResult = await client.query("SELECT nom, type_site FROM site WHERE id = $1::uuid", [siteId]);
     const site = siteResult.rows[0];
     if (!site) throw Object.assign(new Error("Site de travail introuvable."), { status: 404 });
@@ -1119,16 +1297,16 @@ export async function createLogisticsIncident(request, response, pool, userId) {
       `INSERT INTO signalement_logistique
          (date_operation, heure, type_signalement, camion, transporteur, document,
           casse, manquant, vides, phn, description_faits, personne, observations,
-          mesures_prises, site_id, utilisateur_id)
-       VALUES ($1::date, $2::time, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15::uuid, $16::uuid)
+          mesures_prises, site_id, utilisateur_id, prise_de_poste_id)
+       VALUES ($1::date, $2::time, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15::uuid, $16::uuid, $17::uuid)
        RETURNING id, cree_le AS "createdAt"`,
       [date, time, type, values.camion, values.transporteur, values.document, values.broken,
         values.missing, values.empty, values.phn, values.facts, values.person,
-        values.observations, values.measures, siteId, userId],
+        values.observations, values.measures, siteId, userId, priseDePosteId],
     );
     await client.query("COMMIT");
     json(response, 201, {
-      entry: { ...result.rows[0], date, time, type, ...values, siteName: site.nom, siteType: site.type_site },
+      entry: { ...result.rows[0], date, time, type, ...values, siteName: site.nom, siteType: site.type_site, priseDePosteId },
     });
   } catch (error) {
     await client.query("ROLLBACK").catch(() => {});

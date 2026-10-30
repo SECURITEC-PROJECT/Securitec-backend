@@ -134,6 +134,9 @@ model ConsigneJournal {
   consigne      String      @db.Text
   emetteur      String      @db.VarChar(255)
   destinataire  String      @db.VarChar(255)
+  dateFin       DateTime?   @map("date_fin") @db.Date
+  jusquauNouvelOrdre Boolean @default(false) @map("jusquau_nouvel_ordre")
+  priseDePosteId String?    @map("prise_de_poste_id") @db.Uuid
   utilisateurId String      @map("utilisateur_id") @db.Uuid
   creeLe        DateTime    @default(now()) @map("cree_le") @db.Timestamp(6)
   site          Site        @relation(fields: [siteId], references: [id], onDelete: Restrict, map: "fk_consigne_journal_site")
@@ -371,6 +374,7 @@ model Passation {
   utilisateurId       String      @map("utilisateur_id") @db.Uuid
   siteId              String?     @map("site_id") @db.Uuid
   vacationId          String?     @map("vacation_id") @db.Uuid
+  priseDePosteServiceId String?    @map("prise_de_poste_service_id") @db.Uuid
   utilisateur         Utilisateur @relation(fields: [utilisateurId], references: [id], onDelete: Restrict, map: "fk_passation_utilisateur")
   site                Site?       @relation(fields: [siteId], references: [id], onDelete: SetNull, map: "fk_passation_site")
   vacation            Vacation?   @relation(fields: [vacationId], references: [id], onDelete: SetNull, map: "fk_passation_vacation")
@@ -547,13 +551,51 @@ model FluxLogistique {
   cree           String?     @db.VarChar(160)
   chauffeur      String?     @db.VarChar(160)
   magasinier     String?     @db.VarChar(160)
+  typeDocument   String?     @map("type_document") @db.VarChar(30)
+  emetteur       String?     @db.VarChar(255)
+  verification   String?     @db.Text
+  visaAgent      String?     @map("visa_agent") @db.VarChar(255)
+  priseDePosteId String?     @map("prise_de_poste_id") @db.Uuid
+  modifiePar     String?     @map("modifie_par") @db.Uuid
+  annuleLe       DateTime?   @map("annule_le") @db.Timestamptz(6)
+  clientRequestId String?    @map("client_request_id") @db.Uuid
   siteId         String      @map("site_id") @db.Uuid
   utilisateurId  String      @map("utilisateur_id") @db.Uuid
   site           Site        @relation(fields: [siteId], references: [id], onDelete: Restrict, map: "fk_flux_logistique_site")
   utilisateur    Utilisateur @relation(fields: [utilisateurId], references: [id], onDelete: Restrict, map: "fk_flux_logistique_utilisateur")
+  audit           FluxLogistiqueAudit[]
+  piecesJointes   FluxLogistiqueDocument[]
 
   @@index([siteId, dateOperation, typeFlux], map: "idx_flux_logistique_site_date")
   @@map("flux_logistique")
+}
+
+model FluxLogistiqueAudit {
+  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  fluxId        String   @map("flux_id") @db.Uuid
+  utilisateurId String?  @map("utilisateur_id") @db.Uuid
+  action        String   @db.VarChar(20)
+  avant         Json     @db.JsonB
+  apres         Json     @db.JsonB
+  creeLe        DateTime @default(now()) @map("cree_le") @db.Timestamptz(6)
+  flux          FluxLogistique @relation(fields: [fluxId], references: [id], onDelete: Restrict, map: "fk_audit_flux_logistique_entry")
+
+  @@index([fluxId, creeLe(sort: Desc)], map: "idx_audit_flux_logistique_entry_date")
+  @@map("audit_flux_logistique")
+}
+
+model FluxLogistiqueDocument {
+  id            String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  fluxId        String       @map("flux_id") @db.Uuid
+  documentId    String       @map("document_id") @db.Uuid
+  utilisateurId String       @map("utilisateur_id") @db.Uuid
+  creeLe        DateTime     @default(now()) @map("cree_le") @db.Timestamptz(6)
+  flux          FluxLogistique @relation(fields: [fluxId], references: [id], onDelete: Restrict, map: "fk_flux_logistique_document_flux")
+  document      DocumentSite @relation(fields: [documentId], references: [id], onDelete: Restrict, map: "fk_flux_logistique_document_document")
+
+  @@unique([fluxId, documentId], map: "flux_logistique_document_flux_id_document_id_key")
+  @@index([fluxId, creeLe], map: "idx_flux_logistique_document_flux")
+  @@map("flux_logistique_document")
 }
 
 model TruckChecklist {
@@ -737,6 +779,7 @@ model SignalementLogistique {
   mesuresPrises    String?     @map("mesures_prises") @db.Text
   siteId           String      @map("site_id") @db.Uuid
   utilisateurId    String      @map("utilisateur_id") @db.Uuid
+  priseDePosteId    String?     @map("prise_de_poste_id") @db.Uuid
   site             Site        @relation(fields: [siteId], references: [id], onDelete: Restrict, map: "fk_signalement_logistique_site")
   utilisateur      Utilisateur @relation(fields: [utilisateurId], references: [id], onDelete: Restrict, map: "fk_signalement_logistique_utilisateur")
 
@@ -754,6 +797,7 @@ model Ronde {
   observations  String?     @db.Text
   siteId        String      @map("site_id") @db.Uuid
   utilisateurId String      @map("utilisateur_id") @db.Uuid
+  priseDePosteId String?    @map("prise_de_poste_id") @db.Uuid
   site          Site        @relation(fields: [siteId], references: [id], onDelete: Restrict, map: "fk_ronde_site")
   utilisateur   Utilisateur @relation(fields: [utilisateurId], references: [id], onDelete: Restrict, map: "fk_ronde_utilisateur")
 
@@ -794,6 +838,7 @@ model MainCourante {
   heure           DateTime    @db.Time(0)
   siteId          String      @map("site_id") @db.Uuid
   utilisateurId   String      @map("utilisateur_id") @db.Uuid
+  priseDePosteId  String?     @map("prise_de_poste_id") @db.Uuid
   site            Site        @relation(fields: [siteId], references: [id], onDelete: Restrict, map: "fk_main_courante_site")
   utilisateur     Utilisateur @relation(fields: [utilisateurId], references: [id], onDelete: Restrict, map: "fk_main_courante_utilisateur")
 
@@ -948,9 +993,30 @@ model DocumentSite {
   creeLe        DateTime    @default(now()) @map("cree_le") @db.Timestamptz(6)
   site          Site        @relation(fields: [siteId], references: [id], onDelete: Cascade, map: "document_site_site_id_fkey")
   utilisateur   Utilisateur @relation(fields: [utilisateurId], references: [id], onDelete: Restrict, map: "document_site_utilisateur_id_fkey")
+  liensLogistiques FluxLogistiqueDocument[]
 
   @@index([siteId, creeLe(sort: Desc)], map: "document_site_site_id_cree_le_idx")
   @@map("document_site")
+}
+
+model PriseDePoste {
+  id               String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  matricule        String     @db.VarChar(50)
+  nom              String     @db.VarChar(100)
+  prenom           String     @db.VarChar(100)
+  prestataire      String     @db.VarChar(160)
+  siteDeTravail    String     @map("site_de_travail") @db.VarChar(255)
+  notes            String?    @db.Text
+  startedAt        DateTime   @default(now()) @map("started_at") @db.Timestamp(6)
+  endedAt          DateTime?  @map("ended_at") @db.Timestamp(6)
+  posteId          String?    @map("poste_id") @db.Uuid
+  serviceId        String?    @map("service_id") @db.Uuid
+  shiftType        ShiftAgent? @map("shift_type")
+  fonctionService  String?    @map("fonction_service") @db.VarChar(20)
+  ouvertPar        String?    @map("ouvert_par") @db.Uuid
+
+  @@index([serviceId, startedAt], map: "idx_prise_de_poste_service")
+  @@map("prise_de_poste")
 }
 
 model Chauffeur {
