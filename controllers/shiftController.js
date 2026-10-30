@@ -5,11 +5,13 @@ export async function getShifts(request, response, pool, siteId = null) {
   try {
     const query = `
       SELECT p.id, p.matricule, p.nom, p.prenom, p.prestataire, p.site_de_travail,
-             p.notes, p.started_at, p.ended_at, p.poste_id AS "posteId",
+             p.notes, p.started_at AT TIME ZONE 'UTC' AS started_at,
+             p.ended_at AT TIME ZONE 'UTC' AS ended_at, p.poste_id AS "posteId",
              p.shift_type AS "shiftType", p.fonction_service AS "fonctionService",
              COALESCE(sp.id, p.service_id, p.id) AS "serviceId", po.nom AS "posteNom",
              COALESCE(sp.site_id, s.id) AS "siteId",
-             sp.started_at AS "serviceStartedAt", sp.ended_at AS "serviceEndedAt",
+             sp.started_at AT TIME ZONE 'UTC' AS "serviceStartedAt",
+             sp.ended_at AT TIME ZONE 'UTC' AS "serviceEndedAt",
              sp.notes AS "serviceNotes"
       FROM prise_de_poste p
       LEFT JOIN service_poste sp ON sp.id=COALESCE(p.service_id,p.id)
@@ -117,7 +119,9 @@ async function createGroupedShift(data, pool, userId) {
       `INSERT INTO prise_de_poste
          (matricule,nom,prenom,prestataire,site_de_travail,notes,started_at,poste_id,service_id,shift_type,fonction_service,ouvert_par)
        VALUES ($1,$2,$3,$4,$5,$6,NOW(),$7::uuid,$8::uuid,$9::shift_agent,'CHEF',$10::uuid)
-       RETURNING id,matricule,nom,prenom,prestataire,site_de_travail,notes,started_at,ended_at,
+       RETURNING id,matricule,nom,prenom,prestataire,site_de_travail,notes,
+                 started_at AT TIME ZONE 'UTC' AS started_at,
+                 ended_at AT TIME ZONE 'UTC' AS ended_at,
                  poste_id AS "posteId", shift_type AS "shiftType", fonction_service AS "fonctionService"`,
       [leader.matricule, leader.nom, leader.prenom, leader.prestataire, post.rows[0].siteName,
         serviceNotes, posteId, serviceId, shiftType, userId],
@@ -128,7 +132,9 @@ async function createGroupedShift(data, pool, userId) {
         `INSERT INTO prise_de_poste
            (matricule,nom,prenom,prestataire,site_de_travail,notes,started_at,poste_id,service_id,shift_type,fonction_service,ouvert_par)
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8::uuid,$9::uuid,$10::shift_agent,'AGENT',$11::uuid)
-         RETURNING id,matricule,nom,prenom,prestataire,site_de_travail,notes,started_at,ended_at,
+         RETURNING id,matricule,nom,prenom,prestataire,site_de_travail,notes,
+                   started_at AT TIME ZONE 'UTC' AS started_at,
+                   ended_at AT TIME ZONE 'UTC' AS ended_at,
                    poste_id AS "posteId", shift_type AS "shiftType", fonction_service AS "fonctionService"`,
         [employee.matricule, employee.nom, employee.prenom, employee.prestataire, post.rows[0].siteName,
           serviceNotes, leaderResult.rows[0].started_at,
@@ -178,7 +184,11 @@ export async function createShift(data, pool, userId) {
     );
     const result = await client.query(
       `INSERT INTO prise_de_poste (matricule,nom,prenom,prestataire,site_de_travail,notes,started_at,service_id,fonction_service,ouvert_par)
-       VALUES ($1,$2,$3,$4,$5,$6,NOW(),$7::uuid,'CHEF',$8::uuid) RETURNING *`,
+       VALUES ($1,$2,$3,$4,$5,$6,NOW(),$7::uuid,'CHEF',$8::uuid)
+       RETURNING id,matricule,nom,prenom,prestataire,site_de_travail,notes,
+                 started_at AT TIME ZONE 'UTC' AS started_at,
+                 ended_at AT TIME ZONE 'UTC' AS ended_at,poste_id AS "posteId",
+                 service_id AS "serviceId",shift_type AS "shiftType",fonction_service AS "fonctionService"`,
       [...values, serviceId, userId || null],
     );
     await client.query("COMMIT");
@@ -209,7 +219,8 @@ export async function endShift(shiftId, pool, siteId = null) {
     const closedAt = new Date();
     const result = await client.query(
       `UPDATE prise_de_poste SET ended_at=COALESCE(ended_at,NOW())
-       WHERE service_id=$1::uuid RETURNING *`, [serviceId],
+      WHERE service_id=$1::uuid
+      RETURNING id,ended_at AT TIME ZONE 'UTC' AS ended_at`, [serviceId],
     );
     await client.query(`UPDATE service_poste SET ended_at=COALESCE(ended_at,NOW()) WHERE id=$1::uuid`, [serviceId]);
     await client.query("COMMIT");
