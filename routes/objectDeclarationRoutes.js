@@ -1,5 +1,6 @@
 import { getRequestUser } from "../utils/auth.js";
 import { json, readJson } from "../utils/helpers.js";
+import { resolveServicePosteId } from "../utils/priseDePoste.js";
 
 const collectionPath = "/api/object-declarations";
 const entryPath = /^\/api\/object-declarations\/([0-9a-f-]+)$/i;
@@ -48,8 +49,11 @@ async function resolveSite(pool, account, requestedSiteId) {
 }
 
 const selection = `SELECT d.id, d.donnees AS data, d.site_id AS "siteId", s.nom AS "siteName",
-  d.cree_le AS "createdAt", d.modifie_le AS "updatedAt"
-  FROM declaration_objet d JOIN site s ON s.id=d.site_id`;
+  d.cree_le AS "createdAt", d.modifie_le AS "updatedAt", d.service_poste_id AS "servicePosteId",
+  sp.poste_id AS "posteId", po.nom AS "posteNom", sp.shift_type AS "shiftType"
+  FROM declaration_objet d JOIN site s ON s.id=d.site_id
+  LEFT JOIN service_poste sp ON sp.id=d.service_poste_id
+  LEFT JOIN poste po ON po.id=sp.poste_id`;
 
 export async function handleObjectDeclarationRoutes(request, response, pool, pathname, jwtSecret) {
   const entryMatch = entryPath.exec(pathname);
@@ -79,6 +83,7 @@ export async function handleObjectDeclarationRoutes(request, response, pool, pat
       const body = await readJson(request);
       const data = validateData(body.data);
       const siteId = await resolveSite(pool, account, body.siteId);
+      const servicePosteId = await resolveServicePosteId(pool, siteId, body.priseDePosteId, body.posteId || null);
       const duplicate = await pool.query(
         `SELECT id FROM declaration_objet
          WHERE site_id=$1::uuid AND lower(donnees->>'referenceNumber')=lower($2)
@@ -87,10 +92,10 @@ export async function handleObjectDeclarationRoutes(request, response, pool, pat
       );
       if (duplicate.rows[0]) { json(response, 409, { error: "Ce numéro de fiche est déjà utilisé sur ce site." }); return true; }
       const result = await pool.query(
-        `INSERT INTO declaration_objet (date_operation, donnees, site_id, utilisateur_id)
-         VALUES ($1::date, $2::jsonb, $3::uuid, $4::uuid)
-         RETURNING id, donnees AS data, site_id AS "siteId", cree_le AS "createdAt", modifie_le AS "updatedAt"`,
-        [data.date, JSON.stringify(data), siteId, account.id],
+        `INSERT INTO declaration_objet (date_operation, donnees, site_id, utilisateur_id, service_poste_id)
+         VALUES ($1::date, $2::jsonb, $3::uuid, $4::uuid, $5::uuid)
+         RETURNING id, donnees AS data, site_id AS "siteId", cree_le AS "createdAt", modifie_le AS "updatedAt", service_poste_id AS "servicePosteId"`,
+        [data.date, JSON.stringify(data), siteId, account.id, servicePosteId],
       );
       const site = await pool.query("SELECT nom AS \"siteName\" FROM site WHERE id=$1::uuid", [siteId]);
       json(response, 201, { entry: { ...result.rows[0], siteName: site.rows[0].siteName } });
@@ -113,7 +118,7 @@ export async function handleObjectDeclarationRoutes(request, response, pool, pat
         `UPDATE declaration_objet
          SET date_operation=$2::date, donnees=$3::jsonb, modifie_le=CURRENT_TIMESTAMP
          WHERE id=$1::uuid AND site_id=$4::uuid
-         RETURNING id, donnees AS data, site_id AS "siteId", cree_le AS "createdAt", modifie_le AS "updatedAt"`,
+         RETURNING id, donnees AS data, site_id AS "siteId", cree_le AS "createdAt", modifie_le AS "updatedAt", service_poste_id AS "servicePosteId"`,
         [entryMatch[1], data.date, JSON.stringify(data), siteId],
       );
       if (!result.rows[0]) { json(response, 404, { error: "Déclaration introuvable sur ce site." }); return true; }

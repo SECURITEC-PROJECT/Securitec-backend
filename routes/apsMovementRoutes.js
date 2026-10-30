@@ -217,6 +217,12 @@ export async function handleApsMovementRoutes(request, response, pool, pathname,
     if (!account) throw Object.assign(new Error("Utilisateur introuvable."), { status: 401 });
     const url = new URL(request.url || "/", `http://${request.headers.host || "localhost"}`);
 
+    if (pathname === handoversPath || handoverRecordMatch) {
+      if (Number(account.role) !== 2) {
+        throw Object.assign(new Error("Seul le chef de poste peut consulter ou gérer les passations de service."), { status: 403 });
+      }
+    }
+
     if (pathname === handoversPath && request.method === "GET") {
       const date = url.searchParams.get("date") || "";
       if (!validDate(date)) throw Object.assign(new Error("Date invalide."), { status: 400 });
@@ -394,6 +400,7 @@ export async function handleApsMovementRoutes(request, response, pool, pathname,
     }
 
     if (request.method === "PUT" && pathname === configurationPath) {
+      if (Number(account.role) !== 1) throw Object.assign(new Error("Seul l’administrateur peut configurer les postes APS."), { status: 403 });
       const body = await readJson(request);
       const postes = validatePostes(body?.postes);
       const siteId = await resolveSite(pool, account, body?.siteId);
@@ -418,7 +425,12 @@ export async function handleApsMovementRoutes(request, response, pool, pathname,
       const service = readService(body?.service);
       if (!validDate(date)) throw Object.assign(new Error("Date invalide."), { status: 400 });
       const siteId = await resolveSite(pool, account, body?.siteId);
-      const postes = validatePostes(body?.postes);
+      const configuration = await pool.query(
+        "SELECT postes FROM configuration_postes_mouvement_aps WHERE site_id=$1::uuid LIMIT 1",
+        [siteId],
+      );
+      if (!configuration.rows[0]?.postes) throw Object.assign(new Error("Les postes APS doivent d’abord être configurés par l’administrateur."), { status: 409 });
+      const postes = validatePostes(configuration.rows[0].postes);
       const data = validateData(body?.data, postes);
       const client = await pool.connect();
       try {
@@ -432,7 +444,6 @@ export async function handleApsMovementRoutes(request, response, pool, pathname,
           [siteId, date, service, JSON.stringify(data), account.id],
         );
         await replaceApsServiceLinks(client, "mouvement_aps_service_poste", "mouvement_aps_id", result.rows[0].id, siteId, date, service.toUpperCase());
-        await saveConfiguration(client, siteId, postes, account.id);
         await client.query("COMMIT");
         json(response, 200, { saved: true, updatedAt: result.rows[0].updatedAt });
       } catch (error) {

@@ -16,7 +16,7 @@ export async function handleHandoverRoutes(request, response, pool, pathname, jw
       return true;
     }
     const account = await pool.query("SELECT role FROM utilisateur WHERE id=$1::uuid AND actif=true", [user.id]);
-    if (![1, 2].includes(Number(account.rows[0]?.role))) {
+    if (Number(account.rows[0]?.role) !== 2) {
       json(response, 403, { error: "Seul un chef de poste peut valider une passation." });
       return true;
     }

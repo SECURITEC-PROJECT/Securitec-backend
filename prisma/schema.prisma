@@ -963,10 +963,13 @@ model PointVigilance {
   agentNom       String      @map("agent_nom") @db.VarChar(255)
   siteId         String      @map("site_id") @db.Uuid
   utilisateurId  String      @map("utilisateur_id") @db.Uuid
+  servicePosteId String?     @map("service_poste_id") @db.Uuid
   site           Site        @relation(fields: [siteId], references: [id], onDelete: Restrict, map: "fk_point_vigilance_site")
   utilisateur    Utilisateur @relation(fields: [utilisateurId], references: [id], onDelete: Restrict, map: "fk_point_vigilance_utilisateur")
+  servicePoste   ServicePoste? @relation(fields: [servicePosteId], references: [id], onDelete: SetNull, map: "fk_point_vigilance_service_poste")
 
   @@index([siteId, creeLe], map: "idx_point_vigilance_site_date")
+  @@index([servicePosteId, creeLe(sort: Desc)], map: "idx_point_vigilance_service_poste")
   @@map("point_vigilance")
 }
 
@@ -1118,10 +1121,13 @@ model QuestionnaireVisiteur {
   donnees       Json        @db.JsonB
   siteId        String      @map("site_id") @db.Uuid
   utilisateurId String      @map("utilisateur_id") @db.Uuid
+  servicePosteId String?     @map("service_poste_id") @db.Uuid
   site          Site        @relation(fields: [siteId], references: [id], onDelete: Restrict, map: "fk_questionnaire_visiteur_site")
   utilisateur   Utilisateur @relation(fields: [utilisateurId], references: [id], onDelete: Restrict, map: "fk_questionnaire_visiteur_utilisateur")
+  servicePoste  ServicePoste? @relation(fields: [servicePosteId], references: [id], onDelete: SetNull, map: "fk_questionnaire_visiteur_service_poste")
 
   @@index([siteId, dateOperation, creeLe], map: "idx_questionnaire_visiteur_site_date")
+  @@index([servicePosteId, dateOperation(sort: Desc)], map: "idx_questionnaire_visiteur_service_poste")
   @@map("questionnaire_visiteur")
 }
 
@@ -1133,10 +1139,13 @@ model DeclarationObjet {
   donnees       Json        @db.JsonB
   siteId        String      @map("site_id") @db.Uuid
   utilisateurId String      @map("utilisateur_id") @db.Uuid
+  servicePosteId String?     @map("service_poste_id") @db.Uuid
   site          Site        @relation(fields: [siteId], references: [id], onDelete: Restrict, map: "fk_declaration_objet_site")
   utilisateur   Utilisateur @relation(fields: [utilisateurId], references: [id], onDelete: Restrict, map: "fk_declaration_objet_utilisateur")
+  servicePoste  ServicePoste? @relation(fields: [servicePosteId], references: [id], onDelete: SetNull, map: "fk_declaration_objet_service_poste")
 
   @@index([siteId, dateOperation, creeLe], map: "idx_declaration_objet_site_date")
+  @@index([servicePosteId, dateOperation(sort: Desc)], map: "idx_declaration_objet_service_poste")
   @@map("declaration_objet")
 }
 
@@ -1236,6 +1245,9 @@ model ServicePoste {
   mainCourante MainCourante[]
   rondes       Ronde[]
   consignesJournal ConsigneJournal[]
+  pointsVigilance PointVigilance[]
+  questionnairesVisiteurs QuestionnaireVisiteur[]
+  declarationsObjets DeclarationObjet[]
 
   @@index([siteId, startedAt(sort: Desc)], map: "idx_service_poste_site_started")
   @@index([posteId, shiftType, endedAt], map: "idx_service_poste_poste_status")
