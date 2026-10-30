@@ -1,5 +1,6 @@
 import { getRequestUser } from "../utils/auth.js";
 import { json, readJson } from "../utils/helpers.js";
+import { resolveServicePosteId } from "../utils/priseDePoste.js";
 
 const collectionPath = "/api/materiels-sous-traitant";
 const entryPath = /^\/api\/materiels-sous-traitant\/([0-9a-f-]+)$/i;
@@ -60,7 +61,8 @@ export async function handleMaterielsSousTraitantRoutes(request, response, pool,
       const result = await pool.query(
         `SELECT m.id, m.date_operation::text AS date, to_char(m.heure_entree, 'HH24:MI') AS "heureEntree",
                 m.materiels, m.nombre, m.entreprise, m.prestataire_id AS "providerId", p.nom AS provider,
-                to_char(m.heure_sortie, 'HH24:MI') AS "heureSortie", m.site_id AS "siteId", m.cree_le AS "createdAt",m.annule_le AS "annuleLe"
+                to_char(m.heure_sortie, 'HH24:MI') AS "heureSortie", m.site_id AS "siteId", m.cree_le AS "createdAt",m.annule_le AS "annuleLe",
+                m.service_poste_id AS "servicePosteId"
          FROM materiel_sous_traitant m JOIN prestataire p ON p.id=m.prestataire_id WHERE m.site_id=$1::uuid
          ORDER BY m.date_operation DESC, m.heure_entree DESC LIMIT 1000`,
         [siteId],
@@ -80,14 +82,16 @@ export async function handleMaterielsSousTraitantRoutes(request, response, pool,
         return true;
       }
       const siteId = await resolveSite(pool, account, body.siteId);
+      const servicePosteId = await resolveServicePosteId(pool, siteId, body.priseDePosteId);
       const provider = await resolveProvider(pool, body.prestataireId);
       const result = await pool.query(
-        `INSERT INTO materiel_sous_traitant (date_operation, heure_entree, materiels, nombre, entreprise, prestataire_id, site_id, utilisateur_id)
-         VALUES ($1::date, $2::time, $3, $4, $5, $6::uuid, $7::uuid, $8::uuid)
+        `INSERT INTO materiel_sous_traitant (date_operation, heure_entree, materiels, nombre, entreprise, prestataire_id, site_id, utilisateur_id, service_poste_id)
+         VALUES ($1::date, $2::time, $3, $4, $5, $6::uuid, $7::uuid, $8::uuid, $9::uuid)
          RETURNING id, date_operation::text AS date, to_char(heure_entree, 'HH24:MI') AS "heureEntree",
                    materiels, nombre, entreprise, prestataire_id AS "providerId",
-                   to_char(heure_sortie, 'HH24:MI') AS "heureSortie", site_id AS "siteId", cree_le AS "createdAt"`,
-        [date, heureEntree, materiels, nombre, provider.nom, provider.id, siteId, account.id],
+                   to_char(heure_sortie, 'HH24:MI') AS "heureSortie", site_id AS "siteId", cree_le AS "createdAt",
+                   service_poste_id AS "servicePosteId"`,
+        [date, heureEntree, materiels, nombre, provider.nom, provider.id, siteId, account.id, servicePosteId],
       );
       json(response, 201, { entry: { ...result.rows[0], provider: provider.nom } });
       return true;

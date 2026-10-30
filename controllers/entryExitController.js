@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { json, readJson } from "../utils/helpers.js";
+import { resolveServicePosteId } from "../utils/priseDePoste.js";
 
 const cleanText = (value, max = 255) => typeof value === "string" ? value.trim().slice(0, max) : "";
 const validDate = (value) => {
@@ -46,6 +47,7 @@ export async function getVisitors(request, response, pool, userId) {
               COALESCE(p.badge_numero,b.uid_nfc) AS badge, COALESCE(p.immatriculation,'') AS vehicle,
               COALESCE(p.zone,'') AS zone, COALESCE(p.materiel,'') AS equipment,
               p.entree AS entered_at, p.sortie AS exited_at, p.notes_sortie AS exit_notes,
+              p.service_poste_id AS "servicePosteId",
               v.site_id, s.nom AS site_name, s.type_site AS site_type,
               v.liste_noire AS site_banned
        FROM passage p JOIN visiteur v ON v.id=p.visiteur_id JOIN badge b ON b.id=p.badge_id
@@ -77,6 +79,7 @@ export async function createVisitor(request, response, pool, userId) {
     await client.query("BEGIN");
     const account = await getAccount(client, userId);
     const siteId = await resolveSite(client, account, body);
+    const servicePosteId = await resolveServicePosteId(client, siteId, body.priseDePosteId);
     const banned = await client.query(
       `SELECT identite FROM visiteur
        WHERE site_id=$1::uuid AND liste_noire=true
@@ -97,13 +100,13 @@ export async function createVisitor(request, response, pool, userId) {
       [name, cleanText(body.company) || null, siteId, badge.rows[0].id],
     );
     const passage = await client.query(
-      `INSERT INTO passage (entree, motif, badge_id, visiteur_id, type_piece, piece_fin, hote, zone, materiel, immatriculation, badge_numero, saisi_par_id)
-       VALUES (COALESCE($12::date + $13::time,NOW()),$1,$2::uuid,$3::uuid,$4,$5,$6,$7,$8,$9,$10,$11::uuid)
-       RETURNING id, entree AS entered_at`,
+      `INSERT INTO passage (entree, motif, badge_id, visiteur_id, type_piece, piece_fin, hote, zone, materiel, immatriculation, badge_numero, saisi_par_id,service_poste_id)
+       VALUES (COALESCE($12::date + $13::time,NOW()),$1,$2::uuid,$3::uuid,$4,$5,$6,$7,$8,$9,$10,$11::uuid,$14::uuid)
+       RETURNING id, entree AS entered_at, service_poste_id AS "servicePosteId"`,
       [reason, badge.rows[0].id, visitor.rows[0].id, cleanText(body.document_type, 80) || null,
         cleanText(body.id_document, 4) || null, host, cleanText(body.zone) || "Accueil",
         cleanText(body.equipment, 20000) || null, cleanText(body.vehicle, 50) || null, badgeNumber, userId,
-        entryDate || null, entryTime || null],
+        entryDate || null, entryTime || null, servicePosteId],
     );
     const site = await client.query("SELECT id AS site_id, nom AS site_name, type_site AS site_type FROM site WHERE id=$1::uuid", [siteId]);
     await client.query("COMMIT");
@@ -112,6 +115,7 @@ export async function createVisitor(request, response, pool, userId) {
       id_document: cleanText(body.id_document, 4), document_type: cleanText(body.document_type, 80),
       host, reason, badge: badgeNumber, vehicle: cleanText(body.vehicle, 50), zone: cleanText(body.zone) || "Accueil",
       equipment: cleanText(body.equipment, 20000), entered_at: passage.rows[0].entered_at,
+      servicePosteId: passage.rows[0].servicePosteId,
       exited_at: null,
       site_name: site.rows[0]?.site_name, site_type: site.rows[0]?.site_type,
     } });
@@ -301,7 +305,7 @@ export async function getVehicles(request, response, pool, userId) {
               END AS "passengersEntry",
               pv.passagers_sortie AS "passengersOut",
               COALESCE(pv.motif,'') AS reason, COALESCE(pv.zone,'') AS zone, pv.controle_conforme AS compliant,
-              s.nom AS site_name, pv.site_id AS "siteId",
+              s.nom AS site_name, pv.site_id AS "siteId", pv.service_poste_id AS "servicePosteId",
               pv.entree AS entered_at, pv.sortie AS exited_at,
               pv.annule_le AS "annuleLe",
               to_char(pv.entree, 'YYYY-MM-DD') AS "entryDate",
@@ -342,6 +346,7 @@ export async function createVehicle(request, response, pool, userId) {
     await client.query("BEGIN");
     const account = await getAccount(client, userId);
     const siteId = await resolveSite(client, account, body);
+    const servicePosteId = await resolveServicePosteId(client, siteId, body.priseDePosteId);
     const type = cleanText(body.type, 100) || "Véhicule";
     const vehicle = await client.query(
       `INSERT INTO vehicule (immatriculation, type) VALUES ($1,$2)
@@ -350,16 +355,16 @@ export async function createVehicle(request, response, pool, userId) {
     );
     const result = await client.query(
       `INSERT INTO passage_vehicule (entree, vehicule_id, vacation_id, transporteur, conducteur, passagers,
-         motif, zone, operation, reference, plomb, etat_chargement, controle_conforme, saisi_par_id, site_id)
-      VALUES (${newMovement ? "$14::date + $15::time" : "NOW()"},$1::uuid,(SELECT id FROM vacation WHERE utilisateur_id=$2::uuid AND cloture IS NULL ORDER BY ouverture DESC LIMIT 1),
-         $3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$2::uuid,$13::uuid)
-       RETURNING id, entree AS entered_at`,
+         motif, zone, operation, reference, plomb, etat_chargement, controle_conforme, saisi_par_id, site_id, service_poste_id)
+      VALUES (${newMovement ? "$15::date + $16::time" : "NOW()"},$1::uuid,(SELECT id FROM vacation WHERE utilisateur_id=$2::uuid AND cloture IS NULL ORDER BY ouverture DESC LIMIT 1),
+         $3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$2::uuid,$13::uuid,$14::uuid)
+       RETURNING id, entree AS entered_at, service_poste_id AS "servicePosteId"`,
       [vehicle.rows[0].id, userId, newMovement ? category : cleanText(body.company) || null, driver,
        newMovement ? String(passengersEntry) : cleanText(body.passengers, 255) || null,
        reason, cleanText(body.zone) || "Accueil", cleanText(body.operation, 40) || "Autre passage",
        cleanText(body.document_reference, 100) || null, cleanText(body.seal_number, 100) || null,
        cleanText(body.load_state, 40) || null, body.compliant === true, siteId,
-       ...(newMovement ? [entryDate, entryTime] : [])],
+       servicePosteId, ...(newMovement ? [entryDate, entryTime] : [])],
     );
     const site = await client.query("SELECT id AS site_id, nom AS site_name FROM site WHERE id=$1::uuid", [siteId]);
     await client.query("COMMIT");
@@ -373,6 +378,7 @@ export async function createVehicle(request, response, pool, userId) {
       load_state: cleanText(body.load_state, 40), driver, passengers: cleanText(body.passengers, 255), reason,
       zone: cleanText(body.zone) || "Accueil", site_name: site.rows[0]?.site_name, compliant: body.compliant === true,
       siteId: site.rows[0]?.site_id || siteId,
+      servicePosteId: result.rows[0].servicePosteId,
       entered_at: result.rows[0].entered_at, exited_at: null,
     } });
   } catch (error) {

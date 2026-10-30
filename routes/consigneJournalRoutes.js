@@ -7,6 +7,7 @@ const readPath = /^\/api\/consignes-journal\/([0-9a-f-]+)\/read$/i;
 const entryColumns = `cj.id, cj.date_consigne AS date, to_char(cj.heure, 'HH24:MI') AS heure,
   cj.consigne, cj.emetteur, cj.destinataire, cj.date_fin AS "dateFin",
   cj.jusquau_nouvel_ordre AS "jusquauNouvelOrdre", cj.prise_de_poste_id AS "priseDePosteId",
+  cj.service_poste_id AS "servicePosteId",
   COALESCE(cj.poste_id, p.poste_id, (SELECT MIN(cjp.poste_id::text)::uuid FROM consigne_journal_poste cjp WHERE cjp.consigne_id=cj.id)) AS "posteId",
   (cj.poste_id IS NULL AND p.poste_id IS NULL AND NOT EXISTS (SELECT 1 FROM consigne_journal_poste cjp WHERE cjp.consigne_id=cj.id)) AS "tousPostes",
   COALESCE((SELECT json_agg(cjp.poste_id ORDER BY cjp.poste_id) FROM consigne_journal_poste cjp WHERE cjp.consigne_id=cj.id),

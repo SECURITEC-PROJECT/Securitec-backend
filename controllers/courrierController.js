@@ -1,4 +1,5 @@
 import { json, readJson } from "../utils/helpers.js";
+import { resolveServicePosteId } from "../utils/priseDePoste.js";
 
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const datePattern = /^\d{4}-\d{2}-\d{2}$/;
@@ -55,7 +56,7 @@ export async function listCourrierMovements(request, response, pool, userId) {
               m.prenom, m.designation, m.nombre,
               to_char(m.heure_sortie, 'HH24:MI') AS "heureSortie",
               m.annule_le AS "annuleLe",
-              m.site_id AS "siteId", s.nom AS "siteName"
+              m.site_id AS "siteId", s.nom AS "siteName", m.service_poste_id AS "servicePosteId"
        FROM mouvement_courrier m
        JOIN site s ON s.id = m.site_id
        WHERE m.site_id = $1::uuid
@@ -88,14 +89,15 @@ export async function createCourrierMovement(request, response, pool, userId) {
     await client.query("BEGIN");
     const account = await getAccount(client, userId);
     const siteId = await resolveSite(client, account, body.siteId);
+    const servicePosteId = await resolveServicePosteId(client, siteId, body.priseDePosteId);
     const result = await client.query(
       `INSERT INTO mouvement_courrier
-         (date_operation, heure_entree, prenom, designation, nombre, site_id, utilisateur_id)
-       VALUES ($1::date, $2::time, $3, $4, $5, $6::uuid, $7::uuid)
+         (date_operation, heure_entree, prenom, designation, nombre, site_id, utilisateur_id, service_poste_id)
+       VALUES ($1::date, $2::time, $3, $4, $5, $6::uuid, $7::uuid, $8::uuid)
        RETURNING id, date_operation::text AS date, to_char(heure_entree, 'HH24:MI') AS "heureEntree",
                  prenom, designation, nombre, to_char(heure_sortie, 'HH24:MI') AS "heureSortie",
-                 site_id AS "siteId"`,
-      [date, heureEntree, prenom, designation, nombre, siteId, userId],
+                 site_id AS "siteId", service_poste_id AS "servicePosteId"`,
+      [date, heureEntree, prenom, designation, nombre, siteId, userId, servicePosteId],
     );
     const site = await client.query("SELECT nom AS \"siteName\" FROM site WHERE id = $1::uuid", [siteId]);
     await client.query("COMMIT");

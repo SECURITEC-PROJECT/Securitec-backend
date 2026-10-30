@@ -1,4 +1,5 @@
 import { json, readJson } from "../utils/helpers.js";
+import { resolveServicePosteId } from "../utils/priseDePoste.js";
 
 const datePattern = /^\d{4}-\d{2}-\d{2}$/;
 const timePattern = /^(?:[01]\d|2[0-3]):[0-5]\d$/;
@@ -38,7 +39,8 @@ export async function getKeyTracking(request, response, pool, userId) {
               k.nombre_cles AS quantity,
               to_char(k.heure_sortie, 'HH24:MI') AS "departureTime",
               to_char(k.heure_retour, 'HH24:MI') AS "returnTime",
-              s.nom AS "siteName", k.cree_le AS "createdAt"
+              s.nom AS "siteName", k.cree_le AS "createdAt",
+              k.service_poste_id AS "servicePosteId"
        FROM suivi_cle k JOIN site s ON s.id = k.site_id
        WHERE k.site_id = $1::uuid AND k.type_cle IS NOT NULL
        ORDER BY k.date_suivi DESC, k.heure_sortie DESC, k.cree_le DESC LIMIT 300`,
@@ -64,6 +66,7 @@ export async function createKeyTracking(request, response, pool, userId) {
       return json(response, 400, { error: "Vérifiez la date, l’employé, le type de clé, la quantité et l’heure de sortie." });
     }
     const siteId = await getUserSiteId(pool, userId, body.siteId);
+    const servicePosteId = await resolveServicePosteId(pool, siteId, body.priseDePosteId);
     const employee = await pool.query(
       `SELECT e.nom, e.prenom, e.matricule, e.role
        FROM employe e
@@ -80,16 +83,17 @@ export async function createKeyTracking(request, response, pool, userId) {
     const result = await pool.query(
       `INSERT INTO suivi_cle
          (date_suivi, matricule_personne, nom_personne, prenom_personne,
-          type_cle, nombre_cles, heure_sortie, site_id, utilisateur_id)
-       VALUES ($1::date, $2, $3, $4, $5, $6, $7::time, $8::uuid, $9::uuid)
-       RETURNING id, cree_le AS "createdAt"`,
+          type_cle, nombre_cles, heure_sortie, site_id, utilisateur_id, service_poste_id)
+       VALUES ($1::date, $2, $3, $4, $5, $6, $7::time, $8::uuid, $9::uuid, $10::uuid)
+       RETURNING id, cree_le AS "createdAt", service_poste_id AS "servicePosteId"`,
       [date, employee.rows[0].matricule, employee.rows[0].nom, employee.rows[0].prenom,
-        keyType, quantity, departureTime, siteId, userId],
+        keyType, quantity, departureTime, siteId, userId, servicePosteId],
     );
     json(response, 201, { entry: {
       id: result.rows[0].id, date, lastName: employee.rows[0].nom, firstName: employee.rows[0].prenom,
       matricule: employee.rows[0].matricule, keyType, quantity, departureTime, returnTime: null,
       createdAt: result.rows[0].createdAt,
+      servicePosteId: result.rows[0].servicePosteId,
     } });
   } catch (error) {
     console.error("POST access-control keys failed:", error.code || error.name, error.message || "");
@@ -174,7 +178,8 @@ export async function getBreathTests(request, response, pool, userId) {
       `SELECT c.id, c.date_controle AS date, to_char(c.heure, 'HH24:MI') AS heure,
               c.personne, c.appartenance, c.demandeur,
               c.type_demande AS "typeDemande", c.resultat,
-              c.taux_mesure AS "tauxMesure", s.nom AS "siteName", c.cree_le AS "createdAt"
+              c.taux_mesure AS "tauxMesure", s.nom AS "siteName", c.cree_le AS "createdAt",
+              c.service_poste_id AS "servicePosteId"
        FROM controle_alcoolemie c JOIN site s ON s.id = c.site_id
        WHERE c.site_id = $1::uuid
        ORDER BY c.date_controle DESC, c.heure DESC LIMIT 300`,
@@ -209,14 +214,15 @@ export async function createBreathTest(request, response, pool, userId) {
     }
 
     const siteId = await getUserSiteId(pool, userId, body.siteId);
+    const servicePosteId = await resolveServicePosteId(pool, siteId, body.priseDePosteId);
     const result = await pool.query(
       `INSERT INTO controle_alcoolemie
          (date_controle, heure, personne, appartenance, demandeur, type_demande,
-          resultat, taux_mesure, site_id, utilisateur_id)
-       VALUES ($1::date, $2::time, $3, $4, $5, $6, $7, $8, $9::uuid, $10::uuid)
-       RETURNING id, cree_le AS "createdAt"`,
+          resultat, taux_mesure, site_id, utilisateur_id, service_poste_id)
+       VALUES ($1::date, $2::time, $3, $4, $5, $6, $7, $8, $9::uuid, $10::uuid, $11::uuid)
+       RETURNING id, cree_le AS "createdAt", service_poste_id AS "servicePosteId"`,
       [date, heure, personne, appartenance, demandeur || null, typeDemande,
-        resultat, rate, siteId, userId],
+        resultat, rate, siteId, userId, servicePosteId],
     );
     json(response, 201, { entry: { ...body, id: result.rows[0].id, createdAt: result.rows[0].createdAt } });
   } catch (error) {

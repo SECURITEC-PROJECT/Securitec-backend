@@ -17,6 +17,7 @@ const handoverSelect = `
          confirmation_entrant_le,
          poste_nom,
          site_id AS site_id,
+         prise_de_poste_service_id AS "servicePosteId",
          cree_le AS created_at
   FROM passation
 `;

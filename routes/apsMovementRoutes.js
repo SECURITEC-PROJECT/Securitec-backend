@@ -120,7 +120,9 @@ const handoverSelect = `SELECT h.id,TO_CHAR(h.date_operation,'YYYY-MM-DD') AS da
   h.etat_des_lieux AS "etatDesLieux",h.consigne,h.evenement,h.remarque,
   h.cp_descendant_matricule AS "cpDescendantMatricule",
   h.cp_montant_matricule AS "cpMontantMatricule",
-  u.nom AS controleur,h.site_id AS "siteId"
+  u.nom AS controleur,h.site_id AS "siteId",
+  COALESCE((SELECT json_agg(link.service_poste_id ORDER BY link.service_poste_id)
+    FROM passation_aps_service_poste link WHERE link.passation_aps_id=h.id),'[]'::json) AS "servicePosteIds"
   FROM mouvement_aps_passation h JOIN utilisateur u ON u.id=h.utilisateur_id`;
 
 function validatePostes(rawPostes) {
@@ -177,6 +179,20 @@ async function saveConfiguration(client, siteId, postes, userId) {
   );
 }
 
+async function replaceApsServiceLinks(client, table, recordColumn, recordId, siteId, date, shiftType = null) {
+  await client.query(`DELETE FROM ${table} WHERE ${recordColumn}=$1::uuid`, [recordId]);
+  await client.query(
+    `INSERT INTO ${table} (${recordColumn},service_poste_id)
+     SELECT $1::uuid,sp.id FROM service_poste sp
+     WHERE sp.site_id=$2::uuid
+       AND sp.started_at::date<=$3::date
+       AND COALESCE(sp.ended_at::date,CURRENT_DATE)>=$3::date
+       AND ($4::shift_agent IS NULL OR sp.shift_type=$4::shift_agent)
+     ON CONFLICT DO NOTHING`,
+    [recordId, siteId, date, shiftType],
+  );
+}
+
 export async function handleApsMovementRoutes(request, response, pool, pathname, jwtSecret) {
   const eventRecordMatch = pathname.match(eventRecordPattern);
   const handoverRecordMatch = pathname.match(handoverRecordPattern);
@@ -223,6 +239,7 @@ export async function handleApsMovementRoutes(request, response, pool, pathname,
           entry.clesNonRendus, entry.etatDesLieux, entry.consigne, entry.evenement, entry.remarque,
           entry.cpDescendantMatricule, entry.cpMontantMatricule, account.id],
       );
+      await replaceApsServiceLinks(pool, "passation_aps_service_poste", "passation_aps_id", result.rows[0].id, siteId, entry.date);
       const saved = await pool.query(`${handoverSelect} WHERE h.id=$1::uuid`, [result.rows[0].id]);
       json(response, 201, { entry: saved.rows[0] });
       return true;
@@ -246,6 +263,7 @@ export async function handleApsMovementRoutes(request, response, pool, pathname,
           entry.remarque, entry.cpDescendantMatricule, entry.cpMontantMatricule, account.id],
       );
       if (!result.rows[0]) throw Object.assign(new Error("Passation introuvable."), { status: 404 });
+      await replaceApsServiceLinks(pool, "passation_aps_service_poste", "passation_aps_id", result.rows[0].id, siteId, entry.date);
       const saved = await pool.query(`${handoverSelect} WHERE h.id=$1::uuid`, [result.rows[0].id]);
       json(response, 200, { entry: saved.rows[0] });
       return true;
@@ -267,12 +285,14 @@ export async function handleApsMovementRoutes(request, response, pool, pathname,
       if (!validDate(date)) throw Object.assign(new Error("Date invalide."), { status: 400 });
       const siteId = await resolveSite(pool, account, url.searchParams.get("siteId"));
       const result = await pool.query(
-        `SELECT id,TO_CHAR(date_operation,'YYYY-MM-DD') AS date,
+        `SELECT e.id,TO_CHAR(e.date_operation,'YYYY-MM-DD') AS date,
            TO_CHAR(heure_entree,'HH24:MI') AS "heureEntree",mouvement,
-           observation,TO_CHAR(heure_sortie,'HH24:MI') AS "heureSortie",site_id AS "siteId"
-         FROM mouvement_aps_evenement
-         WHERE site_id=$1::uuid AND date_operation=$2::date
-         ORDER BY heure_entree,id`,
+           observation,TO_CHAR(heure_sortie,'HH24:MI') AS "heureSortie",e.site_id AS "siteId",
+           COALESCE((SELECT json_agg(link.service_poste_id ORDER BY link.service_poste_id)
+             FROM mouvement_aps_evenement_service_poste link WHERE link.mouvement_aps_evenement_id=e.id),'[]'::json) AS "servicePosteIds"
+         FROM mouvement_aps_evenement e
+         WHERE e.site_id=$1::uuid AND e.date_operation=$2::date
+         ORDER BY heure_entree,e.id`,
         [siteId, date],
       );
       json(response, 200, { entries: result.rows });
@@ -292,7 +312,14 @@ export async function handleApsMovementRoutes(request, response, pool, pathname,
            observation,TO_CHAR(heure_sortie,'HH24:MI') AS "heureSortie",site_id AS "siteId"`,
         [siteId, entry.date, entry.heureEntree, entry.mouvement, entry.observation, entry.heureSortie, account.id],
       );
-      json(response, 201, { entry: result.rows[0] });
+      await replaceApsServiceLinks(pool, "mouvement_aps_evenement_service_poste", "mouvement_aps_evenement_id", result.rows[0].id, siteId, entry.date);
+      const saved = await pool.query(
+        `SELECT e.id,e.date_operation::text AS date,to_char(e.heure_entree,'HH24:MI') AS "heureEntree",
+           e.mouvement,e.observation,to_char(e.heure_sortie,'HH24:MI') AS "heureSortie",e.site_id AS "siteId",
+           COALESCE((SELECT json_agg(link.service_poste_id ORDER BY link.service_poste_id)
+             FROM mouvement_aps_evenement_service_poste link WHERE link.mouvement_aps_evenement_id=e.id),'[]'::json) AS "servicePosteIds"
+         FROM mouvement_aps_evenement e WHERE e.id=$1::uuid`, [result.rows[0].id]);
+      json(response, 201, { entry: saved.rows[0] });
       return true;
     }
 
@@ -311,7 +338,14 @@ export async function handleApsMovementRoutes(request, response, pool, pathname,
         [eventRecordMatch[1], siteId, entry.date, entry.heureEntree, entry.mouvement, entry.observation, entry.heureSortie, account.id],
       );
       if (!result.rows[0]) throw Object.assign(new Error("Mouvement introuvable."), { status: 404 });
-      json(response, 200, { entry: result.rows[0] });
+      await replaceApsServiceLinks(pool, "mouvement_aps_evenement_service_poste", "mouvement_aps_evenement_id", result.rows[0].id, siteId, entry.date);
+      const saved = await pool.query(
+        `SELECT e.id,e.date_operation::text AS date,to_char(e.heure_entree,'HH24:MI') AS "heureEntree",
+           e.mouvement,e.observation,to_char(e.heure_sortie,'HH24:MI') AS "heureSortie",e.site_id AS "siteId",
+           COALESCE((SELECT json_agg(link.service_poste_id ORDER BY link.service_poste_id)
+             FROM mouvement_aps_evenement_service_poste link WHERE link.mouvement_aps_evenement_id=e.id),'[]'::json) AS "servicePosteIds"
+         FROM mouvement_aps_evenement e WHERE e.id=$1::uuid`, [result.rows[0].id]);
+      json(response, 200, { entry: saved.rows[0] });
       return true;
     }
 
@@ -333,7 +367,9 @@ export async function handleApsMovementRoutes(request, response, pool, pathname,
       const siteId = await resolveSite(pool, account, url.searchParams.get("siteId"));
       const [movement, configuration] = await Promise.all([
         pool.query(
-          "SELECT data FROM mouvement_aps WHERE site_id=$1::uuid AND date_pointage=$2::date AND service=$3 LIMIT 1",
+          `SELECT m.data,COALESCE((SELECT json_agg(link.service_poste_id ORDER BY link.service_poste_id)
+             FROM mouvement_aps_service_poste link WHERE link.mouvement_aps_id=m.id),'[]'::json) AS "servicePosteIds"
+           FROM mouvement_aps m WHERE m.site_id=$1::uuid AND m.date_pointage=$2::date AND m.service=$3 LIMIT 1`,
           [siteId, date, service],
         ),
         pool.query(
@@ -343,6 +379,7 @@ export async function handleApsMovementRoutes(request, response, pool, pathname,
       ]);
       json(response, 200, {
         data: movement.rows[0]?.data ?? null,
+        servicePosteIds: movement.rows[0]?.servicePosteIds ?? [],
         postes: configuration.rows[0]?.postes ?? null,
       });
       return true;
@@ -383,9 +420,10 @@ export async function handleApsMovementRoutes(request, response, pool, pathname,
            VALUES ($1::uuid,$2::date,$3,$4::jsonb,$5::uuid,NOW())
            ON CONFLICT (site_id,date_pointage,service)
            DO UPDATE SET data=EXCLUDED.data,utilisateur_id=EXCLUDED.utilisateur_id,updated_at=NOW()
-           RETURNING updated_at AS "updatedAt"`,
+           RETURNING id,updated_at AS "updatedAt"`,
           [siteId, date, service, JSON.stringify(data), account.id],
         );
+        await replaceApsServiceLinks(client, "mouvement_aps_service_poste", "mouvement_aps_id", result.rows[0].id, siteId, date, service.toUpperCase());
         await saveConfiguration(client, siteId, postes, account.id);
         await client.query("COMMIT");
         json(response, 200, { saved: true, updatedAt: result.rows[0].updatedAt });

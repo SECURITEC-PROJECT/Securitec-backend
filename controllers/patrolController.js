@@ -45,10 +45,14 @@ export async function getPatrols(request, response, pool, userId) {
       `SELECT r.id, r.nom_parcours AS route_name, r.debut AS started_at, r.fin AS ended_at,
               r.points AS checkpoints, r.observations AS anomalies, r.site_id AS "siteId",
               s.nom AS site_name, r.utilisateur_id AS agent_id, u.nom AS agent_name,
-              p.poste_id AS "posteId", po.nom AS "posteNom", p.shift_type AS "shiftType"
+              r.service_poste_id AS "servicePosteId",
+              COALESCE(sp.poste_id,p.poste_id) AS "posteId", COALESCE(spo.nom,po.nom) AS "posteNom",
+              COALESCE(sp.shift_type,p.shift_type) AS "shiftType"
        FROM ronde r JOIN site s ON s.id = r.site_id JOIN utilisateur u ON u.id = r.utilisateur_id
        LEFT JOIN prise_de_poste p ON p.id=r.prise_de_poste_id
        LEFT JOIN poste po ON po.id=p.poste_id
+       LEFT JOIN service_poste sp ON sp.id=r.service_poste_id
+       LEFT JOIN poste spo ON spo.id=sp.poste_id
        WHERE ($1::uuid IS NULL OR r.site_id = $1::uuid)
          AND ($2::int=1 OR r.utilisateur_id = $3::uuid)
        ORDER BY r.debut DESC LIMIT 500`,
@@ -76,7 +80,8 @@ export async function createPatrol(request, response, pool, userId) {
       `INSERT INTO ronde (nom_parcours, points, site_id, utilisateur_id, prise_de_poste_id)
        VALUES ($1, $2::jsonb, $3::uuid, $4::uuid, $5::uuid)
        RETURNING id, nom_parcours AS route_name, debut AS started_at, fin AS ended_at,
-                 points AS checkpoints, observations AS anomalies, site_id AS "siteId"`,
+                 points AS checkpoints, observations AS anomalies, site_id AS "siteId",
+                 service_poste_id AS "servicePosteId"`,
       [routeName, JSON.stringify(points), siteId, userId, priseDePosteId],
     );
     await client.query("COMMIT");

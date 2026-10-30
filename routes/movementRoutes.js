@@ -1,5 +1,6 @@
 import { getRequestUser } from "../utils/auth.js";
 import { json, readJson } from "../utils/helpers.js";
+import { resolveServicePosteId } from "../utils/priseDePoste.js";
 
 const definitions = {
   "/api/bicycle-movements": { table: "mouvement_velo", kind: "vélo" },
@@ -72,10 +73,11 @@ async function resolveEmployee(pool, matricule, siteId, includeInactive = false)
 }
 
 const bikeColumns = `id,date_operation::text AS date,to_char(heure_entree,'HH24:MI') AS "heureEntree",
-  matricule,prenom,section,marque_velo AS "marqueVelo",
+  matricule,prenom,section,marque_velo AS "marqueVelo",service_poste_id AS "servicePosteId",
   to_char(heure_sortie,'HH24:MI') AS "heureSortie",site_id AS "siteId",annule_le AS "annuleLe"`;
 const motorcycleColumns = `id,date_operation::text AS date,to_char(heure_entree,'HH24:MI') AS "heureEntree",
-  moto,observation,to_char(heure_sortie,'HH24:MI') AS "heureSortie",site_id AS "siteId",annule_le AS "annuleLe"`;
+  moto,observation,to_char(heure_sortie,'HH24:MI') AS "heureSortie",site_id AS "siteId",
+  service_poste_id AS "servicePosteId",annule_le AS "annuleLe"`;
 
 export async function handleMovementRoutes(request, response, pool, pathname, jwtSecret) {
   const definitionEntry = Object.entries(definitions).find(([base]) =>
@@ -119,18 +121,21 @@ export async function handleMovementRoutes(request, response, pool, pathname, jw
       }
       const values = readValues(body, definition.kind);
       const siteId = await resolveSite(pool, account, body.siteId || url.searchParams.get("siteId"));
+      const servicePosteId = body.priseDePosteId
+        ? await resolveServicePosteId(pool, siteId, body.priseDePosteId)
+        : null;
 
       if (definition.kind === "vélo") {
         const employee = await resolveEmployee(pool, values.matricule, siteId, request.method === "PUT");
         const params = [
           values.date, values.heureEntree, values.matricule, employee.prenom, employee.section,
-          values.marqueVelo, siteId, account.id,
+          values.marqueVelo, siteId, account.id, servicePosteId,
         ];
         if (request.method === "POST") {
           const result = await pool.query(
             `INSERT INTO mouvement_velo
-              (date_operation,heure_entree,matricule,prenom,section,marque_velo,site_id,utilisateur_id)
-             VALUES ($1::date,$2::time,$3,$4,$5,$6,$7::uuid,$8::uuid)
+              (date_operation,heure_entree,matricule,prenom,section,marque_velo,site_id,utilisateur_id,service_poste_id)
+             VALUES ($1::date,$2::time,$3,$4,$5,$6,$7::uuid,$8::uuid,$9::uuid)
              RETURNING ${bikeColumns}`,
             params,
           );
@@ -139,10 +144,11 @@ export async function handleMovementRoutes(request, response, pool, pathname, jw
         }
         const result = await pool.query(
           `UPDATE mouvement_velo SET date_operation=$2::date,heure_entree=$3::time,
-             matricule=$4,prenom=$5,section=$6,marque_velo=$7,modifie_par=$9::uuid
+             matricule=$4,prenom=$5,section=$6,marque_velo=$7,modifie_par=$9::uuid,
+             service_poste_id=COALESCE($10::uuid,service_poste_id)
            WHERE id=$1::uuid AND site_id=$8::uuid AND annule_le IS NULL
            RETURNING ${bikeColumns}`,
-          [entryId, ...params.slice(0, 6), siteId, account.id],
+          [entryId, ...params.slice(0, 6), siteId, account.id, servicePosteId],
         );
         if (!result.rows[0]) throw Object.assign(new Error("Mouvement introuvable sur ce site."), { status: 404 });
         json(response, 200, { entry: result.rows[0] });
@@ -152,19 +158,20 @@ export async function handleMovementRoutes(request, response, pool, pathname, jw
       if (request.method === "POST") {
         const result = await pool.query(
           `INSERT INTO mouvement_moto
-            (date_operation,heure_entree,moto,observation,site_id,utilisateur_id)
-           VALUES ($1::date,$2::time,$3,$4,$5::uuid,$6::uuid)
+            (date_operation,heure_entree,moto,observation,site_id,utilisateur_id,service_poste_id)
+           VALUES ($1::date,$2::time,$3,$4,$5::uuid,$6::uuid,$7::uuid)
            RETURNING ${motorcycleColumns}`,
-          [values.date, values.heureEntree, values.moto, values.observation, siteId, account.id],
+          [values.date, values.heureEntree, values.moto, values.observation, siteId, account.id, servicePosteId],
         );
         json(response, 201, { entry: result.rows[0] });
         return true;
       }
       const result = await pool.query(
-        `UPDATE mouvement_moto SET date_operation=$2::date,heure_entree=$3::time,moto=$4,observation=$5,modifie_par=$7::uuid
+        `UPDATE mouvement_moto SET date_operation=$2::date,heure_entree=$3::time,moto=$4,observation=$5,modifie_par=$7::uuid,
+           service_poste_id=COALESCE($8::uuid,service_poste_id)
          WHERE id=$1::uuid AND site_id=$6::uuid AND annule_le IS NULL
          RETURNING ${motorcycleColumns}`,
-        [entryId, values.date, values.heureEntree, values.moto, values.observation, siteId, account.id],
+        [entryId, values.date, values.heureEntree, values.moto, values.observation, siteId, account.id, servicePosteId],
       );
       if (!result.rows[0]) throw Object.assign(new Error("Mouvement introuvable sur ce site."), { status: 404 });
       json(response, 200, { entry: result.rows[0] });
