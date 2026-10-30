@@ -135,9 +135,9 @@ export async function setVisitorSiteBan(request, response, pool, userId, passage
     client = await pool.connect();
     await client.query("BEGIN");
     const account = await getAccount(client, userId);
-    if (![1, 2].includes(Number(account.role))) {
+    if (![1, 3].includes(Number(account.role))) {
       await client.query("ROLLBACK");
-      return json(response, 403, { error: "Seuls les administrateurs et superviseurs peuvent gérer les interdictions de site." });
+      return json(response, 403, { error: "Seuls les administrateurs et responsables sécurité peuvent gérer les interdictions de site." });
     }
     const identity = await client.query(
       `SELECT v.identite, v.site_id

@@ -54,6 +54,7 @@ export async function handleShiftRoutes(request, response, pool, pathname, jwtSe
   if (method === "POST" && pathname === "/api/shifts") {
     try {
       const { user, account } = await requireAccount();
+      if (![1, 2].includes(Number(account.role))) throw Object.assign(new Error("Seul un chef de poste ou un administrateur peut ouvrir un service."), { status: 403 });
       const data = await readJson(request);
       if (account.siteId && account.role !== 1 && data.siteId && data.siteId !== account.siteId) {
         throw Object.assign(new Error("Accès refusé à ce site."), { status: 403 });
@@ -77,6 +78,7 @@ export async function handleShiftRoutes(request, response, pool, pathname, jwtSe
     const shiftId = parts[3];
     try {
       const { account } = await requireAccount();
+      if (![1, 2].includes(Number(account.role))) throw Object.assign(new Error("Seul un chef de poste ou un administrateur peut clôturer un service."), { status: 403 });
       const updated = await endShift(shiftId, pool, account.role === 1 ? null : account.siteId);
       if (!updated) {
         json(response, 404, { error: "Prise de poste non trouvée." });

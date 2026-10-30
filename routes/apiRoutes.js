@@ -42,8 +42,12 @@ export async function handleApiRoutes(request, response, pool, jwtSecret) {
 
   const authenticatedUser = getRequestUser(request, jwtSecret);
   if (authenticatedUser) {
-    const active = await pool.query("SELECT 1 FROM utilisateur WHERE id=$1::uuid AND actif=true LIMIT 1", [authenticatedUser.id]);
+    const active = await pool.query("SELECT role FROM utilisateur WHERE id=$1::uuid AND actif=true LIMIT 1", [authenticatedUser.id]);
     if (!active.rows[0]) return json(response, 401, { error: "Ce compte est désactivé ou introuvable." });
+    const directionReadReceipt = request.method === "PATCH" && /^\/api\/notifications\/[0-9a-f-]{36}\/read$/i.test(pathname);
+    if (Number(active.rows[0].role) === 4 && request.method !== "GET" && !directionReadReceipt) {
+      return json(response, 403, { error: "Ce profil dispose d’un accès en lecture seule." });
+    }
   }
 
   if (await handleAuthRoutes(request, response, pool, pathname, jwtSecret)) return true;
