@@ -371,8 +371,12 @@ model Passation {
   materiel            String?     @db.Text
   evenements          String?     @db.Text
   consignes           String?     @db.Text
+  inventaire          Json        @default("[]") @db.JsonB
+  documentsRetenus    Json        @default("[]") @map("documents_retenus") @db.JsonB
   confirmationSortant Boolean     @default(false) @map("confirmation_sortant")
   confirmationEntrant Boolean     @default(false) @map("confirmation_entrant")
+  confirmationSortantLe DateTime? @map("confirmation_sortant_le") @db.Timestamp(6)
+  confirmationEntrantLe DateTime? @map("confirmation_entrant_le") @db.Timestamp(6)
   utilisateurId       String      @map("utilisateur_id") @db.Uuid
   siteId              String?     @map("site_id") @db.Uuid
   vacationId          String?     @map("vacation_id") @db.Uuid
