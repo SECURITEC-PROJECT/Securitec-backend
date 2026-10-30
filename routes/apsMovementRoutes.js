@@ -170,6 +170,14 @@ function validateData(rawData, postes) {
 }
 
 async function saveConfiguration(client, siteId, postes, userId) {
+  for (const poste of postes) {
+    await client.query(
+      `INSERT INTO poste (nom,actif,site_id)
+       VALUES ($1,true,$2::uuid)
+       ON CONFLICT (site_id,nom) DO UPDATE SET actif=true`,
+      [poste.name, siteId],
+    );
+  }
   await client.query(
     `INSERT INTO configuration_postes_mouvement_aps (site_id,postes,utilisateur_id,updated_at)
      VALUES ($1::uuid,$2::jsonb,$3::uuid,NOW())
