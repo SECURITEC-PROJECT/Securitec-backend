@@ -16,6 +16,7 @@ const handoverSelect = `
          confirmation_sortant_le,
          confirmation_entrant_le,
          poste_nom,
+         site_id AS site_id,
          cree_le AS created_at
   FROM passation
 `;
@@ -132,7 +133,7 @@ export async function createHandover(request, response, pool, userId) {
                  entrant_nom AS incoming_nom, entrant_matricule AS incoming_matricule,
                  materiel AS equipment, evenements AS ongoing_events, consignes AS instructions,
                  inventaire, documents_retenus, confirmation_sortant, confirmation_entrant,
-                 confirmation_sortant_le, confirmation_entrant_le, poste_nom, cree_le AS created_at`,
+                 confirmation_sortant_le, confirmation_entrant_le, poste_nom, site_id AS site_id, cree_le AS created_at`,
       [
         `${outgoingNom} ${outgoingPrenom}`,
         outgoingMatricule,

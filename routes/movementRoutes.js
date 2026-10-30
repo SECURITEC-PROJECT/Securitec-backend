@@ -73,9 +73,9 @@ async function resolveEmployee(pool, matricule, siteId, includeInactive = false)
 
 const bikeColumns = `id,date_operation::text AS date,to_char(heure_entree,'HH24:MI') AS "heureEntree",
   matricule,prenom,section,marque_velo AS "marqueVelo",
-  to_char(heure_sortie,'HH24:MI') AS "heureSortie",site_id AS "siteId"`;
+  to_char(heure_sortie,'HH24:MI') AS "heureSortie",site_id AS "siteId",annule_le AS "annuleLe"`;
 const motorcycleColumns = `id,date_operation::text AS date,to_char(heure_entree,'HH24:MI') AS "heureEntree",
-  moto,observation,to_char(heure_sortie,'HH24:MI') AS "heureSortie",site_id AS "siteId"`;
+  moto,observation,to_char(heure_sortie,'HH24:MI') AS "heureSortie",site_id AS "siteId",annule_le AS "annuleLe"`;
 
 export async function handleMovementRoutes(request, response, pool, pathname, jwtSecret) {
   const definitionEntry = Object.entries(definitions).find(([base]) =>
@@ -139,10 +139,10 @@ export async function handleMovementRoutes(request, response, pool, pathname, jw
         }
         const result = await pool.query(
           `UPDATE mouvement_velo SET date_operation=$2::date,heure_entree=$3::time,
-             matricule=$4,prenom=$5,section=$6,marque_velo=$7
-           WHERE id=$1::uuid AND site_id=$8::uuid
+             matricule=$4,prenom=$5,section=$6,marque_velo=$7,modifie_par=$9::uuid
+           WHERE id=$1::uuid AND site_id=$8::uuid AND annule_le IS NULL
            RETURNING ${bikeColumns}`,
-          [entryId, ...params.slice(0, 6), siteId],
+          [entryId, ...params.slice(0, 6), siteId, account.id],
         );
         if (!result.rows[0]) throw Object.assign(new Error("Mouvement introuvable sur ce site."), { status: 404 });
         json(response, 200, { entry: result.rows[0] });
@@ -161,10 +161,10 @@ export async function handleMovementRoutes(request, response, pool, pathname, jw
         return true;
       }
       const result = await pool.query(
-        `UPDATE mouvement_moto SET date_operation=$2::date,heure_entree=$3::time,moto=$4,observation=$5
-         WHERE id=$1::uuid AND site_id=$6::uuid
+        `UPDATE mouvement_moto SET date_operation=$2::date,heure_entree=$3::time,moto=$4,observation=$5,modifie_par=$7::uuid
+         WHERE id=$1::uuid AND site_id=$6::uuid AND annule_le IS NULL
          RETURNING ${motorcycleColumns}`,
-        [entryId, values.date, values.heureEntree, values.moto, values.observation, siteId],
+        [entryId, values.date, values.heureEntree, values.moto, values.observation, siteId, account.id],
       );
       if (!result.rows[0]) throw Object.assign(new Error("Mouvement introuvable sur ce site."), { status: 404 });
       json(response, 200, { entry: result.rows[0] });
@@ -180,10 +180,10 @@ export async function handleMovementRoutes(request, response, pool, pathname, jw
       const siteId = await resolveSite(pool, account, url.searchParams.get("siteId"));
       const table = definition.table;
       const result = await pool.query(
-        `UPDATE ${table} SET heure_sortie=CURRENT_TIME
-         WHERE id=$1::uuid AND site_id=$2::uuid AND heure_sortie IS NULL
+        `UPDATE ${table} SET heure_sortie=CURRENT_TIME,modifie_par=$3::uuid
+         WHERE id=$1::uuid AND site_id=$2::uuid AND heure_sortie IS NULL AND annule_le IS NULL
          RETURNING ${columns}`,
-        [id, siteId],
+        [id, siteId, account.id],
       );
       if (!result.rows[0]) {
         const existing = await pool.query(
@@ -204,11 +204,12 @@ export async function handleMovementRoutes(request, response, pool, pathname, jw
       }
       const siteId = await resolveSite(pool, account, url.searchParams.get("siteId"));
       const result = await pool.query(
-        `DELETE FROM ${definition.table} WHERE id=$1::uuid AND site_id=$2::uuid RETURNING id`,
-        [entryId, siteId],
+        `UPDATE ${definition.table} SET annule_le=CURRENT_TIMESTAMP,annule_par=$3::uuid,modifie_par=$3::uuid
+         WHERE id=$1::uuid AND site_id=$2::uuid AND annule_le IS NULL RETURNING id,annule_le AS "annuleLe"`,
+        [entryId, siteId, account.id],
       );
       if (!result.rows[0]) throw Object.assign(new Error("Mouvement introuvable sur ce site."), { status: 404 });
-      json(response, 200, { id: result.rows[0].id, deleted: true });
+      json(response, 200, { id: result.rows[0].id, deleted: false, cancelled: true, annuleLe: result.rows[0].annuleLe });
       return true;
     }
 

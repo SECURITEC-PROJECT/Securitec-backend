@@ -54,6 +54,7 @@ export async function listCourrierMovements(request, response, pool, userId) {
               to_char(m.heure_entree, 'HH24:MI') AS "heureEntree",
               m.prenom, m.designation, m.nombre,
               to_char(m.heure_sortie, 'HH24:MI') AS "heureSortie",
+              m.annule_le AS "annuleLe",
               m.site_id AS "siteId", s.nom AS "siteName"
        FROM mouvement_courrier m
        JOIN site s ON s.id = m.site_id
@@ -118,10 +119,10 @@ export async function exitCourrierMovement(request, response, pool, userId, entr
     if (!siteId) return json(response, 400, { error: "Sélectionnez un site pour enregistrer la sortie." });
     const result = await pool.query(
       `UPDATE mouvement_courrier
-       SET heure_sortie = timezone('Indian/Antananarivo', CURRENT_TIMESTAMP)::time(0)
-       WHERE id = $1::uuid AND site_id = $2::uuid AND heure_sortie IS NULL
+       SET heure_sortie = timezone('Indian/Antananarivo', CURRENT_TIMESTAMP)::time(0),modifie_par=$3::uuid
+       WHERE id = $1::uuid AND site_id = $2::uuid AND heure_sortie IS NULL AND annule_le IS NULL
        RETURNING id, to_char(heure_sortie, 'HH24:MI') AS "heureSortie"`,
-      [entryId, siteId],
+      [entryId, siteId, userId],
     );
     if (!result.rows[0]) return json(response, 404, { error: "Mouvement introuvable sur ce site ou sortie déjà enregistrée." });
     json(response, 200, { entry: result.rows[0] });
@@ -152,12 +153,12 @@ export async function updateCourrierMovement(request, response, pool, userId, en
     const siteId = await resolveSite(client, account, body.siteId);
     const result = await client.query(
       `UPDATE mouvement_courrier
-       SET date_operation = $2::date, heure_entree = $3::time, prenom = $4, designation = $5, nombre = $6
-       WHERE id = $1::uuid AND site_id = $7::uuid
+       SET date_operation = $2::date, heure_entree = $3::time, prenom = $4, designation = $5, nombre = $6,modifie_par=$8::uuid
+       WHERE id = $1::uuid AND site_id = $7::uuid AND annule_le IS NULL
        RETURNING id, date_operation::text AS date, to_char(heure_entree, 'HH24:MI') AS "heureEntree",
                  prenom, designation, nombre, to_char(heure_sortie, 'HH24:MI') AS "heureSortie",
                  site_id AS "siteId"`,
-      [entryId, date, heureEntree, prenom, designation, nombre, siteId],
+      [entryId, date, heureEntree, prenom, designation, nombre, siteId, userId],
     );
     if (!result.rows[0]) {
       await client.query("ROLLBACK");
@@ -182,13 +183,13 @@ export async function deleteCourrierMovement(request, response, pool, userId, en
     const siteId = await querySiteForRead(pool, account, request);
     if (!siteId) return json(response, 400, { error: "Sélectionnez un site pour supprimer le mouvement." });
     const result = await pool.query(
-      `DELETE FROM mouvement_courrier
-       WHERE id = $1::uuid AND site_id = $2::uuid
-       RETURNING id`,
-      [entryId, siteId],
+      `UPDATE mouvement_courrier SET annule_le=CURRENT_TIMESTAMP,annule_par=$3::uuid,modifie_par=$3::uuid
+       WHERE id = $1::uuid AND site_id = $2::uuid AND annule_le IS NULL
+       RETURNING id,annule_le AS "annuleLe"`,
+      [entryId, siteId, userId],
     );
     if (!result.rows[0]) return json(response, 404, { error: "Mouvement courrier introuvable sur ce site." });
-    json(response, 200, { id: result.rows[0].id, deleted: true });
+    json(response, 200, { id: result.rows[0].id, deleted: false, cancelled: true, annuleLe: result.rows[0].annuleLe });
   } catch (error) {
     console.error("DELETE /courrier-movements/:id failed:", error.code || error.name, error.message || "");
     json(response, error.status || 500, { error: error.status ? error.message : "Impossible de supprimer le mouvement courrier." });

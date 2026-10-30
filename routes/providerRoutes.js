@@ -12,6 +12,7 @@ async function authorize(request, pool, secret, adminOnly = true) {
   const result = await pool.query("SELECT role FROM utilisateur WHERE id=$1::uuid AND actif=true", [tokenUser.id]);
   if (!result.rows[0]) throw Object.assign(new Error("Utilisateur introuvable."), { status: 401 });
   if (adminOnly && result.rows[0].role !== 1) throw Object.assign(new Error("Seul un administrateur peut gérer les prestataires."), { status: 403 });
+  return tokenUser.id;
 }
 
 function providerName(body) {
@@ -24,7 +25,7 @@ export async function handleProviderRoutes(request, response, pool, pathname, jw
   const entryMatch = entryPath.exec(pathname);
   if (pathname !== collectionPath && !entryMatch) return false;
   try {
-    await authorize(request, pool, jwtSecret, !(request.method === "GET" && pathname === collectionPath));
+    const actorId = await authorize(request, pool, jwtSecret, !(request.method === "GET" && pathname === collectionPath));
     if (request.method === "GET" && pathname === collectionPath) {
       const result = await pool.query(
         `SELECT p.id,p.nom AS name,p.actif AS active,
@@ -42,8 +43,8 @@ export async function handleProviderRoutes(request, response, pool, pathname, jw
       const duplicate = await pool.query("SELECT id FROM prestataire WHERE LOWER(nom)=LOWER($1) LIMIT 1", [name]);
       if (duplicate.rows[0]) throw Object.assign(new Error("Un prestataire portant ce nom existe déjà."), { status: 409 });
       const result = await pool.query(
-        "INSERT INTO prestataire (nom,actif) VALUES ($1,true) RETURNING id,nom AS name,actif AS active",
-        [name],
+        "INSERT INTO prestataire (nom,actif,modifie_par) VALUES ($1,true,$2::uuid) RETURNING id,nom AS name,actif AS active",
+        [name, actorId],
       );
       json(response, 201, { provider: { ...result.rows[0], employeeCount: 0, materialCount: 0 } });
       return true;
@@ -56,8 +57,8 @@ export async function handleProviderRoutes(request, response, pool, pathname, jw
       const duplicate = await pool.query("SELECT id FROM prestataire WHERE LOWER(nom)=LOWER($1) AND id<>$2::uuid LIMIT 1", [name, entryMatch[1]]);
       if (duplicate.rows[0]) throw Object.assign(new Error("Un prestataire portant ce nom existe déjà."), { status: 409 });
       const result = await pool.query(
-        "UPDATE prestataire SET nom=$1,actif=COALESCE($2,actif) WHERE id=$3::uuid RETURNING id,nom AS name,actif AS active",
-        [name, typeof body.active === "boolean" ? body.active : null, entryMatch[1]],
+        "UPDATE prestataire SET nom=$1,actif=COALESCE($2,actif),modifie_par=$3::uuid WHERE id=$4::uuid RETURNING id,nom AS name,actif AS active",
+        [name, typeof body.active === "boolean" ? body.active : null, actorId, entryMatch[1]],
       );
       if (!result.rows[0]) throw Object.assign(new Error("Prestataire introuvable."), { status: 404 });
       json(response, 200, { provider: result.rows[0] });
@@ -66,37 +67,12 @@ export async function handleProviderRoutes(request, response, pool, pathname, jw
 
     if (entryMatch && request.method === "DELETE") {
       if (!uuidPattern.test(entryMatch[1])) throw Object.assign(new Error("Prestataire introuvable."), { status: 404 });
-      const client = await pool.connect();
-      try {
-        await client.query("BEGIN");
-        const provider = await client.query("SELECT id FROM prestataire WHERE id=$1::uuid FOR UPDATE", [entryMatch[1]]);
-        if (!provider.rows[0]) {
-          await client.query("ROLLBACK");
-          throw Object.assign(new Error("Prestataire introuvable."), { status: 404 });
-        }
-        const references = await client.query(
-          `SELECT
-            EXISTS(SELECT 1 FROM employe WHERE prestataire_id=$1::uuid)
-            OR EXISTS(SELECT 1 FROM compte_rendu WHERE prestataire_id=$1::uuid)
-            OR EXISTS(SELECT 1 FROM materiel_sous_traitant WHERE prestataire_id=$1::uuid)
-            OR EXISTS(SELECT 1 FROM materiel_star WHERE prestataire_id=$1::uuid) AS used`,
-          [entryMatch[1]],
-        );
-        if (references.rows[0].used) {
-          await client.query("UPDATE prestataire SET actif=false WHERE id=$1::uuid", [entryMatch[1]]);
-          await client.query("COMMIT");
-          json(response, 200, { id: entryMatch[1], deleted: false, deactivated: true });
-        } else {
-          await client.query("DELETE FROM prestataire WHERE id=$1::uuid", [entryMatch[1]]);
-          await client.query("COMMIT");
-          json(response, 200, { id: entryMatch[1], deleted: true, deactivated: false });
-        }
-      } catch (error) {
-        await client.query("ROLLBACK").catch(() => {});
-        throw error;
-      } finally {
-        client.release();
-      }
+      const result = await pool.query(
+        "UPDATE prestataire SET actif=false,modifie_par=$2::uuid WHERE id=$1::uuid RETURNING id",
+        [entryMatch[1], actorId],
+      );
+      if (!result.rows[0]) throw Object.assign(new Error("Prestataire introuvable."), { status: 404 });
+      json(response, 200, { id: entryMatch[1], deleted: false, deactivated: true });
       return true;
     }
 

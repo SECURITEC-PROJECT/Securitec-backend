@@ -349,6 +349,9 @@ model PassageVehicule {
   controleConforme Boolean   @default(false) @map("controle_conforme")
   saisiParId       String?   @map("saisi_par_id") @db.Uuid
   sortieParId      String?   @map("sortie_par_id") @db.Uuid
+  annuleLe         DateTime? @map("annule_le") @db.Timestamptz(6)
+  annulePar        String?   @map("annule_par") @db.Uuid
+  modifiePar       String?   @map("modifie_par") @db.Uuid
   siteId           String?   @map("site_id") @db.Uuid
   vehiculeId       String    @map("vehicule_id") @db.Uuid
   vacationId       String?   @map("vacation_id") @db.Uuid
@@ -389,10 +392,41 @@ model Passation {
   @@map("passation")
 }
 
+model AuditRegistre {
+  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  entite        String   @db.VarChar(80)
+  entiteId      String   @map("entite_id") @db.Text
+  siteId        String?  @map("site_id") @db.Uuid
+  action        String   @db.VarChar(20)
+  avant         Json?    @db.JsonB
+  apres         Json?    @db.JsonB
+  utilisateurId String?  @map("utilisateur_id") @db.Uuid
+  creeLe        DateTime @default(now()) @map("cree_le") @db.Timestamptz(6)
+
+  @@index([entite, entiteId, creeLe(sort: Desc)], map: "idx_audit_registre_entity_date")
+  @@index([siteId, creeLe(sort: Desc)], map: "idx_audit_registre_site_date")
+  @@map("audit_registre")
+}
+
+model DocumentRegistre {
+  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  entite        String   @db.VarChar(80)
+  entiteId      String   @map("entite_id") @db.Uuid
+  siteId        String   @map("site_id") @db.Uuid
+  documentId    String   @map("document_id") @db.Uuid
+  utilisateurId String   @map("utilisateur_id") @db.Uuid
+  creeLe        DateTime @default(now()) @map("cree_le") @db.Timestamptz(6)
+
+  @@unique([entite, entiteId, documentId], map: "uq_document_registre_link")
+  @@index([entite, entiteId, creeLe(sort: Desc)], map: "idx_document_registre_entry")
+  @@map("document_registre")
+}
+
 model Prestataire {
   id            String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   nom           String        @unique @db.VarChar(160)
   actif         Boolean       @default(true)
+  modifiePar    String?       @map("modifie_par") @db.Uuid
   employes      Employe[]
   comptesRendus CompteRendu[]
   materielsSousTraitant MaterielSousTraitant[]
@@ -514,6 +548,9 @@ model ControleAlcoolemie {
   temoin2Fonction String?   @map("temoin2_fonction") @db.VarChar(100)
   siteId        String      @map("site_id") @db.Uuid
   utilisateurId String      @map("utilisateur_id") @db.Uuid
+  annuleLe      DateTime?   @map("annule_le") @db.Timestamptz(6)
+  annulePar     String?     @map("annule_par") @db.Uuid
+  modifiePar    String?     @map("modifie_par") @db.Uuid
   site          Site        @relation(fields: [siteId], references: [id], onDelete: Restrict, map: "fk_controle_alcoolemie_site")
   utilisateur   Utilisateur @relation(fields: [utilisateurId], references: [id], onDelete: Restrict, map: "fk_controle_alcoolemie_utilisateur")
 
@@ -670,6 +707,9 @@ model MouvementVelo {
   marqueVelo    String      @map("marque_velo") @db.VarChar(255)
   siteId        String      @map("site_id") @db.Uuid
   utilisateurId String      @map("utilisateur_id") @db.Uuid
+  annuleLe      DateTime?   @map("annule_le") @db.Timestamptz(6)
+  annulePar     String?     @map("annule_par") @db.Uuid
+  modifiePar    String?     @map("modifie_par") @db.Uuid
   site          Site        @relation(fields: [siteId], references: [id], onDelete: Restrict, map: "fk_mouvement_velo_site")
   utilisateur   Utilisateur @relation(fields: [utilisateurId], references: [id], onDelete: Restrict, map: "fk_mouvement_velo_utilisateur")
 
@@ -687,6 +727,9 @@ model MouvementMoto {
   heureSortie   DateTime?   @map("heure_sortie") @db.Time(0)
   siteId        String      @map("site_id") @db.Uuid
   utilisateurId String      @map("utilisateur_id") @db.Uuid
+  annuleLe      DateTime?   @map("annule_le") @db.Timestamptz(6)
+  annulePar     String?     @map("annule_par") @db.Uuid
+  modifiePar    String?     @map("modifie_par") @db.Uuid
   site          Site        @relation(fields: [siteId], references: [id], onDelete: Restrict, map: "fk_mouvement_moto_site")
   utilisateur   Utilisateur @relation(fields: [utilisateurId], references: [id], onDelete: Restrict, map: "fk_mouvement_moto_utilisateur")
 
@@ -899,6 +942,9 @@ model MouvementCourrier {
   heureSortie     DateTime?   @map("heure_sortie") @db.Time(0)
   siteId          String      @map("site_id") @db.Uuid
   utilisateurId   String      @map("utilisateur_id") @db.Uuid
+  annuleLe        DateTime?   @map("annule_le") @db.Timestamptz(6)
+  annulePar       String?     @map("annule_par") @db.Uuid
+  modifiePar      String?     @map("modifie_par") @db.Uuid
   site            Site        @relation(fields: [siteId], references: [id], onDelete: Restrict, map: "fk_mouvement_courrier_site")
   utilisateur     Utilisateur @relation(fields: [utilisateurId], references: [id], onDelete: Restrict, map: "fk_mouvement_courrier_utilisateur")
 
@@ -913,6 +959,9 @@ model MaterielSousTraitant {
   heureEntree   DateTime    @map("heure_entree") @db.Time(0)
   materiels     String      @db.Text
   nombre        Int
+  annuleLe      DateTime?   @map("annule_le") @db.Timestamptz(6)
+  annulePar     String?     @map("annule_par") @db.Uuid
+  modifiePar    String?     @map("modifie_par") @db.Uuid
   entreprise    String      @db.VarChar(255)
   prestataireId String     @map("prestataire_id") @db.Uuid
   heureSortie   DateTime?   @map("heure_sortie") @db.Time(0)
@@ -935,6 +984,9 @@ model MaterielStar {
   prenom        String      @db.VarChar(255)
   matricule     String      @db.VarChar(100)
   materiels     Json        @db.JsonB
+  annuleLe      DateTime?   @map("annule_le") @db.Timestamptz(6)
+  annulePar     String?     @map("annule_par") @db.Uuid
+  modifiePar    String?     @map("modifie_par") @db.Uuid
   prestataireId String     @map("prestataire_id") @db.Uuid
   heureSortie   DateTime?   @map("heure_sortie") @db.Time(0)
   siteId        String      @map("site_id") @db.Uuid

@@ -76,7 +76,7 @@ const selectEntry = `
          c.temoin_nom AS "temoinNom", c.temoin_matricule AS "temoinMatricule",
          c.temoin_fonction AS "temoinFonction", c.temoin2_nom AS "temoin2Nom",
          c.temoin2_matricule AS "temoin2Matricule", c.temoin2_fonction AS "temoin2Fonction",
-         c.site_id AS "siteId", s.nom AS "siteName"
+         c.site_id AS "siteId", s.nom AS "siteName", c.annule_le AS "annuleLe"
   FROM controle_alcoolemie c
   JOIN site s ON s.id = c.site_id`;
 
@@ -142,13 +142,13 @@ export async function updateAlcoholCheck(request, response, pool, userId, entryI
            civilite = $10, type_appareil = $11, testeur_nom = $12, testeur_matricule = $13,
            testeur_fonction = $14, temoin_nom = $15, temoin_matricule = $16,
            temoin_fonction = $17, temoin2_nom = $18, temoin2_matricule = $19,
-           temoin2_fonction = $20
-       WHERE id = $1::uuid AND site_id = $21::uuid
+           temoin2_fonction = $20, modifie_par = $22::uuid
+       WHERE id = $1::uuid AND site_id = $21::uuid AND annule_le IS NULL
        RETURNING id`,
       [entryId, entry.date, entry.heure, entry.matricule, entry.personne, entry.demandeur || null,
         entry.fonction, entry.resultat, entry.tauxMesure, entry.civilite, entry.typeAppareil, entry.testeurNom,
         entry.testeurMatricule, entry.testeurFonction, entry.temoinNom, entry.temoinMatricule,
-        entry.temoinFonction, entry.temoin2Nom, entry.temoin2Matricule, entry.temoin2Fonction, siteId],
+        entry.temoinFonction, entry.temoin2Nom, entry.temoin2Matricule, entry.temoin2Fonction, siteId, userId],
     );
     if (!result.rows[0]) return json(response, 404, { error: "Test alcool introuvable sur ce site." });
     const updated = await pool.query(
@@ -168,11 +168,11 @@ export async function deleteAlcoholCheck(request, response, pool, userId, entryI
     const url = new URL(request.url || "/", `http://${request.headers.host || "localhost"}`);
     const siteId = await getSiteId(pool, userId, url.searchParams.get("siteId"));
     const result = await pool.query(
-      "DELETE FROM controle_alcoolemie WHERE id = $1::uuid AND site_id = $2::uuid RETURNING id",
-      [entryId, siteId],
+      "UPDATE controle_alcoolemie SET annule_le=CURRENT_TIMESTAMP,annule_par=$3::uuid,modifie_par=$3::uuid WHERE id = $1::uuid AND site_id = $2::uuid AND annule_le IS NULL RETURNING id,annule_le AS \"annuleLe\"",
+      [entryId, siteId, userId],
     );
     if (!result.rows[0]) return json(response, 404, { error: "Test alcool introuvable sur ce site." });
-    json(response, 200, { id: result.rows[0].id, deleted: true });
+    json(response, 200, { id: result.rows[0].id, deleted: false, cancelled: true, annuleLe: result.rows[0].annuleLe });
   } catch (error) {
     console.error("DELETE alcohol check failed:", error.code || error.name, error.message || "");
     json(response, error.status || 500, { error: error.status ? error.message : "Impossible de supprimer le test alcool." });
