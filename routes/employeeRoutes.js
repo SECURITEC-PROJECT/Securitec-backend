@@ -65,8 +65,12 @@ export async function handleEmployeeRoutes(request, response, pool, pathname, jw
         if (!site.rows[0]) throw Object.assign(new Error("Site introuvable ou archivé."), { status: 404 });
       }
       const employees = await pool.query(
-        `SELECT id,prenom AS "firstName",nom AS "lastName",matricule,role AS section
-         FROM employe WHERE site_id=$1::uuid AND actif=true ORDER BY prenom,nom,matricule`,
+        `SELECT e.id,e.prenom AS "firstName",e.nom AS "lastName",e.matricule,e.role AS section,
+                p.id AS "providerId",p.nom AS prestataire,e.site_id AS "siteId",s.nom AS "siteName"
+         FROM employe e
+         JOIN prestataire p ON p.id=e.prestataire_id AND p.actif=true
+         JOIN site s ON s.id=e.site_id AND s.actif=true
+         WHERE e.site_id=$1::uuid AND e.actif=true ORDER BY e.prenom,e.nom,e.matricule`,
         [siteId],
       );
       json(response, 200, { employees: employees.rows });

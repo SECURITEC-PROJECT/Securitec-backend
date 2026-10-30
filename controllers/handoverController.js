@@ -76,8 +76,8 @@ export async function getHandovers(request, response, pool) {
 export async function createHandover(request, response, pool, userId) {
   try {
     const body = await readJson(request);
-    const incomingNom = requiredText(body.incoming_nom, "Le nom de l'agent entrant", 255);
-    const incomingPrenom = requiredText(body.incoming_prenom, "Le prénom de l'agent entrant", 255);
+    requiredText(body.incoming_nom, "Le nom de l'agent entrant", 255);
+    requiredText(body.incoming_prenom, "Le prénom de l'agent entrant", 255);
     const outgoingNom = requiredText(body.agent_sortant_nom, "Le nom du chef sortant", 255);
     const outgoingPrenom = requiredText(body.agent_sortant_prenom, "Le prénom du chef sortant", 255);
     const outgoingMatricule = requiredText(body.agent_sortant_matricule, "Le matricule du chef sortant", 50);
@@ -121,6 +121,18 @@ export async function createHandover(request, response, pool, userId) {
       : { rows: [] };
     const shift = shiftResult.rows[0] || null;
     if (!shift) return json(response, 400, { error: "La passation doit être liée au service sortant sélectionné." });
+
+    const incomingEmployee = await pool.query(
+      `SELECT nom,prenom FROM employe
+       WHERE site_id=$1::uuid AND actif=true AND UPPER(BTRIM(matricule))=UPPER(BTRIM($2))
+       LIMIT 1`,
+      [shift.site_id, incomingMatricule],
+    );
+    if (!incomingEmployee.rows[0]) {
+      return json(response, 400, { error: "Le chef entrant doit être un employé actif du même site que le service sortant." });
+    }
+    const incomingNom = incomingEmployee.rows[0].nom;
+    const incomingPrenom = incomingEmployee.rows[0].prenom;
 
     const result = await pool.query(
       `INSERT INTO passation
