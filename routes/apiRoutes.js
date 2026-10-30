@@ -15,6 +15,7 @@ import { handleMovementRoutes } from "./movementRoutes.js";
 import { handleNotificationRoutes } from "./notificationRoutes.js";
 import { handleProviderRoutes } from "./providerRoutes.js";
 import { handleEntryExitRoutes } from "./entryExitRoutes.js";
+import { handleEmergencyContactRoutes } from "./emergencyContactRoutes.js";
 import { handleFluxRoutes } from "./fluxRoutes.js";
 import { handleHandoverRoutes } from "./handoverRoutes.js";
 import { handleMainCouranteRoutes } from "./mainCouranteRoutes.js";
@@ -41,8 +42,12 @@ export async function handleApiRoutes(request, response, pool, jwtSecret) {
 
   const authenticatedUser = getRequestUser(request, jwtSecret);
   if (authenticatedUser) {
-    const active = await pool.query("SELECT 1 FROM utilisateur WHERE id=$1::uuid AND actif=true LIMIT 1", [authenticatedUser.id]);
+    const active = await pool.query("SELECT role FROM utilisateur WHERE id=$1::uuid AND actif=true LIMIT 1", [authenticatedUser.id]);
     if (!active.rows[0]) return json(response, 401, { error: "Ce compte est désactivé ou introuvable." });
+    const directionReadReceipt = request.method === "PATCH" && /^\/api\/notifications\/[0-9a-f-]{36}\/read$/i.test(pathname);
+    if (Number(active.rows[0].role) === 4 && request.method !== "GET" && !directionReadReceipt) {
+      return json(response, 403, { error: "Ce profil dispose d’un accès en lecture seule." });
+    }
   }
 
   if (await handleAuthRoutes(request, response, pool, pathname, jwtSecret)) return true;
@@ -54,6 +59,7 @@ export async function handleApiRoutes(request, response, pool, jwtSecret) {
   if (await handleWasteScrapRegisterRoutes(request, response, pool, pathname, jwtSecret)) return true;
   if (await handleMovementRoutes(request, response, pool, pathname, jwtSecret)) return true;
   if (await handleProviderRoutes(request, response, pool, pathname, jwtSecret)) return true;
+  if (await handleEmergencyContactRoutes(request, response, pool, pathname, jwtSecret)) return true;
   if (await handleCameraRoutes(request, response, pool, pathname, jwtSecret)) return true;
   if (await handleChauffeurRoutes(request, response, pool, pathname, jwtSecret)) return true;
   if (await handleDocumentRoutes(request, response, pool, pathname, jwtSecret)) return true;

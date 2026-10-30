@@ -79,7 +79,7 @@ export async function createVisitor(request, response, pool, userId) {
     await client.query("BEGIN");
     const account = await getAccount(client, userId);
     const siteId = await resolveSite(client, account, body);
-    const servicePosteId = await resolveServicePosteId(client, siteId, body.priseDePosteId);
+    const servicePosteId = await resolveServicePosteId(client, siteId, body.priseDePosteId, body.posteId || null);
     const banned = await client.query(
       `SELECT identite FROM visiteur
        WHERE site_id=$1::uuid AND liste_noire=true
@@ -135,9 +135,9 @@ export async function setVisitorSiteBan(request, response, pool, userId, passage
     client = await pool.connect();
     await client.query("BEGIN");
     const account = await getAccount(client, userId);
-    if (![1, 2].includes(Number(account.role))) {
+    if (![1, 3].includes(Number(account.role))) {
       await client.query("ROLLBACK");
-      return json(response, 403, { error: "Seuls les administrateurs et superviseurs peuvent gérer les interdictions de site." });
+      return json(response, 403, { error: "Seuls les administrateurs et responsables sécurité peuvent gérer les interdictions de site." });
     }
     const identity = await client.query(
       `SELECT v.identite, v.site_id
@@ -346,7 +346,7 @@ export async function createVehicle(request, response, pool, userId) {
     await client.query("BEGIN");
     const account = await getAccount(client, userId);
     const siteId = await resolveSite(client, account, body);
-    const servicePosteId = await resolveServicePosteId(client, siteId, body.priseDePosteId);
+    const servicePosteId = await resolveServicePosteId(client, siteId, body.priseDePosteId, body.posteId || null);
     const type = cleanText(body.type, 100) || "Véhicule";
     const vehicle = await client.query(
       `INSERT INTO vehicule (immatriculation, type) VALUES ($1,$2)

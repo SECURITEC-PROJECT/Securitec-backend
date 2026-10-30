@@ -1,5 +1,6 @@
 import { getRequestUser } from "../utils/auth.js";
 import { json, readJson } from "../utils/helpers.js";
+import { resolveServicePosteId } from "../utils/priseDePoste.js";
 
 const collectionPath = "/api/visitor-questionnaires";
 const entryPath = /^\/api\/visitor-questionnaires\/([0-9a-f-]+)$/i;
@@ -74,8 +75,11 @@ async function resolveSite(pool, account, requestedSiteId) {
 }
 
 const selection = `SELECT q.id, q.donnees AS data, q.site_id AS "siteId", s.nom AS "siteName",
-  q.cree_le AS "createdAt", q.modifie_le AS "updatedAt"
-  FROM questionnaire_visiteur q JOIN site s ON s.id=q.site_id`;
+  q.cree_le AS "createdAt", q.modifie_le AS "updatedAt", q.service_poste_id AS "servicePosteId",
+  sp.poste_id AS "posteId", po.nom AS "posteNom", sp.shift_type AS "shiftType"
+  FROM questionnaire_visiteur q JOIN site s ON s.id=q.site_id
+  LEFT JOIN service_poste sp ON sp.id=q.service_poste_id
+  LEFT JOIN poste po ON po.id=sp.poste_id`;
 
 export async function handleVisitorQuestionnaireRoutes(request, response, pool, pathname, jwtSecret) {
   const entryMatch = entryPath.exec(pathname);
@@ -105,11 +109,12 @@ export async function handleVisitorQuestionnaireRoutes(request, response, pool, 
       const body = await readJson(request);
       const data = validateData(body.data);
       const siteId = await resolveSite(pool, account, body.siteId);
+      const servicePosteId = await resolveServicePosteId(pool, siteId, body.priseDePosteId, body.posteId || null);
       const result = await pool.query(
-        `INSERT INTO questionnaire_visiteur (date_operation, donnees, site_id, utilisateur_id)
-         VALUES ($1::date, $2::jsonb, $3::uuid, $4::uuid)
-         RETURNING id, donnees AS data, site_id AS "siteId", cree_le AS "createdAt", modifie_le AS "updatedAt"`,
-        [data.date, JSON.stringify(data), siteId, account.id],
+        `INSERT INTO questionnaire_visiteur (date_operation, donnees, site_id, utilisateur_id, service_poste_id)
+         VALUES ($1::date, $2::jsonb, $3::uuid, $4::uuid, $5::uuid)
+         RETURNING id, donnees AS data, site_id AS "siteId", cree_le AS "createdAt", modifie_le AS "updatedAt", service_poste_id AS "servicePosteId"`,
+        [data.date, JSON.stringify(data), siteId, account.id, servicePosteId],
       );
       const site = await pool.query("SELECT nom AS \"siteName\" FROM site WHERE id=$1::uuid", [siteId]);
       json(response, 201, { entry: { ...result.rows[0], siteName: site.rows[0].siteName } });
@@ -125,7 +130,7 @@ export async function handleVisitorQuestionnaireRoutes(request, response, pool, 
         `UPDATE questionnaire_visiteur
          SET date_operation=$2::date, donnees=$3::jsonb, modifie_le=CURRENT_TIMESTAMP
          WHERE id=$1::uuid AND site_id=$4::uuid
-         RETURNING id, donnees AS data, site_id AS "siteId", cree_le AS "createdAt", modifie_le AS "updatedAt"`,
+         RETURNING id, donnees AS data, site_id AS "siteId", cree_le AS "createdAt", modifie_le AS "updatedAt", service_poste_id AS "servicePosteId"`,
         [entryMatch[1], data.date, JSON.stringify(data), siteId],
       );
       if (!result.rows[0]) { json(response, 404, { error: "Questionnaire introuvable sur ce site." }); return true; }

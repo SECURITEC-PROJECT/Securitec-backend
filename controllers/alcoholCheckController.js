@@ -105,7 +105,7 @@ export async function createAlcoholCheck(request, response, pool, userId) {
     const body = await readJson(request);
     const entry = validate(body);
     const siteId = await getSiteId(pool, userId, body.siteId);
-    const servicePosteId = await resolveServicePosteId(pool, siteId, body.priseDePosteId);
+    const servicePosteId = await resolveServicePosteId(pool, siteId, body.priseDePosteId, body.posteId || null);
     const result = await pool.query(
       `INSERT INTO controle_alcoolemie
          (date_controle, heure, matricule, personne, fonction, resultat,

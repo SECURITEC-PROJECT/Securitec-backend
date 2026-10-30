@@ -12,10 +12,10 @@ function readUserFields(body) {
   const role = Number(body.role);
   const siteId = typeof body.siteId === "string" && body.siteId ? body.siteId : null;
   const pin = typeof body.pin === "string" ? body.pin : "";
-  if (!name || !identifier || ![1, 2, 3].includes(role)) return { error: "Indiquez le nom, l’identifiant et un rôle valide." };
+  if (!name || !identifier || ![1, 2, 3, 4, 5].includes(role)) return { error: "Indiquez le nom, l’identifiant et un rôle valide." };
   if (pin && !/^\d{6}$/.test(pin)) return { error: "Le PIN doit contenir exactement 6 chiffres." };
   if (!body.allowEmptyPin && !/^\d{6}$/.test(pin)) return { error: "Le PIN doit contenir exactement 6 chiffres." };
-  if (role !== 1 && !siteId) return { error: "Un site est obligatoire pour un agent ou un superviseur." };
+  if (role !== 1 && !siteId) return { error: "Un site est obligatoire pour ce profil." };
   if (siteId && !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(siteId)) {
     return { error: "Le site sélectionné est invalide." };
   }

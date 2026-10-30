@@ -94,6 +94,7 @@ export async function handleConsigneJournalRoutes(request, response, pool, pathn
     if (!account) throw Object.assign(new Error("Utilisateur introuvable."), { status: 401 });
 
     if (receiptMatch && request.method === "POST") {
+      if (![1, 2, 3, 5].includes(Number(account.role))) throw Object.assign(new Error("Ce profil ne peut pas confirmer la lecture d’une consigne."), { status: 403 });
       const body = await readJson(request);
       const siteId = await resolveSite(pool, account, body?.siteId);
       const posteId = cleanText(body?.posteId, 36);
@@ -143,6 +144,7 @@ export async function handleConsigneJournalRoutes(request, response, pool, pathn
     }
 
     if (request.method === "DELETE" && entryMatch) {
+      if (![1, 3].includes(Number(account.role))) throw Object.assign(new Error("Seul le responsable sécurité peut retirer une consigne."), { status: 403 });
       const url = new URL(request.url || "/", `http://${request.headers.host || "localhost"}`);
       const siteId = await resolveSite(pool, account, url.searchParams.get("siteId"));
       const result = await pool.query(
@@ -161,6 +163,7 @@ export async function handleConsigneJournalRoutes(request, response, pool, pathn
       json(response, 405, { error: "Methode non autorisee." });
       return true;
     }
+    if (![1, 3].includes(Number(account.role))) throw Object.assign(new Error("Seul le responsable sécurité peut émettre ou modifier une consigne."), { status: 403 });
 
     const body = await readJson(request);
     const date = cleanText(body?.date, 10);

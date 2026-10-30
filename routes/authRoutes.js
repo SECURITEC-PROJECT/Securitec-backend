@@ -3,6 +3,7 @@ import { json, readJson } from "../utils/helpers.js";
 import { signAccessToken, verifyAccessToken } from "../utils/auth.js";
 
 const apiPrefix = "/api";
+const roleLabels = { 1: "Administrateur", 2: "Chef de poste", 3: "Responsable sécurité", 4: "Direction / RAF / chef de service", 5: "Agent APS" };
 
 async function findUser(pool, id) {
   const result = await pool.query(
@@ -37,7 +38,7 @@ export async function handleAuthRoutes(request, response, pool, pathname, jwtSec
       }
       const { pin_hache: _pinHash, ...user } = record;
       const token = signAccessToken(user, jwtSecret);
-      const roleLabel = user.role === 1 ? "Administrateur" : user.role === 2 ? "Superviseur" : "Agent";
+      const roleLabel = roleLabels[user.role] || "Utilisateur";
       return json(response, 200, {
         token,
         user: { ...user, name: user.nom, roleLabel },
@@ -60,7 +61,7 @@ export async function handleAuthRoutes(request, response, pool, pathname, jwtSec
     try {
       const user = await findUser(pool, tokenUser.id);
       if (!user) return json(response, 401, { error: "Utilisateur introuvable." });
-      const roleLabel = user.role === 1 ? "Administrateur" : user.role === 2 ? "Superviseur" : "Agent";
+      const roleLabel = roleLabels[user.role] || "Utilisateur";
       return json(response, 200, { user: { ...user, name: user.nom, roleLabel } });
     } catch (error) {
       console.error("GET /auth/me failed:", error.code || error.name, error.message || "");

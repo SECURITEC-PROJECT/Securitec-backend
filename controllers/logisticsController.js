@@ -65,21 +65,28 @@ async function resolveSite(pool, account, body = {}) {
   throw Object.assign(new Error("Sélectionnez un site de travail actif."), { status: 400 });
 }
 
-async function resolveOpenPostShift(client, siteId, requestedId = null) {
+async function resolveOpenPostShift(client, siteId, requestedId = null, posteId = null) {
   if (requestedId && !uuidPattern.test(requestedId)) {
     throw Object.assign(new Error("La prise de poste sélectionnée est invalide."), { status: 400 });
   }
+  if (posteId && !uuidPattern.test(posteId)) {
+    throw Object.assign(new Error("Le poste sélectionné est invalide."), { status: 400 });
+  }
   const result = await client.query(
-    `SELECT p.id
+    `SELECT DISTINCT ON (sp.id) p.id
      FROM prise_de_poste p
      JOIN service_poste sp ON sp.id=p.service_id
      JOIN site s ON LOWER(BTRIM(s.nom)) = LOWER(BTRIM(p.site_de_travail))
      WHERE s.id=$1::uuid AND s.actif=true
        AND ($2::uuid IS NULL OR p.id=$2::uuid OR sp.id=$2::uuid)
-       AND ($2::uuid IS NOT NULL OR p.ended_at IS NULL)
-     ORDER BY CASE WHEN p.fonction_service='CHEF' THEN 0 ELSE 1 END, p.started_at DESC LIMIT 1`,
-    [siteId, requestedId],
+       AND ($3::uuid IS NULL OR sp.poste_id=$3::uuid)
+       AND p.ended_at IS NULL AND sp.ended_at IS NULL
+     ORDER BY sp.id, CASE WHEN p.fonction_service='CHEF' THEN 0 ELSE 1 END, p.started_at DESC LIMIT 2`,
+    [siteId, requestedId, posteId],
   );
+  if (!requestedId && !posteId && result.rows.length > 1) {
+    throw Object.assign(new Error("Plusieurs services sont ouverts sur ce site. Sélectionnez le poste concerné avant de saisir."), { status: 409 });
+  }
   if (!result.rows[0]) {
     throw Object.assign(new Error("Ouvrez une prise de poste pour ce site avant d’enregistrer un flux logistique."), { status: 409 });
   }
@@ -360,7 +367,7 @@ export async function createStarParticulierLoading(request, response, pool, user
         return json(response, 200, { entry: duplicate.rows[0], duplicate: true });
       }
     }
-    const postShiftId = await resolveOpenPostShift(client, siteId, body.priseDePosteId || null);
+    const postShiftId = await resolveOpenPostShift(client, siteId, body.priseDePosteId || null, body.posteId || null);
     await client.query("SELECT set_config('app.prise_de_poste_id', $1, true)", [postShiftId]);
     await requireDriverForMatricule(client, siteId, entry.camion, entry.nomChauffeur);
     const result = await client.query(
@@ -492,7 +499,7 @@ export async function createLogisticsEntry(request, response, pool, userId) {
         return json(response, 200, { entry: duplicate.rows[0], duplicate: true });
       }
     }
-    const postShiftId = await resolveOpenPostShift(client, siteId, body.priseDePosteId || null);
+    const postShiftId = await resolveOpenPostShift(client, siteId, body.priseDePosteId || null, body.posteId || null);
     await client.query("SELECT set_config('app.prise_de_poste_id', $1, true)", [postShiftId]);
 
     if (type === "BOUTEILLES_VIDES") {
@@ -1303,7 +1310,7 @@ export async function createLogisticsIncident(request, response, pool, userId) {
     await client.query("SELECT set_config('app.user_id', $1, true)", [userId]);
     const account = await getAccount(client, userId);
     const siteId = await resolveSite(client, account, body);
-    const priseDePosteId = await resolvePriseDePosteId(client, siteId, body.priseDePosteId);
+    const priseDePosteId = await resolvePriseDePosteId(client, siteId, body.priseDePosteId, body.posteId || null);
     const siteResult = await client.query("SELECT nom, type_site FROM site WHERE id = $1::uuid", [siteId]);
     const site = siteResult.rows[0];
     if (!site) throw Object.assign(new Error("Site de travail introuvable."), { status: 404 });

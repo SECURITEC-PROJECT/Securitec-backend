@@ -79,7 +79,7 @@ export async function createMainCouranteEntry(request, response, pool, userId) {
     await client.query("BEGIN");
     const account = await getAccount(client, userId);
     const siteId = await resolveSite(client, account, body.siteId);
-    const priseDePosteId = await resolvePriseDePosteId(client, siteId, body.priseDePosteId);
+    const priseDePosteId = await resolvePriseDePosteId(client, siteId, body.priseDePosteId, body.posteId || null);
     const result = await client.query(
       `INSERT INTO main_courante
          (type_entree, category, severity, zone, people, statut_auteur, nature_violation,

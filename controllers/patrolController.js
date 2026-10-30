@@ -75,7 +75,7 @@ export async function createPatrol(request, response, pool, userId) {
     await client.query("BEGIN");
     const account = await getAccount(client, userId);
     const siteId = await resolveSite(client, account, body.siteId);
-    const priseDePosteId = await resolvePriseDePosteId(client, siteId, body.priseDePosteId);
+    const priseDePosteId = await resolvePriseDePosteId(client, siteId, body.priseDePosteId, body.posteId || null);
     const result = await client.query(
       `INSERT INTO ronde (nom_parcours, points, site_id, utilisateur_id, prise_de_poste_id)
        VALUES ($1, $2::jsonb, $3::uuid, $4::uuid, $5::uuid)

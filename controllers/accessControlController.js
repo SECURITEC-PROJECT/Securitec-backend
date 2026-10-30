@@ -66,7 +66,7 @@ export async function createKeyTracking(request, response, pool, userId) {
       return json(response, 400, { error: "Vérifiez la date, l’employé, le type de clé, la quantité et l’heure de sortie." });
     }
     const siteId = await getUserSiteId(pool, userId, body.siteId);
-    const servicePosteId = await resolveServicePosteId(pool, siteId, body.priseDePosteId);
+    const servicePosteId = await resolveServicePosteId(pool, siteId, body.priseDePosteId, body.posteId || null);
     const employee = await pool.query(
       `SELECT e.nom, e.prenom, e.matricule, e.role
        FROM employe e
@@ -214,7 +214,7 @@ export async function createBreathTest(request, response, pool, userId) {
     }
 
     const siteId = await getUserSiteId(pool, userId, body.siteId);
-    const servicePosteId = await resolveServicePosteId(pool, siteId, body.priseDePosteId);
+    const servicePosteId = await resolveServicePosteId(pool, siteId, body.priseDePosteId, body.posteId || null);
     const result = await pool.query(
       `INSERT INTO controle_alcoolemie
          (date_controle, heure, personne, appartenance, demandeur, type_demande,

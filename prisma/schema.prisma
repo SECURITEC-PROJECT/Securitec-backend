@@ -33,6 +33,7 @@ model Site {
   zones                   Zone[]
   postes                  Poste[]
   servicesPoste           ServicePoste[]
+  contactsUrgence        ContactUrgence[]
   employes                Employe[]
   comptesRendus           CompteRendu[]
   vacations               Vacation[]
@@ -65,7 +66,6 @@ model Site {
   mouvementsEvenementsAps MouvementApsEvenement[]
   passationsServiceAps     PassationServiceAps[]
   configurationsPostesMouvementAps ConfigurationPostesMouvementAps[]
-
   @@map("site")
 }
 
@@ -77,6 +77,7 @@ model Utilisateur {
   pinHache                String                  @map("pin_hache") @db.VarChar(255)
   siteId                  String?                 @map("site_id") @db.Uuid
   site                    Site?                   @relation(fields: [siteId], references: [id], onDelete: SetNull, map: "fk_utilisateur_site")
+  contactsUrgenceModifies ContactUrgence[] @relation("ContactUrgenceModifiePar")
   consignes               Consigne[]
   badges                  Badge[]
   vacations               Vacation[]
@@ -443,8 +444,29 @@ model Prestataire {
   comptesRendus CompteRendu[]
   materielsSousTraitant MaterielSousTraitant[]
   materielsStar MaterielStar[]
+  chauffeurs    Chauffeur[]
 
   @@map("prestataire")
+}
+
+model ContactUrgence {
+  id          String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  siteId      String      @map("site_id") @db.Uuid
+  nom         String      @db.VarChar(160)
+  fonction    String      @default("") @db.VarChar(120)
+  telephone   String      @db.VarChar(40)
+  email       String?     @db.VarChar(255)
+  instructions String?    @db.Text
+  actif       Boolean     @default(true)
+  ordre       Int         @default(0)
+  creeLe      DateTime    @default(now()) @map("cree_le") @db.Timestamptz(6)
+  modifieLe   DateTime    @default(now()) @map("modifie_le") @db.Timestamptz(6)
+  modifiePar  String?     @map("modifie_par") @db.Uuid
+  site        Site        @relation(fields: [siteId], references: [id], onDelete: Cascade, map: "fk_contact_urgence_site")
+  modificateur Utilisateur? @relation("ContactUrgenceModifiePar", fields: [modifiePar], references: [id], onDelete: SetNull, map: "fk_contact_urgence_modifie_par")
+
+  @@index([siteId, actif, ordre, nom], map: "idx_contact_urgence_site_actif")
+  @@map("contact_urgence")
 }
 
 model Poste {
@@ -941,10 +963,13 @@ model PointVigilance {
   agentNom       String      @map("agent_nom") @db.VarChar(255)
   siteId         String      @map("site_id") @db.Uuid
   utilisateurId  String      @map("utilisateur_id") @db.Uuid
+  servicePosteId String?     @map("service_poste_id") @db.Uuid
   site           Site        @relation(fields: [siteId], references: [id], onDelete: Restrict, map: "fk_point_vigilance_site")
   utilisateur    Utilisateur @relation(fields: [utilisateurId], references: [id], onDelete: Restrict, map: "fk_point_vigilance_utilisateur")
+  servicePoste   ServicePoste? @relation(fields: [servicePosteId], references: [id], onDelete: SetNull, map: "fk_point_vigilance_service_poste")
 
   @@index([siteId, creeLe], map: "idx_point_vigilance_site_date")
+  @@index([servicePosteId, creeLe(sort: Desc)], map: "idx_point_vigilance_service_poste")
   @@map("point_vigilance")
 }
 
@@ -1096,10 +1121,13 @@ model QuestionnaireVisiteur {
   donnees       Json        @db.JsonB
   siteId        String      @map("site_id") @db.Uuid
   utilisateurId String      @map("utilisateur_id") @db.Uuid
+  servicePosteId String?     @map("service_poste_id") @db.Uuid
   site          Site        @relation(fields: [siteId], references: [id], onDelete: Restrict, map: "fk_questionnaire_visiteur_site")
   utilisateur   Utilisateur @relation(fields: [utilisateurId], references: [id], onDelete: Restrict, map: "fk_questionnaire_visiteur_utilisateur")
+  servicePoste  ServicePoste? @relation(fields: [servicePosteId], references: [id], onDelete: SetNull, map: "fk_questionnaire_visiteur_service_poste")
 
   @@index([siteId, dateOperation, creeLe], map: "idx_questionnaire_visiteur_site_date")
+  @@index([servicePosteId, dateOperation(sort: Desc)], map: "idx_questionnaire_visiteur_service_poste")
   @@map("questionnaire_visiteur")
 }
 
@@ -1111,10 +1139,13 @@ model DeclarationObjet {
   donnees       Json        @db.JsonB
   siteId        String      @map("site_id") @db.Uuid
   utilisateurId String      @map("utilisateur_id") @db.Uuid
+  servicePosteId String?     @map("service_poste_id") @db.Uuid
   site          Site        @relation(fields: [siteId], references: [id], onDelete: Restrict, map: "fk_declaration_objet_site")
   utilisateur   Utilisateur @relation(fields: [utilisateurId], references: [id], onDelete: Restrict, map: "fk_declaration_objet_utilisateur")
+  servicePoste  ServicePoste? @relation(fields: [servicePosteId], references: [id], onDelete: SetNull, map: "fk_declaration_objet_service_poste")
 
   @@index([siteId, dateOperation, creeLe], map: "idx_declaration_objet_site_date")
+  @@index([servicePosteId, dateOperation(sort: Desc)], map: "idx_declaration_objet_service_poste")
   @@map("declaration_objet")
 }
 
@@ -1214,6 +1245,9 @@ model ServicePoste {
   mainCourante MainCourante[]
   rondes       Ronde[]
   consignesJournal ConsigneJournal[]
+  pointsVigilance PointVigilance[]
+  questionnairesVisiteurs QuestionnaireVisiteur[]
+  declarationsObjets DeclarationObjet[]
 
   @@index([siteId, startedAt(sort: Desc)], map: "idx_service_poste_site_started")
   @@index([posteId, shiftType, endedAt], map: "idx_service_poste_poste_status")
@@ -1250,13 +1284,16 @@ model Chauffeur {
   expirationPermis      DateTime?   @map("expiration_permis") @db.Date
   vehicule              String?     @db.VarChar(160)
   matricule             String?     @db.VarChar(40)
+  prestataireId         String?     @map("prestataire_id") @db.Uuid
   siteId                String      @map("site_id") @db.Uuid
   utilisateurId         String      @map("utilisateur_id") @db.Uuid
   creeLe                DateTime    @default(now()) @map("cree_le") @db.Timestamptz(6)
   modifieLe             DateTime    @default(now()) @map("modifie_le") @db.Timestamptz(6)
   site                  Site        @relation(fields: [siteId], references: [id], onDelete: Cascade, map: "chauffeur_site_id_fkey")
   utilisateur           Utilisateur @relation(fields: [utilisateurId], references: [id], onDelete: Restrict, map: "chauffeur_utilisateur_id_fkey")
+  prestataire           Prestataire? @relation(fields: [prestataireId], references: [id], onDelete: SetNull, map: "fk_chauffeur_prestataire")
 
   @@index([siteId, nomPrenom], map: "chauffeur_site_nom_idx")
+  @@index([prestataireId, siteId], map: "idx_chauffeur_prestataire_site")
   @@map("chauffeur")
 }

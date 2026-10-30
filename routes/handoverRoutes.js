@@ -15,6 +15,11 @@ export async function handleHandoverRoutes(request, response, pool, pathname, jw
       json(response, 401, { error: "Connectez-vous pour enregistrer une passation." });
       return true;
     }
+    const account = await pool.query("SELECT role FROM utilisateur WHERE id=$1::uuid AND actif=true", [user.id]);
+    if (Number(account.rows[0]?.role) !== 2) {
+      json(response, 403, { error: "Seul un chef de poste peut valider une passation." });
+      return true;
+    }
     await createHandover(request, response, pool, user.id);
     return true;
   }

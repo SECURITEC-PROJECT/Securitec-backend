@@ -1,4 +1,5 @@
 import { json, readJson } from "../utils/helpers.js";
+import { resolveServicePosteId } from "../utils/priseDePoste.js";
 
 const timePattern = /^(?:[01]\d|2[0-3]):[0-5]\d$/;
 const statuses = new Set(["Conforme", "Non Conforme", "RAS"]);
@@ -27,8 +28,12 @@ export async function getVigilancePoints(request, response, pool, userId) {
     const result = await pool.query(
       `SELECT p.id, p.type_point AS "typePoint", p.element_verifie AS "elementVerifie",
               p.statut, p.observations, to_char(p.heure, 'HH24:MI') AS heure,
-              p.agent_nom AS "agentNom", p.cree_le AS "createdAt", p.site_id AS "siteId", s.nom AS "siteName"
+              p.agent_nom AS "agentNom", p.cree_le AS "createdAt", p.site_id AS "siteId", s.nom AS "siteName",
+              p.service_poste_id AS "servicePosteId", sp.poste_id AS "posteId",
+              po.nom AS "posteNom", sp.shift_type AS "shiftType"
        FROM point_vigilance p JOIN site s ON s.id=p.site_id
+       LEFT JOIN service_poste sp ON sp.id=p.service_poste_id
+       LEFT JOIN poste po ON po.id=sp.poste_id
        WHERE p.site_id=$1::uuid ORDER BY p.cree_le DESC LIMIT 1000`,
       [siteId],
     );
@@ -60,14 +65,16 @@ export async function createVigilancePoints(request, response, pool, userId) {
     await client.query("BEGIN");
     const account = await accountFor(client, userId);
     const siteId = await resolveSite(client, account, submitted[0]?.siteId);
+    const servicePosteId = await resolveServicePosteId(client, siteId, submitted[0]?.priseDePosteId, submitted[0]?.posteId || null);
     const created = [];
     for (const entry of entries) {
       const result = await client.query(
-        `INSERT INTO point_vigilance (type_point, element_verifie, statut, observations, heure, agent_nom, site_id, utilisateur_id)
-         VALUES ($1, $2, $3, $4, $5::time, $6, $7::uuid, $8::uuid)
+        `INSERT INTO point_vigilance (type_point, element_verifie, statut, observations, heure, agent_nom, site_id, utilisateur_id, service_poste_id)
+         VALUES ($1, $2, $3, $4, $5::time, $6, $7::uuid, $8::uuid, $9::uuid)
          RETURNING id, type_point AS "typePoint", element_verifie AS "elementVerifie", statut, observations,
-                   to_char(heure, 'HH24:MI') AS heure, agent_nom AS "agentNom", cree_le AS "createdAt"`,
-        [entry.typePoint, entry.elementVerifie, entry.statut, entry.observations, entry.heure, entry.agentNom, siteId, userId],
+                   to_char(heure, 'HH24:MI') AS heure, agent_nom AS "agentNom", cree_le AS "createdAt",
+                   service_poste_id AS "servicePosteId"`,
+        [entry.typePoint, entry.elementVerifie, entry.statut, entry.observations, entry.heure, entry.agentNom, siteId, userId, servicePosteId],
       );
       created.push({ ...result.rows[0], siteId });
     }
