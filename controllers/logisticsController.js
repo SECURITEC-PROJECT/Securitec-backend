@@ -1,4 +1,5 @@
 import { json, readJson } from "../utils/helpers.js";
+import { resolvePriseDePosteId } from "../utils/priseDePoste.js";
 
 const datePattern = /^\d{4}-\d{2}-\d{2}$/;
 const timePattern = /^(?:[01]\d|2[0-3]):[0-5]\d$/;
@@ -1239,8 +1240,10 @@ export async function getLogisticsIncidents(request, response, pool, userId) {
               e.casse AS broken, e.manquant AS missing, e.vides AS empty, e.phn,
               e.description_faits AS facts, e.personne AS person, e.observations,
               e.mesures_prises AS measures, s.nom AS "siteName", s.type_site AS "siteType",
-              e.cree_le AS "createdAt"
+              e.cree_le AS "createdAt", p.poste_id AS "posteId", po.nom AS "posteNom", p.shift_type AS "shiftType"
        FROM signalement_logistique e JOIN site s ON s.id = e.site_id
+       LEFT JOIN prise_de_poste p ON p.id=e.prise_de_poste_id
+       LEFT JOIN poste po ON po.id=p.poste_id
        WHERE e.site_id = $1::uuid AND ($2::varchar IS NULL OR e.type_signalement = $2::varchar)
        ORDER BY e.date_operation DESC, e.heure DESC, e.cree_le DESC LIMIT 1000`,
       [siteId, filterType],
@@ -1286,6 +1289,7 @@ export async function createLogisticsIncident(request, response, pool, userId) {
     await client.query("SELECT set_config('app.user_id', $1, true)", [userId]);
     const account = await getAccount(client, userId);
     const siteId = await resolveSite(client, account, body);
+    const priseDePosteId = await resolvePriseDePosteId(client, siteId, body.priseDePosteId);
     const siteResult = await client.query("SELECT nom, type_site FROM site WHERE id = $1::uuid", [siteId]);
     const site = siteResult.rows[0];
     if (!site) throw Object.assign(new Error("Site de travail introuvable."), { status: 404 });
@@ -1293,16 +1297,16 @@ export async function createLogisticsIncident(request, response, pool, userId) {
       `INSERT INTO signalement_logistique
          (date_operation, heure, type_signalement, camion, transporteur, document,
           casse, manquant, vides, phn, description_faits, personne, observations,
-          mesures_prises, site_id, utilisateur_id)
-       VALUES ($1::date, $2::time, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15::uuid, $16::uuid)
+          mesures_prises, site_id, utilisateur_id, prise_de_poste_id)
+       VALUES ($1::date, $2::time, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15::uuid, $16::uuid, $17::uuid)
        RETURNING id, cree_le AS "createdAt"`,
       [date, time, type, values.camion, values.transporteur, values.document, values.broken,
         values.missing, values.empty, values.phn, values.facts, values.person,
-        values.observations, values.measures, siteId, userId],
+        values.observations, values.measures, siteId, userId, priseDePosteId],
     );
     await client.query("COMMIT");
     json(response, 201, {
-      entry: { ...result.rows[0], date, time, type, ...values, siteName: site.nom, siteType: site.type_site },
+      entry: { ...result.rows[0], date, time, type, ...values, siteName: site.nom, siteType: site.type_site, priseDePosteId },
     });
   } catch (error) {
     await client.query("ROLLBACK").catch(() => {});

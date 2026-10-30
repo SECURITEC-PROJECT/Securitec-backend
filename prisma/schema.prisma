@@ -134,6 +134,9 @@ model ConsigneJournal {
   consigne      String      @db.Text
   emetteur      String      @db.VarChar(255)
   destinataire  String      @db.VarChar(255)
+  dateFin       DateTime?   @map("date_fin") @db.Date
+  jusquauNouvelOrdre Boolean @default(false) @map("jusquau_nouvel_ordre")
+  priseDePosteId String?    @map("prise_de_poste_id") @db.Uuid
   utilisateurId String      @map("utilisateur_id") @db.Uuid
   creeLe        DateTime    @default(now()) @map("cree_le") @db.Timestamp(6)
   site          Site        @relation(fields: [siteId], references: [id], onDelete: Restrict, map: "fk_consigne_journal_site")
@@ -776,6 +779,7 @@ model SignalementLogistique {
   mesuresPrises    String?     @map("mesures_prises") @db.Text
   siteId           String      @map("site_id") @db.Uuid
   utilisateurId    String      @map("utilisateur_id") @db.Uuid
+  priseDePosteId    String?     @map("prise_de_poste_id") @db.Uuid
   site             Site        @relation(fields: [siteId], references: [id], onDelete: Restrict, map: "fk_signalement_logistique_site")
   utilisateur      Utilisateur @relation(fields: [utilisateurId], references: [id], onDelete: Restrict, map: "fk_signalement_logistique_utilisateur")
 
@@ -793,6 +797,7 @@ model Ronde {
   observations  String?     @db.Text
   siteId        String      @map("site_id") @db.Uuid
   utilisateurId String      @map("utilisateur_id") @db.Uuid
+  priseDePosteId String?    @map("prise_de_poste_id") @db.Uuid
   site          Site        @relation(fields: [siteId], references: [id], onDelete: Restrict, map: "fk_ronde_site")
   utilisateur   Utilisateur @relation(fields: [utilisateurId], references: [id], onDelete: Restrict, map: "fk_ronde_utilisateur")
 
@@ -833,6 +838,7 @@ model MainCourante {
   heure           DateTime    @db.Time(0)
   siteId          String      @map("site_id") @db.Uuid
   utilisateurId   String      @map("utilisateur_id") @db.Uuid
+  priseDePosteId  String?     @map("prise_de_poste_id") @db.Uuid
   site            Site        @relation(fields: [siteId], references: [id], onDelete: Restrict, map: "fk_main_courante_site")
   utilisateur     Utilisateur @relation(fields: [utilisateurId], references: [id], onDelete: Restrict, map: "fk_main_courante_utilisateur")
 
