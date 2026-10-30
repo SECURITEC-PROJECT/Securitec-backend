@@ -42,11 +42,13 @@ function parseDriver(body) {
   const expirationPermis = clean(body.expirationPermis, 10);
   const vehicule = clean(body.vehicule, 160);
   const matricule = clean(body.matricule, 40);
+  const providerId = clean(body.providerId, 36);
   if (!nomPrenom) throw Object.assign(new Error("Le nom et prénom du chauffeur sont obligatoires."), { status: 400 });
   if (expirationPermis && !validDate(expirationPermis)) {
     throw Object.assign(new Error("La date d’expiration du permis est invalide."), { status: 400 });
   }
-  return { nomPrenom, telephone, cin, numeroPermis, expirationPermis, vehicule, matricule };
+  if (providerId && !uuidPattern.test(providerId)) throw Object.assign(new Error("Le prestataire sélectionné est invalide."), { status: 400 });
+  return { nomPrenom, telephone, cin, numeroPermis, expirationPermis, vehicule, matricule, providerId: providerId || null };
 }
 
 function sendError(response, error) {
@@ -70,12 +72,13 @@ export async function handleChauffeurRoutes(request, response, pool, pathname, j
     if (request.method === "GET" && pathname === prefix) {
       const siteId = await siteForUser(pool, user.id, url.searchParams.get("siteId"));
       const result = await pool.query(
-        `SELECT id, nom_prenom AS "nomPrenom", telephone, cin,
+        `SELECT c.id, c.nom_prenom AS "nomPrenom", c.telephone, c.cin,
                 numero_permis AS "numeroPermis",
                 to_char(expiration_permis, 'YYYY-MM-DD') AS "expirationPermis",
-                vehicule, matricule, site_id AS "siteId", cree_le AS "createdAt"
-         FROM chauffeur WHERE site_id=$1::uuid
-         ORDER BY nom_prenom, cree_le DESC LIMIT 1000`,
+                c.vehicule, c.matricule, c.site_id AS "siteId", c.cree_le AS "createdAt",
+                c.prestataire_id AS "providerId", p.nom AS provider
+         FROM chauffeur c LEFT JOIN prestataire p ON p.id=c.prestataire_id WHERE c.site_id=$1::uuid
+         ORDER BY c.nom_prenom, c.cree_le DESC LIMIT 1000`,
         [siteId],
       );
       json(response, 200, { chauffeurs: result.rows });
@@ -86,20 +89,24 @@ export async function handleChauffeurRoutes(request, response, pool, pathname, j
       const body = await readJson(request);
       const siteId = await siteForUser(pool, user.id, clean(body.siteId, 36));
       const driver = parseDriver(body);
+      if (driver.providerId) {
+        const provider = await pool.query("SELECT id FROM prestataire WHERE id=$1::uuid AND actif=true", [driver.providerId]);
+        if (!provider.rows[0]) throw Object.assign(new Error("Prestataire introuvable ou inactif."), { status: 400 });
+      }
       const id = randomUUID();
       const result = await pool.query(
         `INSERT INTO chauffeur
            (id, nom_prenom, telephone, cin, numero_permis, expiration_permis,
-            vehicule, matricule, site_id, utilisateur_id)
+            vehicule, matricule, prestataire_id, site_id, utilisateur_id)
          VALUES ($1::uuid, $2, NULLIF($3, ''), NULLIF($4, ''), NULLIF($5, ''),
                  NULLIF($6, '')::date, NULLIF($7, ''), NULLIF($8, ''),
-                 $9::uuid, $10::uuid)
+                 $9::uuid, $10::uuid, $11::uuid)
          RETURNING id, nom_prenom AS "nomPrenom", telephone, cin,
                    numero_permis AS "numeroPermis",
                    to_char(expiration_permis, 'YYYY-MM-DD') AS "expirationPermis",
-                   vehicule, matricule, site_id AS "siteId", cree_le AS "createdAt"`,
+                   vehicule, matricule, prestataire_id AS "providerId", site_id AS "siteId", cree_le AS "createdAt"`,
         [id, driver.nomPrenom, driver.telephone, driver.cin, driver.numeroPermis,
-          driver.expirationPermis, driver.vehicule, driver.matricule, siteId, user.id],
+          driver.expirationPermis, driver.vehicule, driver.matricule, driver.providerId, siteId, user.id],
       );
       json(response, 201, { chauffeur: result.rows[0] });
       return true;
@@ -114,19 +121,23 @@ export async function handleChauffeurRoutes(request, response, pool, pathname, j
       const body = await readJson(request);
       const siteId = await siteForUser(pool, user.id, clean(body.siteId, 36));
       const driver = parseDriver(body);
+      if (driver.providerId) {
+        const provider = await pool.query("SELECT id FROM prestataire WHERE id=$1::uuid AND actif=true", [driver.providerId]);
+        if (!provider.rows[0]) throw Object.assign(new Error("Prestataire introuvable ou inactif."), { status: 400 });
+      }
       const result = await pool.query(
         `UPDATE chauffeur
          SET nom_prenom=$1, telephone=NULLIF($2, ''), cin=NULLIF($3, ''),
              numero_permis=NULLIF($4, ''), expiration_permis=NULLIF($5, '')::date,
-             vehicule=NULLIF($6, ''), matricule=NULLIF($7, ''),
+             vehicule=NULLIF($6, ''), matricule=NULLIF($7, ''), prestataire_id=$8::uuid,
              modifie_le=CURRENT_TIMESTAMP
-         WHERE id=$8::uuid AND site_id=$9::uuid
+         WHERE id=$9::uuid AND site_id=$10::uuid
          RETURNING id, nom_prenom AS "nomPrenom", telephone, cin,
                    numero_permis AS "numeroPermis",
                    to_char(expiration_permis, 'YYYY-MM-DD') AS "expirationPermis",
-                   vehicule, matricule, site_id AS "siteId", cree_le AS "createdAt"`,
+                   vehicule, matricule, prestataire_id AS "providerId", site_id AS "siteId", cree_le AS "createdAt"`,
         [driver.nomPrenom, driver.telephone, driver.cin, driver.numeroPermis,
-          driver.expirationPermis, driver.vehicule, driver.matricule, idMatch[1], siteId],
+          driver.expirationPermis, driver.vehicule, driver.matricule, driver.providerId, idMatch[1], siteId],
       );
       if (!result.rows[0]) throw Object.assign(new Error("Chauffeur introuvable pour ce site."), { status: 404 });
       json(response, 200, { chauffeur: result.rows[0] });

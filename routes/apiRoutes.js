@@ -15,6 +15,7 @@ import { handleMovementRoutes } from "./movementRoutes.js";
 import { handleNotificationRoutes } from "./notificationRoutes.js";
 import { handleProviderRoutes } from "./providerRoutes.js";
 import { handleEntryExitRoutes } from "./entryExitRoutes.js";
+import { handleEmergencyContactRoutes } from "./emergencyContactRoutes.js";
 import { handleFluxRoutes } from "./fluxRoutes.js";
 import { handleHandoverRoutes } from "./handoverRoutes.js";
 import { handleMainCouranteRoutes } from "./mainCouranteRoutes.js";
@@ -54,6 +55,7 @@ export async function handleApiRoutes(request, response, pool, jwtSecret) {
   if (await handleWasteScrapRegisterRoutes(request, response, pool, pathname, jwtSecret)) return true;
   if (await handleMovementRoutes(request, response, pool, pathname, jwtSecret)) return true;
   if (await handleProviderRoutes(request, response, pool, pathname, jwtSecret)) return true;
+  if (await handleEmergencyContactRoutes(request, response, pool, pathname, jwtSecret)) return true;
   if (await handleCameraRoutes(request, response, pool, pathname, jwtSecret)) return true;
   if (await handleChauffeurRoutes(request, response, pool, pathname, jwtSecret)) return true;
   if (await handleDocumentRoutes(request, response, pool, pathname, jwtSecret)) return true;

@@ -84,14 +84,21 @@ export async function handleEmployeeRoutes(request, response, pool, pathname, jw
       if (!employee) throw Object.assign(new Error("Aucun employé trouvé pour ce matricule."), { status: 404 });
       json(response, 200, { employee }); return true;
     }
-    await authorize(request, pool, jwtSecret);
     if (pathname === path && request.method === "GET") {
+      const tokenUser = getRequestUser(request, jwtSecret);
+      if (!tokenUser) throw Object.assign(new Error("Connectez-vous pour consulter les employés."), { status: 401 });
+      const account = await pool.query("SELECT role,site_id AS \"siteId\" FROM utilisateur WHERE id=$1::uuid AND actif=true", [tokenUser.id]);
+      if (!account.rows[0]) throw Object.assign(new Error("Utilisateur introuvable."), { status: 401 });
+      const siteId = account.rows[0].role === 1 ? null : account.rows[0].siteId;
+      if (account.rows[0].role !== 1 && !siteId) throw Object.assign(new Error("Aucun site n’est associé à votre compte."), { status: 403 });
       const result = await pool.query(`SELECT a.id,a.prenom AS "firstName",a.nom AS "lastName",a.matricule,a.actif AS active,
         p.id AS "providerId",p.nom AS provider,a.site_id AS "siteId",s.nom AS "siteName"
         FROM employe a JOIN prestataire p ON p.id=a.prestataire_id LEFT JOIN site s ON s.id=a.site_id
-        ORDER BY a.actif DESC,a.nom,a.prenom`);
+        WHERE ($1::uuid IS NULL OR a.site_id=$1::uuid)
+        ORDER BY a.actif DESC,a.nom,a.prenom`, [siteId]);
       json(response, 200, { employees: result.rows }); return true;
     }
+    await authorize(request, pool, jwtSecret);
     if (pathname === path && request.method === "POST") {
       const values = employeeValues(await readJson(request));
       const client = await pool.connect();
