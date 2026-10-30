@@ -31,6 +31,7 @@ import { handleShiftRoutes } from "./shiftRoutes.js";
 import { handleSiteRoutes } from "./siteRoutes.js";
 import { handleVigilanceRoutes } from "./vigilanceRoutes.js";
 import { handleTruckChecklistRoutes } from "./truckChecklistRoutes.js";
+import { handleTransporteurRoutes } from "./transporteurRoutes.js";
 import { handleUserRoutes } from "./userRoutes.js";
 import { handleRegisterAuditRoutes } from "./registerAuditRoutes.js";
 import { handleRegisterAttachmentRoutes } from "./registerAttachmentRoutes.js";
@@ -78,6 +79,7 @@ export async function handleApiRoutes(request, response, pool, jwtSecret) {
   if (await handleConsigneJournalRoutes(request, response, pool, pathname, jwtSecret)) return true;
   if (await handleFluxRoutes(request, response, pool, pathname, jwtSecret)) return true;
   if (await handleTruckChecklistRoutes(request, response, pool, pathname, jwtSecret)) return true;
+  if (await handleTransporteurRoutes(request, response, pool, pathname, jwtSecret)) return true;
   if (await handlePatrolRoutes(request, response, pool, pathname, jwtSecret)) return true;
   if (await handleVigilanceRoutes(request, response, pool, pathname, jwtSecret)) return true;
   if (await handleMainCouranteRoutes(request, response, pool, pathname, jwtSecret)) return true;

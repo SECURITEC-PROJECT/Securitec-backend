@@ -57,6 +57,7 @@ model Site {
   configurationsPostesAps ConfigurationPostesAps[]
   consignesJournal        ConsigneJournal[]
   chauffeurs              Chauffeur[]
+  transporteurs           Transporteur[]
   truckChecklists         TruckChecklist[]
   registreOrdures         RegistreOrdure[]
   registreFerrailles      RegistreFerraille[]
@@ -102,6 +103,7 @@ model Utilisateur {
   configurationsPostesAps ConfigurationPostesAps[]
   consignesJournal        ConsigneJournal[]
   chauffeurs              Chauffeur[]
+  transporteurs           Transporteur[]
   truckChecklists         TruckChecklist[]
   registreOrdures         RegistreOrdure[]
   registreFerrailles      RegistreFerraille[]
@@ -1296,4 +1298,23 @@ model Chauffeur {
   @@index([siteId, nomPrenom], map: "chauffeur_site_nom_idx")
   @@index([prestataireId, siteId], map: "idx_chauffeur_prestataire_site")
   @@map("chauffeur")
+}
+
+model Transporteur {
+  id              String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  nomTransporteur String      @map("nom_transporteur") @db.VarChar(255)
+  vehicule        String      @db.VarChar(160)
+  matricule       String?     @db.VarChar(40)
+  telephone       String?     @db.VarChar(40)
+  chauffeur       String?     @db.VarChar(255)
+  observation     String?     @db.Text
+  siteId          String      @map("site_id") @db.Uuid
+  utilisateurId   String      @map("utilisateur_id") @db.Uuid
+  creeLe          DateTime    @default(now()) @map("cree_le") @db.Timestamptz(6)
+  modifieLe       DateTime    @default(now()) @map("modifie_le") @db.Timestamptz(6)
+  site            Site        @relation(fields: [siteId], references: [id], onDelete: Cascade, map: "transporteur_site_id_fkey")
+  utilisateur     Utilisateur @relation(fields: [utilisateurId], references: [id], onDelete: Restrict, map: "transporteur_utilisateur_id_fkey")
+
+  @@index([siteId, nomTransporteur, vehicule], map: "transporteur_site_nom_vehicule_idx")
+  @@map("transporteur")
 }
