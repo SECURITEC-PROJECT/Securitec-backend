@@ -9,6 +9,9 @@ import {
   deleteWasteEntry,
   deleteEmptyBottleEntry,
   getLogisticsEntries,
+  getLogisticsAudit,
+  getLogisticsAttachments,
+  linkLogisticsAttachment,
   getLogisticsIncidents,
   getStarParticulierLoadings,
   updateEmptyBottleEntry,
@@ -31,18 +34,36 @@ const wasteEntryPath = /^\/api\/logistics\/([0-9a-f-]+)$/i;
 const emptyBottleEntryPath = /^\/api\/logistics\/empty-bottles\/([0-9a-f-]+)$/i;
 const starParticulierPath = `${entriesPath}/star-particulier`;
 const starParticulierEntryPath = /^\/api\/logistics\/star-particulier\/([0-9a-f-]+)$/i;
+const logisticsAuditPath = /^\/api\/logistics\/([0-9a-f-]{36})\/audit$/i;
+const logisticsAttachmentsPath = /^\/api\/logistics\/([0-9a-f-]{36})\/attachments$/i;
 
 export async function handleFluxRoutes(request, response, pool, pathname, jwtSecret) {
   const wasteMatch = wasteEntryPath.exec(pathname);
   const emptyBottleMatch = emptyBottleEntryPath.exec(pathname);
   const incidentMatch = incidentEntryPath.exec(pathname);
   const starParticulierMatch = starParticulierEntryPath.exec(pathname);
+  const logisticsAuditMatch = logisticsAuditPath.exec(pathname);
+  const logisticsAttachmentsMatch = logisticsAttachmentsPath.exec(pathname);
   if (pathname !== entriesPath && pathname !== starParticulierPath && pathname !== incidentsPath
-    && !wasteMatch && !emptyBottleMatch && !incidentMatch && !starParticulierMatch) return false;
+    && !wasteMatch && !emptyBottleMatch && !incidentMatch && !starParticulierMatch
+    && !logisticsAuditMatch && !logisticsAttachmentsMatch) return false;
 
   const user = getRequestUser(request, jwtSecret);
   if (!user) {
     json(response, 401, { error: "Connectez-vous pour accéder aux flux logistiques." });
+    return true;
+  }
+
+  if (logisticsAuditMatch && request.method === "GET") {
+    await getLogisticsAudit(request, response, pool, user.id, logisticsAuditMatch[1]);
+    return true;
+  }
+  if (logisticsAttachmentsMatch && request.method === "GET") {
+    await getLogisticsAttachments(request, response, pool, user.id, logisticsAttachmentsMatch[1]);
+    return true;
+  }
+  if (logisticsAttachmentsMatch && request.method === "POST") {
+    await linkLogisticsAttachment(request, response, pool, user.id, logisticsAttachmentsMatch[1]);
     return true;
   }
 

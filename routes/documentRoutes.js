@@ -5,6 +5,7 @@ import { json } from "../utils/helpers.js";
 const prefix = "/api/documents";
 const maxBytes = 15 * 1024 * 1024;
 const allowed = new Map([
+  ["jpg", "image/jpeg"], ["jpeg", "image/jpeg"], ["png", "image/png"], ["webp", "image/webp"],
   ["pdf", "application/pdf"], ["doc", "application/msword"],
   ["docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"],
   ["xls", "application/vnd.ms-excel"],

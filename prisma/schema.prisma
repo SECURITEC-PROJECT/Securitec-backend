@@ -547,13 +547,51 @@ model FluxLogistique {
   cree           String?     @db.VarChar(160)
   chauffeur      String?     @db.VarChar(160)
   magasinier     String?     @db.VarChar(160)
+  typeDocument   String?     @map("type_document") @db.VarChar(30)
+  emetteur       String?     @db.VarChar(255)
+  verification   String?     @db.Text
+  visaAgent      String?     @map("visa_agent") @db.VarChar(255)
+  priseDePosteId String?     @map("prise_de_poste_id") @db.Uuid
+  modifiePar     String?     @map("modifie_par") @db.Uuid
+  annuleLe       DateTime?   @map("annule_le") @db.Timestamptz(6)
+  clientRequestId String?    @map("client_request_id") @db.Uuid
   siteId         String      @map("site_id") @db.Uuid
   utilisateurId  String      @map("utilisateur_id") @db.Uuid
   site           Site        @relation(fields: [siteId], references: [id], onDelete: Restrict, map: "fk_flux_logistique_site")
   utilisateur    Utilisateur @relation(fields: [utilisateurId], references: [id], onDelete: Restrict, map: "fk_flux_logistique_utilisateur")
+  audit           FluxLogistiqueAudit[]
+  piecesJointes   FluxLogistiqueDocument[]
 
   @@index([siteId, dateOperation, typeFlux], map: "idx_flux_logistique_site_date")
   @@map("flux_logistique")
+}
+
+model FluxLogistiqueAudit {
+  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  fluxId        String   @map("flux_id") @db.Uuid
+  utilisateurId String?  @map("utilisateur_id") @db.Uuid
+  action        String   @db.VarChar(20)
+  avant         Json     @db.JsonB
+  apres         Json     @db.JsonB
+  creeLe        DateTime @default(now()) @map("cree_le") @db.Timestamptz(6)
+  flux          FluxLogistique @relation(fields: [fluxId], references: [id], onDelete: Restrict, map: "fk_audit_flux_logistique_entry")
+
+  @@index([fluxId, creeLe(sort: Desc)], map: "idx_audit_flux_logistique_entry_date")
+  @@map("audit_flux_logistique")
+}
+
+model FluxLogistiqueDocument {
+  id            String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  fluxId        String       @map("flux_id") @db.Uuid
+  documentId    String       @map("document_id") @db.Uuid
+  utilisateurId String       @map("utilisateur_id") @db.Uuid
+  creeLe        DateTime     @default(now()) @map("cree_le") @db.Timestamptz(6)
+  flux          FluxLogistique @relation(fields: [fluxId], references: [id], onDelete: Restrict, map: "fk_flux_logistique_document_flux")
+  document      DocumentSite @relation(fields: [documentId], references: [id], onDelete: Restrict, map: "fk_flux_logistique_document_document")
+
+  @@unique([fluxId, documentId], map: "flux_logistique_document_flux_id_document_id_key")
+  @@index([fluxId, creeLe], map: "idx_flux_logistique_document_flux")
+  @@map("flux_logistique_document")
 }
 
 model TruckChecklist {
@@ -948,6 +986,7 @@ model DocumentSite {
   creeLe        DateTime    @default(now()) @map("cree_le") @db.Timestamptz(6)
   site          Site        @relation(fields: [siteId], references: [id], onDelete: Cascade, map: "document_site_site_id_fkey")
   utilisateur   Utilisateur @relation(fields: [utilisateurId], references: [id], onDelete: Restrict, map: "document_site_utilisateur_id_fkey")
+  liensLogistiques FluxLogistiqueDocument[]
 
   @@index([siteId, creeLe(sort: Desc)], map: "document_site_site_id_cree_le_idx")
   @@map("document_site")
