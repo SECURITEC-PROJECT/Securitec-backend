@@ -863,6 +863,27 @@ model NotificationInterne {
   @@map("notification_interne")
 }
 
+model ConsigneJournalPoste {
+  consigneId String   @map("consigne_id") @db.Uuid
+  posteId    String   @map("poste_id") @db.Uuid
+  creeLe     DateTime @default(now()) @map("cree_le") @db.Timestamptz(6)
+
+  @@id([consigneId, posteId])
+  @@map("consigne_journal_poste")
+}
+
+model ConsigneLecture {
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  consigneId   String   @map("consigne_id") @db.Uuid
+  posteId      String   @map("poste_id") @db.Uuid
+  utilisateurId String  @map("utilisateur_id") @db.Uuid
+  luLe         DateTime @default(now()) @map("lu_le") @db.Timestamptz(6)
+
+  @@unique([consigneId, posteId, utilisateurId], map: "uq_consigne_lecture_user_post")
+  @@index([consigneId, posteId, luLe(sort: Desc)], map: "idx_consigne_lecture_poste_read")
+  @@map("consigne_lecture")
+}
+
 model MouvementCourrier {
   id              String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   creeLe          DateTime    @default(now()) @map("cree_le") @db.Timestamp(6)
