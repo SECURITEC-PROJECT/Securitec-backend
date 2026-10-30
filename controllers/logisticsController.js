@@ -42,7 +42,7 @@ const validDate = (value) => {
 
 async function getAccount(pool, userId) {
   const result = await pool.query(
-    "SELECT id, site_id, role FROM utilisateur WHERE id = $1::uuid LIMIT 1",
+    "SELECT id, nom, site_id, role FROM utilisateur WHERE id = $1::uuid LIMIT 1",
     [userId],
   );
   if (!result.rows[0]) throw Object.assign(new Error("Utilisateur introuvable."), { status: 401 });
@@ -72,11 +72,12 @@ async function resolveOpenPostShift(client, siteId, requestedId = null) {
   const result = await client.query(
     `SELECT p.id
      FROM prise_de_poste p
+     JOIN service_poste sp ON sp.id=p.service_id
      JOIN site s ON LOWER(BTRIM(s.nom)) = LOWER(BTRIM(p.site_de_travail))
      WHERE s.id=$1::uuid AND s.actif=true
-       AND ($2::uuid IS NULL OR p.id=$2::uuid)
+       AND ($2::uuid IS NULL OR p.id=$2::uuid OR sp.id=$2::uuid)
        AND ($2::uuid IS NOT NULL OR p.ended_at IS NULL)
-     ORDER BY p.started_at DESC LIMIT 1`,
+     ORDER BY CASE WHEN p.fonction_service='CHEF' THEN 0 ELSE 1 END, p.started_at DESC LIMIT 1`,
     [siteId, requestedId],
   );
   if (!result.rows[0]) {
@@ -170,12 +171,16 @@ export async function getLogisticsEntries(request, response, pool, userId) {
               f.categorie_stock AS "categorieStock", f.article, f.quantite,
               s.nom AS "siteName", s.type_site AS "siteType", f.cree_le AS "createdAt",
               u.nom AS "createdBy", f.prise_de_poste_id AS "priseDePosteId",
-              po.nom AS "posteNom", pp.shift_type AS "shiftType",
+              f.service_poste_id AS "servicePosteId",
+              COALESCE(po.nom, service_post.nom) AS "posteNom",
+              COALESCE(service_poste.shift_type, pp.shift_type) AS "shiftType",
               (SELECT COUNT(*)::int FROM flux_logistique_document fd WHERE fd.flux_id=f.id) AS "attachmentCount"
        FROM flux_logistique f JOIN site s ON s.id = f.site_id
        JOIN utilisateur u ON u.id=f.utilisateur_id
        LEFT JOIN prise_de_poste pp ON pp.id=f.prise_de_poste_id
        LEFT JOIN poste po ON po.id=pp.poste_id
+       LEFT JOIN service_poste ON service_poste.id=f.service_poste_id
+       LEFT JOIN poste service_post ON service_post.id=service_poste.poste_id
        WHERE f.site_id = $1::uuid AND f.annule_le IS NULL
          AND ($2::date IS NULL OR f.date_operation >= $2::date)
          AND ($3::date IS NULL OR f.date_operation <= $3::date)
@@ -1240,10 +1245,14 @@ export async function getLogisticsIncidents(request, response, pool, userId) {
               e.casse AS broken, e.manquant AS missing, e.vides AS empty, e.phn,
               e.description_faits AS facts, e.personne AS person, e.observations,
               e.mesures_prises AS measures, s.nom AS "siteName", s.type_site AS "siteType",
-              e.cree_le AS "createdAt", p.poste_id AS "posteId", po.nom AS "posteNom", p.shift_type AS "shiftType"
+              e.cree_le AS "createdAt", e.service_poste_id AS "servicePosteId",
+              COALESCE(sp.poste_id,p.poste_id) AS "posteId", COALESCE(spo.nom,po.nom) AS "posteNom",
+              COALESCE(sp.shift_type,p.shift_type) AS "shiftType"
        FROM signalement_logistique e JOIN site s ON s.id = e.site_id
        LEFT JOIN prise_de_poste p ON p.id=e.prise_de_poste_id
        LEFT JOIN poste po ON po.id=p.poste_id
+       LEFT JOIN service_poste sp ON sp.id=e.service_poste_id
+       LEFT JOIN poste spo ON spo.id=sp.poste_id
        WHERE e.site_id = $1::uuid AND ($2::varchar IS NULL OR e.type_signalement = $2::varchar)
        ORDER BY e.date_operation DESC, e.heure DESC, e.cree_le DESC LIMIT 1000`,
       [siteId, filterType],
@@ -1278,6 +1287,11 @@ export async function createLogisticsIncident(request, response, pool, userId) {
       observations: cleanText(body.observations, 20000) || null,
       measures: cleanText(body.measures, 20000) || null,
     };
+    const rawPostIds = Array.isArray(body.posteIds) ? body.posteIds : [];
+    const requestedPostIds = [...new Set(rawPostIds)];
+    if (requestedPostIds.length > 10 || requestedPostIds.some((value) => typeof value !== "string" || !uuidPattern.test(value))) {
+      return json(response, 400, { error: "Sélectionnez au maximum dix postes pour diffuser la consigne." });
+    }
     if (type === "ANOMALIE" && !values.facts) {
       return json(response, 400, { error: "Décrivez les faits de l’anomalie." });
     }
@@ -1293,16 +1307,49 @@ export async function createLogisticsIncident(request, response, pool, userId) {
     const siteResult = await client.query("SELECT nom, type_site FROM site WHERE id = $1::uuid", [siteId]);
     const site = siteResult.rows[0];
     if (!site) throw Object.assign(new Error("Site de travail introuvable."), { status: 404 });
+    let targetPostIds = [];
+    if (requestedPostIds.length) {
+      const postsResult = await client.query(
+        "SELECT id, nom FROM poste WHERE site_id=$1::uuid AND actif=true AND id=ANY($2::uuid[])",
+        [siteId, requestedPostIds],
+      );
+      if (postsResult.rows.length !== requestedPostIds.length) {
+        throw Object.assign(new Error("Un ou plusieurs postes sélectionnés ne sont pas actifs sur ce site."), { status: 400 });
+      }
+      targetPostIds = postsResult.rows;
+    }
     const result = await client.query(
       `INSERT INTO signalement_logistique
          (date_operation, heure, type_signalement, camion, transporteur, document,
           casse, manquant, vides, phn, description_faits, personne, observations,
           mesures_prises, site_id, utilisateur_id, prise_de_poste_id)
        VALUES ($1::date, $2::time, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15::uuid, $16::uuid, $17::uuid)
-       RETURNING id, cree_le AS "createdAt"`,
+       RETURNING id, cree_le AS "createdAt", service_poste_id AS "servicePosteId"`,
       [date, time, type, values.camion, values.transporteur, values.document, values.broken,
         values.missing, values.empty, values.phn, values.facts, values.person,
         values.observations, values.measures, siteId, userId, priseDePosteId],
+    );
+    const incidentDescription = values.facts || values.observations || "Incident signalé";
+    const instruction = `Incident ${type === "ANOMALIE" ? "/ anomalie" : "de procédure"} : ${incidentDescription}\nMesures : ${values.measures || "Informer le responsable et appliquer les consignes de sécurité du site."}`.slice(0, 20000);
+    const postTargets = targetPostIds.length ? targetPostIds : [{ id: null, nom: null }];
+    for (const post of postTargets) {
+      await client.query(
+        `INSERT INTO consigne_journal
+           (site_id, date_consigne, heure, consigne, emetteur, destinataire, utilisateur_id,
+            jusquau_nouvel_ordre, prise_de_poste_id, poste_id)
+         VALUES ($1::uuid, CURRENT_DATE, CURRENT_TIME, $2, $3, $4, $5::uuid, true, $6::uuid, $7::uuid)`,
+        [siteId, instruction, account.nom, post.nom ? `Poste : ${post.nom}` : "Tous les postes du site", userId, priseDePosteId, post.id],
+      );
+    }
+    const notificationTitle = type === "ANOMALIE" ? "Nouvelle anomalie signalée" : "Nouvelle violation de procédure";
+    const notificationMessage = `${incidentDescription}${targetPostIds.length ? ` · ${targetPostIds.map((post) => post.nom).join(", ")}` : " · Tous les postes du site"}`.slice(0, 2000);
+    await client.query(
+      `INSERT INTO notification_interne (utilisateur_id, site_id, titre, message, type, entite_id)
+       SELECT u.id, $1::uuid, $2, $3, 'INCIDENT', $4::uuid
+       FROM utilisateur u
+       WHERE u.actif=true
+         AND (u.role=1 OR (u.role=2 AND u.site_id=$1::uuid))`,
+      [siteId, notificationTitle, notificationMessage, result.rows[0].id],
     );
     await client.query("COMMIT");
     json(response, 201, {

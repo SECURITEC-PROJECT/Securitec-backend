@@ -1,5 +1,6 @@
 import { getRequestUser } from "../utils/auth.js";
 import { json, readJson } from "../utils/helpers.js";
+import { resolveServicePosteId } from "../utils/priseDePoste.js";
 
 const definitions = {
   "/api/waste-register": { table: "registre_ordures", kind: "ordures", hasScrapFields: false },
@@ -88,7 +89,7 @@ export async function handleWasteScrapRegisterRoutes(request, response, pool, pa
       const siteId = await resolveSite(pool, account, url.searchParams.get("siteId"));
       const fields = definition.hasScrapFields ? `${columns},nombre,motif` : wasteColumns;
       const result = await pool.query(
-        `SELECT ${fields},site_id AS "siteId"
+        `SELECT ${fields},site_id AS "siteId",service_poste_id AS "servicePosteId"
          FROM ${definition.table} WHERE site_id=$1::uuid
          ORDER BY date_operation DESC,heure DESC,cree_le DESC LIMIT 1000`,
         [siteId],
@@ -108,6 +109,9 @@ export async function handleWasteScrapRegisterRoutes(request, response, pool, pa
       }
       const values = readValues(body, definition.hasScrapFields);
       const siteId = await resolveSite(pool, account, body.siteId || url.searchParams.get("siteId"));
+      const servicePosteId = request.method === "POST"
+        ? await resolveServicePosteId(pool, siteId, body.priseDePosteId)
+        : null;
       const employee = await resolveEmployee(pool, values.matricule, siteId, request.method === "PUT");
       const params = definition.hasScrapFields
         ? [values.date, values.heure, employee.prenom, values.matricule, employee.section, values.designation, values.nombre, values.motif, siteId, account.id]
@@ -116,23 +120,24 @@ export async function handleWasteScrapRegisterRoutes(request, response, pool, pa
       const scrapValues = definition.hasScrapFields ? ",$7,$8" : "";
       const siteParam = definition.hasScrapFields ? 9 : 7;
       const userParam = definition.hasScrapFields ? 10 : 8;
+      const serviceParam = userParam + 1;
       const writableColumns = definition.hasScrapFields
         ? `${columns}${scrapColumns}`
         : `${wasteColumns}`;
       const insertFields = definition.hasScrapFields
-        ? `date_operation,heure,prenom,matricule,section,designation${scrapColumns},site_id,utilisateur_id`
-        : "date_operation,heure,prenom,matricule,section,designation,observation,site_id,utilisateur_id";
+        ? `date_operation,heure,prenom,matricule,section,designation${scrapColumns},site_id,utilisateur_id,service_poste_id`
+        : "date_operation,heure,prenom,matricule,section,designation,observation,site_id,utilisateur_id,service_poste_id";
       const insertValues = definition.hasScrapFields
-        ? `$1::date,$2::time,$3,$4,$5,$6${scrapValues},$${siteParam}::uuid,$${userParam}::uuid`
-        : "$1::date,$2::time,$3,$4,$5,$6,$6,$7::uuid,$8::uuid";
+        ? `$1::date,$2::time,$3,$4,$5,$6${scrapValues},$${siteParam}::uuid,$${userParam}::uuid,$${serviceParam}::uuid`
+        : `$1::date,$2::time,$3,$4,$5,$6,$6,$7::uuid,$8::uuid,$${serviceParam}::uuid`;
 
       if (request.method === "POST") {
         const result = await pool.query(
           `INSERT INTO ${definition.table}
             (${insertFields})
            VALUES (${insertValues})
-           RETURNING ${writableColumns},site_id AS "siteId"`,
-          params,
+           RETURNING ${writableColumns},site_id AS "siteId",service_poste_id AS "servicePosteId"`,
+          [...params, servicePosteId],
         );
         json(response, 201, { entry: result.rows[0] });
         return true;
@@ -149,7 +154,7 @@ export async function handleWasteScrapRegisterRoutes(request, response, pool, pa
            ${definition.hasScrapFields ? "" : ",observation=$6"}
            ${definition.hasScrapFields ? ",nombre=$7,motif=$8" : ""}
          WHERE id=$${idParam}::uuid AND site_id=$${updateSiteParam}::uuid
-         RETURNING ${writableColumns},site_id AS "siteId"`,
+         RETURNING ${writableColumns},site_id AS "siteId",service_poste_id AS "servicePosteId"`,
         updateValues,
       );
       if (!result.rows[0]) throw Object.assign(new Error("Enregistrement introuvable sur ce site."), { status: 404 });

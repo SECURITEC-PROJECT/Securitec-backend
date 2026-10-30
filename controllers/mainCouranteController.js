@@ -31,10 +31,14 @@ export async function getMainCouranteEntries(request, response, pool, userId) {
               m.statut_auteur AS "statutAuteur", m.nature_violation AS "natureViolation",
               m.description, m.mesures_prises AS "mesuresPrises", to_char(m.heure, 'HH24:MI') AS heure,
               m.cree_le AS "createdAt", m.site_id AS "siteId", s.nom AS "siteName", u.nom AS "agentNom",
-              p.poste_id AS "posteId", po.nom AS "posteNom", p.shift_type AS "shiftType"
+              m.service_poste_id AS "servicePosteId",
+              COALESCE(sp.poste_id,p.poste_id) AS "posteId", COALESCE(spo.nom,po.nom) AS "posteNom",
+              COALESCE(sp.shift_type,p.shift_type) AS "shiftType"
        FROM main_courante m JOIN site s ON s.id=m.site_id JOIN utilisateur u ON u.id=m.utilisateur_id
        LEFT JOIN prise_de_poste p ON p.id=m.prise_de_poste_id
        LEFT JOIN poste po ON po.id=p.poste_id
+       LEFT JOIN service_poste sp ON sp.id=m.service_poste_id
+       LEFT JOIN poste spo ON spo.id=sp.poste_id
        WHERE m.site_id=$1::uuid
        ORDER BY m.cree_le DESC LIMIT 1000`,
       [siteId],
@@ -81,14 +85,15 @@ export async function createMainCouranteEntry(request, response, pool, userId) {
          (type_entree, category, severity, zone, people, statut_auteur, nature_violation,
           description, mesures_prises, heure, site_id, utilisateur_id, prise_de_poste_id)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::time, $11::uuid, $12::uuid, $13::uuid)
-       RETURNING id, cree_le AS "createdAt", to_char(heure, 'HH24:MI') AS heure`,
+       RETURNING id, service_poste_id AS "servicePosteId", cree_le AS "createdAt", to_char(heure, 'HH24:MI') AS heure`,
       [typeEntree, category, severity, values.zone, values.people, values.statutAuteur, values.natureViolation,
         description, values.mesuresPrises, heure, siteId, userId, priseDePosteId],
     );
     const siteResult = await client.query("SELECT nom AS \"siteName\" FROM site WHERE id=$1::uuid", [siteId]);
     await client.query("COMMIT");
     json(response, 201, { entry: { id: result.rows[0].id, createdAt: result.rows[0].createdAt, heure: result.rows[0].heure,
-      typeEntree, category, severity, ...values, description, siteId, priseDePosteId, siteName: siteResult.rows[0]?.siteName } });
+      typeEntree, category, severity, ...values, description, siteId, priseDePosteId,
+      servicePosteId: result.rows[0].servicePosteId, siteName: siteResult.rows[0]?.siteName } });
   } catch (error) {
     await client.query("ROLLBACK").catch(() => {});
     console.error("POST /main-courante failed:", error.code || error.name, error.message || "");

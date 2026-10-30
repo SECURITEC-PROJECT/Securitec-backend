@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { json, readJson } from "../utils/helpers.js";
+import { resolveServicePosteId } from "../utils/priseDePoste.js";
 
 const cleanText = (value, max = 255) => typeof value === "string" ? value.trim().slice(0, max) : "";
 const validDate = (value) => {
@@ -46,7 +47,9 @@ export async function getVisitors(request, response, pool, userId) {
               COALESCE(p.badge_numero,b.uid_nfc) AS badge, COALESCE(p.immatriculation,'') AS vehicle,
               COALESCE(p.zone,'') AS zone, COALESCE(p.materiel,'') AS equipment,
               p.entree AS entered_at, p.sortie AS exited_at, p.notes_sortie AS exit_notes,
-              v.site_id, s.nom AS site_name, s.type_site AS site_type
+              p.service_poste_id AS "servicePosteId",
+              v.site_id, s.nom AS site_name, s.type_site AS site_type,
+              v.liste_noire AS site_banned
        FROM passage p JOIN visiteur v ON v.id=p.visiteur_id JOIN badge b ON b.id=p.badge_id
        LEFT JOIN site s ON s.id=v.site_id
        WHERE ($1::uuid IS NULL OR v.site_id=$1::uuid)
@@ -76,6 +79,17 @@ export async function createVisitor(request, response, pool, userId) {
     await client.query("BEGIN");
     const account = await getAccount(client, userId);
     const siteId = await resolveSite(client, account, body);
+    const servicePosteId = await resolveServicePosteId(client, siteId, body.priseDePosteId);
+    const banned = await client.query(
+      `SELECT identite FROM visiteur
+       WHERE site_id=$1::uuid AND liste_noire=true
+         AND LOWER(BTRIM(identite))=LOWER(BTRIM($2)) LIMIT 1`,
+      [siteId, name],
+    );
+    if (banned.rows[0]) {
+      await client.query("ROLLBACK");
+      return json(response, 403, { error: `Accès interdit sur ce site pour ${banned.rows[0].identite}.` });
+    }
     const badgeNumber = cleanText(body.badge, 80) || `V-${randomUUID().slice(0, 8).toUpperCase()}`;
     const badge = await client.query(
       "INSERT INTO badge (uid_nfc, statut, validite) VALUES ($1,1,NOW() + INTERVAL '1 year') RETURNING id",
@@ -86,13 +100,13 @@ export async function createVisitor(request, response, pool, userId) {
       [name, cleanText(body.company) || null, siteId, badge.rows[0].id],
     );
     const passage = await client.query(
-      `INSERT INTO passage (entree, motif, badge_id, visiteur_id, type_piece, piece_fin, hote, zone, materiel, immatriculation, badge_numero, saisi_par_id)
-       VALUES (COALESCE($12::date + $13::time,NOW()),$1,$2::uuid,$3::uuid,$4,$5,$6,$7,$8,$9,$10,$11::uuid)
-       RETURNING id, entree AS entered_at`,
+      `INSERT INTO passage (entree, motif, badge_id, visiteur_id, type_piece, piece_fin, hote, zone, materiel, immatriculation, badge_numero, saisi_par_id,service_poste_id)
+       VALUES (COALESCE($12::date + $13::time,NOW()),$1,$2::uuid,$3::uuid,$4,$5,$6,$7,$8,$9,$10,$11::uuid,$14::uuid)
+       RETURNING id, entree AS entered_at, service_poste_id AS "servicePosteId"`,
       [reason, badge.rows[0].id, visitor.rows[0].id, cleanText(body.document_type, 80) || null,
         cleanText(body.id_document, 4) || null, host, cleanText(body.zone) || "Accueil",
         cleanText(body.equipment, 20000) || null, cleanText(body.vehicle, 50) || null, badgeNumber, userId,
-        entryDate || null, entryTime || null],
+        entryDate || null, entryTime || null, servicePosteId],
     );
     const site = await client.query("SELECT id AS site_id, nom AS site_name, type_site AS site_type FROM site WHERE id=$1::uuid", [siteId]);
     await client.query("COMMIT");
@@ -101,6 +115,7 @@ export async function createVisitor(request, response, pool, userId) {
       id_document: cleanText(body.id_document, 4), document_type: cleanText(body.document_type, 80),
       host, reason, badge: badgeNumber, vehicle: cleanText(body.vehicle, 50), zone: cleanText(body.zone) || "Accueil",
       equipment: cleanText(body.equipment, 20000), entered_at: passage.rows[0].entered_at,
+      servicePosteId: passage.rows[0].servicePosteId,
       exited_at: null,
       site_name: site.rows[0]?.site_name, site_type: site.rows[0]?.site_type,
     } });
@@ -108,6 +123,43 @@ export async function createVisitor(request, response, pool, userId) {
     if (client) await client.query("ROLLBACK").catch(() => {});
     console.error("POST /visitors failed:", error.code || error.name, error.message || "");
     json(response, error.status || 500, { error: error.status ? error.message : "Impossible d’enregistrer l’entrée visiteur." });
+  } finally { client?.release(); }
+}
+
+export async function setVisitorSiteBan(request, response, pool, userId, passageId) {
+  let client;
+  try {
+    if (!uuidPattern.test(passageId)) return json(response, 404, { error: "Passage visiteur introuvable." });
+    const body = await readJson(request);
+    if (typeof body.banned !== "boolean") return json(response, 400, { error: "Indiquez si l’interdiction doit être activée." });
+    client = await pool.connect();
+    await client.query("BEGIN");
+    const account = await getAccount(client, userId);
+    if (![1, 2].includes(Number(account.role))) {
+      await client.query("ROLLBACK");
+      return json(response, 403, { error: "Seuls les administrateurs et superviseurs peuvent gérer les interdictions de site." });
+    }
+    const identity = await client.query(
+      `SELECT v.identite, v.site_id
+       FROM passage p JOIN visiteur v ON v.id=p.visiteur_id
+       WHERE p.id=$1::uuid AND ($2::uuid IS NULL OR v.site_id=$2::uuid)
+       LIMIT 1 FOR UPDATE OF v`,
+      [passageId, account.site_id || body.siteId || null],
+    );
+    if (!identity.rows[0]) {
+      await client.query("ROLLBACK");
+      return json(response, 404, { error: "Visiteur introuvable sur ce site." });
+    }
+    await client.query(
+      `UPDATE visiteur SET liste_noire=$1
+       WHERE site_id=$2::uuid AND LOWER(BTRIM(identite))=LOWER(BTRIM($3))`,
+      [body.banned, identity.rows[0].site_id, identity.rows[0].identite],
+    );
+    await client.query("COMMIT");
+    json(response, 200, { visitorId: passageId, siteId: identity.rows[0].site_id, banned: body.banned });
+  } catch (error) {
+    if (client) await client.query("ROLLBACK").catch(() => {});
+    json(response, error.status || 500, { error: error.status ? error.message : "Mise à jour de l’interdiction impossible." });
   } finally { client?.release(); }
 }
 
@@ -253,8 +305,9 @@ export async function getVehicles(request, response, pool, userId) {
               END AS "passengersEntry",
               pv.passagers_sortie AS "passengersOut",
               COALESCE(pv.motif,'') AS reason, COALESCE(pv.zone,'') AS zone, pv.controle_conforme AS compliant,
-              s.nom AS site_name, pv.site_id AS "siteId",
+              s.nom AS site_name, pv.site_id AS "siteId", pv.service_poste_id AS "servicePosteId",
               pv.entree AS entered_at, pv.sortie AS exited_at,
+              pv.annule_le AS "annuleLe",
               to_char(pv.entree, 'YYYY-MM-DD') AS "entryDate",
               to_char(pv.entree, 'HH24:MI') AS "entryTime",
               to_char(pv.sortie, 'YYYY-MM-DD') AS "exitDate",
@@ -293,6 +346,7 @@ export async function createVehicle(request, response, pool, userId) {
     await client.query("BEGIN");
     const account = await getAccount(client, userId);
     const siteId = await resolveSite(client, account, body);
+    const servicePosteId = await resolveServicePosteId(client, siteId, body.priseDePosteId);
     const type = cleanText(body.type, 100) || "Véhicule";
     const vehicle = await client.query(
       `INSERT INTO vehicule (immatriculation, type) VALUES ($1,$2)
@@ -301,16 +355,16 @@ export async function createVehicle(request, response, pool, userId) {
     );
     const result = await client.query(
       `INSERT INTO passage_vehicule (entree, vehicule_id, vacation_id, transporteur, conducteur, passagers,
-         motif, zone, operation, reference, plomb, etat_chargement, controle_conforme, saisi_par_id, site_id)
-      VALUES (${newMovement ? "$14::date + $15::time" : "NOW()"},$1::uuid,(SELECT id FROM vacation WHERE utilisateur_id=$2::uuid AND cloture IS NULL ORDER BY ouverture DESC LIMIT 1),
-         $3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$2::uuid,$13::uuid)
-       RETURNING id, entree AS entered_at`,
+         motif, zone, operation, reference, plomb, etat_chargement, controle_conforme, saisi_par_id, site_id, service_poste_id)
+      VALUES (${newMovement ? "$15::date + $16::time" : "NOW()"},$1::uuid,(SELECT id FROM vacation WHERE utilisateur_id=$2::uuid AND cloture IS NULL ORDER BY ouverture DESC LIMIT 1),
+         $3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$2::uuid,$13::uuid,$14::uuid)
+       RETURNING id, entree AS entered_at, service_poste_id AS "servicePosteId"`,
       [vehicle.rows[0].id, userId, newMovement ? category : cleanText(body.company) || null, driver,
        newMovement ? String(passengersEntry) : cleanText(body.passengers, 255) || null,
        reason, cleanText(body.zone) || "Accueil", cleanText(body.operation, 40) || "Autre passage",
        cleanText(body.document_reference, 100) || null, cleanText(body.seal_number, 100) || null,
        cleanText(body.load_state, 40) || null, body.compliant === true, siteId,
-       ...(newMovement ? [entryDate, entryTime] : [])],
+       servicePosteId, ...(newMovement ? [entryDate, entryTime] : [])],
     );
     const site = await client.query("SELECT id AS site_id, nom AS site_name FROM site WHERE id=$1::uuid", [siteId]);
     await client.query("COMMIT");
@@ -324,6 +378,7 @@ export async function createVehicle(request, response, pool, userId) {
       load_state: cleanText(body.load_state, 40), driver, passengers: cleanText(body.passengers, 255), reason,
       zone: cleanText(body.zone) || "Accueil", site_name: site.rows[0]?.site_name, compliant: body.compliant === true,
       siteId: site.rows[0]?.site_id || siteId,
+      servicePosteId: result.rows[0].servicePosteId,
       entered_at: result.rows[0].entered_at, exited_at: null,
     } });
   } catch (error) {
@@ -344,9 +399,9 @@ export async function exitVehicle(request, response, pool, userId, passageId) {
     const account = await getAccount(pool, userId);
     const requestedSiteId = new URL(request.url || "/", `http://${request.headers.host || "localhost"}`).searchParams.get("siteId");
     const result = await pool.query(
-      `UPDATE passage_vehicule SET sortie=NOW(), sortie_par_id=$1::uuid,
+      `UPDATE passage_vehicule SET sortie=NOW(), sortie_par_id=$1::uuid,modifie_par=$1::uuid,
          passagers_sortie=CASE WHEN $4::boolean THEN $5::integer ELSE passagers_sortie END
-       WHERE id=$2::uuid AND sortie IS NULL AND ($3::uuid IS NULL OR site_id=$3::uuid)
+       WHERE id=$2::uuid AND sortie IS NULL AND annule_le IS NULL AND ($3::uuid IS NULL OR site_id=$3::uuid)
        RETURNING id, sortie AS exited_at, passagers_sortie AS "passengersOut",
                  to_char(sortie, 'HH24:MI') AS "exitTime"`,
       [userId, passageId, account.site_id && account.role !== 1 ? account.site_id : requestedSiteId || null,
@@ -387,7 +442,7 @@ export async function updateVehicle(request, response, pool, userId, passageId) 
     const existing = await client.query(
       `SELECT pv.vehicule_id AS "vehicleId"
        FROM passage_vehicule pv
-       WHERE pv.id=$1::uuid AND ($2::uuid IS NULL OR pv.site_id=$2::uuid)
+       WHERE pv.id=$1::uuid AND pv.annule_le IS NULL AND ($2::uuid IS NULL OR pv.site_id=$2::uuid)
        FOR UPDATE`,
       [passageId, siteFilter],
     );
@@ -402,18 +457,18 @@ export async function updateVehicle(request, response, pool, userId, passageId) 
     if (!vehicle.rows[0]) throw Object.assign(new Error("Véhicule introuvable."), { status: 404 });
     const result = await client.query(
       `UPDATE passage_vehicule
-       SET entree=$2::date + $3::time, conducteur=$4, transporteur=$5,
+       SET entree=$2::date + $3::time, conducteur=$4, transporteur=$5,modifie_par=$11::uuid,
            passagers=$6, passagers_sortie=$7,
            sortie=CASE WHEN $8::time IS NULL THEN NULL ELSE $9::date + $8::time END,
            sortie_par_id=CASE WHEN $8::time IS NULL THEN NULL ELSE $10::uuid END
-       WHERE id=$1::uuid
+       WHERE id=$1::uuid AND annule_le IS NULL
        RETURNING id, entree AS entered_at, sortie AS exited_at,
                  to_char(entree, 'YYYY-MM-DD') AS "entryDate",
                  to_char(entree, 'HH24:MI') AS "entryTime",
                  to_char(sortie, 'YYYY-MM-DD') AS "exitDate",
                  to_char(sortie, 'HH24:MI') AS "exitTime"`,
       [passageId, entryDate, entryTime, ownerName, category, String(passengersEntry), passengersOut,
-        exitTime || null, exitDate || null, userId],
+        exitTime || null, exitDate || null, userId, userId],
     );
     await client.query("COMMIT");
     json(response, 200, { vehicle: {
@@ -440,7 +495,7 @@ export async function deleteVehicle(request, response, pool, userId, passageId) 
     const siteFilter = account.site_id && account.role !== 1 ? account.site_id
       : new URL(request.url || "/", `http://${request.headers.host || "localhost"}`).searchParams.get("siteId");
     const existing = await client.query(
-      `SELECT sortie
+      `SELECT sortie,annule_le
        FROM passage_vehicule
        WHERE id=$1::uuid AND ($2::uuid IS NULL OR site_id=$2::uuid)
        FOR UPDATE`,
@@ -450,22 +505,26 @@ export async function deleteVehicle(request, response, pool, userId, passageId) 
       await client.query("ROLLBACK");
       return json(response, 404, { error: "Mouvement véhicule introuvable pour ce site." });
     }
+    if (existing.rows[0].annule_le) {
+      await client.query("ROLLBACK");
+      return json(response, 409, { error: "Ce mouvement véhicule est déjà annulé." });
+    }
     if (!existing.rows[0].sortie) {
       await client.query("ROLLBACK");
       return json(response, 409, { error: "Enregistrez la sortie du véhicule avant de supprimer ce mouvement." });
     }
     const result = await client.query(
-      `DELETE FROM passage_vehicule
-       WHERE id=$1::uuid AND ($2::uuid IS NULL OR site_id=$2::uuid)
-       RETURNING id`,
-      [passageId, siteFilter || null],
+      `UPDATE passage_vehicule SET annule_le=CURRENT_TIMESTAMP,annule_par=$3::uuid,modifie_par=$3::uuid
+       WHERE id=$1::uuid AND annule_le IS NULL AND ($2::uuid IS NULL OR site_id=$2::uuid)
+       RETURNING id,annule_le AS "annuleLe"`,
+      [passageId, siteFilter || null, userId],
     );
     if (!result.rows[0]) {
       await client.query("ROLLBACK");
       return json(response, 404, { error: "Mouvement véhicule introuvable pour ce site." });
     }
     await client.query("COMMIT");
-    json(response, 200, { id: result.rows[0].id, deleted: true });
+    json(response, 200, { id: result.rows[0].id, deleted: false, cancelled: true, annuleLe: result.rows[0].annuleLe });
   } catch (error) {
     if (client) await client.query("ROLLBACK").catch(() => {});
     console.error("DELETE /vehicles/:id failed:", error.code || error.name, error.message || "");

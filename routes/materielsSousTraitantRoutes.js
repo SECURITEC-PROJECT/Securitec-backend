@@ -1,5 +1,6 @@
 import { getRequestUser } from "../utils/auth.js";
 import { json, readJson } from "../utils/helpers.js";
+import { resolveServicePosteId } from "../utils/priseDePoste.js";
 
 const collectionPath = "/api/materiels-sous-traitant";
 const entryPath = /^\/api\/materiels-sous-traitant\/([0-9a-f-]+)$/i;
@@ -60,7 +61,8 @@ export async function handleMaterielsSousTraitantRoutes(request, response, pool,
       const result = await pool.query(
         `SELECT m.id, m.date_operation::text AS date, to_char(m.heure_entree, 'HH24:MI') AS "heureEntree",
                 m.materiels, m.nombre, m.entreprise, m.prestataire_id AS "providerId", p.nom AS provider,
-                to_char(m.heure_sortie, 'HH24:MI') AS "heureSortie", m.site_id AS "siteId", m.cree_le AS "createdAt"
+                to_char(m.heure_sortie, 'HH24:MI') AS "heureSortie", m.site_id AS "siteId", m.cree_le AS "createdAt",m.annule_le AS "annuleLe",
+                m.service_poste_id AS "servicePosteId"
          FROM materiel_sous_traitant m JOIN prestataire p ON p.id=m.prestataire_id WHERE m.site_id=$1::uuid
          ORDER BY m.date_operation DESC, m.heure_entree DESC LIMIT 1000`,
         [siteId],
@@ -80,14 +82,16 @@ export async function handleMaterielsSousTraitantRoutes(request, response, pool,
         return true;
       }
       const siteId = await resolveSite(pool, account, body.siteId);
+      const servicePosteId = await resolveServicePosteId(pool, siteId, body.priseDePosteId);
       const provider = await resolveProvider(pool, body.prestataireId);
       const result = await pool.query(
-        `INSERT INTO materiel_sous_traitant (date_operation, heure_entree, materiels, nombre, entreprise, prestataire_id, site_id, utilisateur_id)
-         VALUES ($1::date, $2::time, $3, $4, $5, $6::uuid, $7::uuid, $8::uuid)
+        `INSERT INTO materiel_sous_traitant (date_operation, heure_entree, materiels, nombre, entreprise, prestataire_id, site_id, utilisateur_id, service_poste_id)
+         VALUES ($1::date, $2::time, $3, $4, $5, $6::uuid, $7::uuid, $8::uuid, $9::uuid)
          RETURNING id, date_operation::text AS date, to_char(heure_entree, 'HH24:MI') AS "heureEntree",
                    materiels, nombre, entreprise, prestataire_id AS "providerId",
-                   to_char(heure_sortie, 'HH24:MI') AS "heureSortie", site_id AS "siteId", cree_le AS "createdAt"`,
-        [date, heureEntree, materiels, nombre, provider.nom, provider.id, siteId, account.id],
+                   to_char(heure_sortie, 'HH24:MI') AS "heureSortie", site_id AS "siteId", cree_le AS "createdAt",
+                   service_poste_id AS "servicePosteId"`,
+        [date, heureEntree, materiels, nombre, provider.nom, provider.id, siteId, account.id, servicePosteId],
       );
       json(response, 201, { entry: { ...result.rows[0], provider: provider.nom } });
       return true;
@@ -106,19 +110,19 @@ export async function handleMaterielsSousTraitantRoutes(request, response, pool,
       }
       const siteId = await resolveSite(pool, account, body.siteId);
       const existing = await pool.query(
-        "SELECT prestataire_id FROM materiel_sous_traitant WHERE id=$1::uuid AND site_id=$2::uuid",
+        "SELECT prestataire_id FROM materiel_sous_traitant WHERE id=$1::uuid AND site_id=$2::uuid AND annule_le IS NULL",
         [entryMatch[1], siteId],
       );
       if (!existing.rows[0]) { json(response, 404, { error: "Mouvement introuvable sur ce site." }); return true; }
       const provider = await resolveProvider(pool, body.prestataireId, existing.rows[0].prestataire_id);
       const result = await pool.query(
         `UPDATE materiel_sous_traitant
-         SET date_operation=$2::date, heure_entree=$3::time, materiels=$4, nombre=$5, entreprise=$6, prestataire_id=$7::uuid
-         WHERE id=$1::uuid AND site_id=$8::uuid
+         SET date_operation=$2::date, heure_entree=$3::time, materiels=$4, nombre=$5, entreprise=$6, prestataire_id=$7::uuid,modifie_par=$9::uuid
+         WHERE id=$1::uuid AND site_id=$8::uuid AND annule_le IS NULL
          RETURNING id, date_operation::text AS date, to_char(heure_entree, 'HH24:MI') AS "heureEntree",
                    materiels, nombre, entreprise, prestataire_id AS "providerId",
                    to_char(heure_sortie, 'HH24:MI') AS "heureSortie", site_id AS "siteId", cree_le AS "createdAt"`,
-        [entryMatch[1], date, heureEntree, materiels, nombre, provider.nom, provider.id, siteId],
+        [entryMatch[1], date, heureEntree, materiels, nombre, provider.nom, provider.id, siteId, account.id],
       );
       if (!result.rows[0]) { json(response, 404, { error: "Mouvement introuvable sur ce site." }); return true; }
       json(response, 200, { entry: { ...result.rows[0], provider: provider.nom } });
@@ -130,11 +134,11 @@ export async function handleMaterielsSousTraitantRoutes(request, response, pool,
       const url = new URL(request.url || "/", `http://${request.headers.host || "localhost"}`);
       const siteId = await resolveSite(pool, account, url.searchParams.get("siteId"));
       const result = await pool.query(
-        "DELETE FROM materiel_sous_traitant WHERE id=$1::uuid AND site_id=$2::uuid RETURNING id",
-        [entryMatch[1], siteId],
+        "UPDATE materiel_sous_traitant SET annule_le=CURRENT_TIMESTAMP,annule_par=$3::uuid,modifie_par=$3::uuid WHERE id=$1::uuid AND site_id=$2::uuid AND annule_le IS NULL RETURNING id,annule_le AS \"annuleLe\"",
+        [entryMatch[1], siteId, account.id],
       );
       if (!result.rows[0]) { json(response, 404, { error: "Mouvement introuvable sur ce site." }); return true; }
-      json(response, 200, { id: result.rows[0].id, deleted: true });
+      json(response, 200, { id: result.rows[0].id, deleted: false, cancelled: true, annuleLe: result.rows[0].annuleLe });
       return true;
     }
 
@@ -143,10 +147,10 @@ export async function handleMaterielsSousTraitantRoutes(request, response, pool,
       const url = new URL(request.url || "/", `http://${request.headers.host || "localhost"}`);
       const siteId = await resolveSite(pool, account, url.searchParams.get("siteId"));
       const result = await pool.query(
-        `UPDATE materiel_sous_traitant SET heure_sortie=timezone('Indian/Antananarivo', CURRENT_TIMESTAMP)::time(0)
-         WHERE id=$1::uuid AND site_id=$2::uuid AND heure_sortie IS NULL
+        `UPDATE materiel_sous_traitant SET heure_sortie=timezone('Indian/Antananarivo', CURRENT_TIMESTAMP)::time(0),modifie_par=$3::uuid
+         WHERE id=$1::uuid AND site_id=$2::uuid AND heure_sortie IS NULL AND annule_le IS NULL
          RETURNING id, to_char(heure_sortie, 'HH24:MI') AS "heureSortie"`,
-        [exitMatch[1], siteId],
+        [exitMatch[1], siteId, account.id],
       );
       if (!result.rows[0]) { json(response, 404, { error: "Mouvement introuvable ou sortie déjà enregistrée." }); return true; }
       json(response, 200, { entry: result.rows[0] });

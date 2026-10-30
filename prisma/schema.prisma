@@ -32,6 +32,7 @@ model Site {
   visiteurs               Visiteur[]
   zones                   Zone[]
   postes                  Poste[]
+  servicesPoste           ServicePoste[]
   employes                Employe[]
   comptesRendus           CompteRendu[]
   vacations               Vacation[]
@@ -80,6 +81,7 @@ model Utilisateur {
   badges                  Badge[]
   vacations               Vacation[]
   passations              Passation[]
+  servicesPosteOuverts    ServicePoste[] @relation("ServicePosteOuvertPar")
   audits                  AuditCompteRendu[]
   suivisCles              SuiviCle[]
   controlesAlcoolemie     ControleAlcoolemie[]
@@ -136,13 +138,18 @@ model ConsigneJournal {
   destinataire  String      @db.VarChar(255)
   dateFin       DateTime?   @map("date_fin") @db.Date
   jusquauNouvelOrdre Boolean @default(false) @map("jusquau_nouvel_ordre")
+  posteId       String?     @map("poste_id") @db.Uuid
   priseDePosteId String?    @map("prise_de_poste_id") @db.Uuid
+  servicePosteId String?   @map("service_poste_id") @db.Uuid
   utilisateurId String      @map("utilisateur_id") @db.Uuid
   creeLe        DateTime    @default(now()) @map("cree_le") @db.Timestamp(6)
   site          Site        @relation(fields: [siteId], references: [id], onDelete: Restrict, map: "fk_consigne_journal_site")
+  servicePoste  ServicePoste? @relation(fields: [servicePosteId], references: [id], onDelete: SetNull, map: "fk_consigne_journal_service_poste")
   utilisateur   Utilisateur @relation(fields: [utilisateurId], references: [id], onDelete: Restrict, map: "fk_consigne_journal_utilisateur")
 
   @@index([siteId, dateConsigne, heure], map: "idx_consigne_journal_site_date")
+  @@index([siteId, posteId, dateFin], map: "idx_consigne_journal_site_poste_active")
+  @@index([servicePosteId, dateConsigne(sort: Desc)], map: "idx_consigne_journal_service_poste")
   @@map("consigne_journal")
 }
 
@@ -191,13 +198,16 @@ model Passage {
   notesSortie     String?   @map("notes_sortie") @db.Text
   badgeNumero     String?   @map("badge_numero") @db.VarChar(80)
   saisiParId      String?   @map("saisi_par_id") @db.Uuid
+  servicePosteId  String?   @map("service_poste_id") @db.Uuid
   sortieParId     String?   @map("sortie_par_id") @db.Uuid
   badgeId         String    @map("badge_id") @db.Uuid
   visiteurId      String?   @map("visiteur_id") @db.Uuid
   badge           Badge     @relation(fields: [badgeId], references: [id], onDelete: Cascade, map: "fk_passage_badge")
   visiteur        Visiteur? @relation(fields: [visiteurId], references: [id], onDelete: SetNull, map: "fk_passage_visiteur")
+  servicePoste    ServicePoste? @relation(fields: [servicePosteId], references: [id], onDelete: SetNull, map: "fk_passage_service_poste")
 
   @@index([badgeId], map: "idx_passage_badge")
+  @@index([servicePosteId, entree(sort: Desc)], map: "idx_passage_service_poste")
   @@map("passage")
 }
 
@@ -347,14 +357,20 @@ model PassageVehicule {
   controleConforme Boolean   @default(false) @map("controle_conforme")
   saisiParId       String?   @map("saisi_par_id") @db.Uuid
   sortieParId      String?   @map("sortie_par_id") @db.Uuid
+  annuleLe         DateTime? @map("annule_le") @db.Timestamptz(6)
+  annulePar        String?   @map("annule_par") @db.Uuid
+  modifiePar       String?   @map("modifie_par") @db.Uuid
   siteId           String?   @map("site_id") @db.Uuid
   vehiculeId       String    @map("vehicule_id") @db.Uuid
   vacationId       String?   @map("vacation_id") @db.Uuid
+  servicePosteId   String?   @map("service_poste_id") @db.Uuid
   vehicule         Vehicule  @relation(fields: [vehiculeId], references: [id], onDelete: Cascade, map: "fk_passagevehicule_vehicule")
   vacation         Vacation? @relation(fields: [vacationId], references: [id], onDelete: SetNull, map: "fk_passagevehicule_vacation")
   site             Site?     @relation(fields: [siteId], references: [id], onDelete: SetNull, map: "fk_passagevehicule_site")
+  servicePoste     ServicePoste? @relation(fields: [servicePosteId], references: [id], onDelete: SetNull, map: "fk_passagevehicule_service_poste")
 
   @@index([vehiculeId], map: "idx_passage_vehicule_vehicule")
+  @@index([servicePosteId, entree(sort: Desc)], map: "idx_passage_vehicule_service_poste")
   @@map("passage_vehicule")
 }
 
@@ -369,8 +385,12 @@ model Passation {
   materiel            String?     @db.Text
   evenements          String?     @db.Text
   consignes           String?     @db.Text
+  inventaire          Json        @default("[]") @db.JsonB
+  documentsRetenus    Json        @default("[]") @map("documents_retenus") @db.JsonB
   confirmationSortant Boolean     @default(false) @map("confirmation_sortant")
   confirmationEntrant Boolean     @default(false) @map("confirmation_entrant")
+  confirmationSortantLe DateTime? @map("confirmation_sortant_le") @db.Timestamp(6)
+  confirmationEntrantLe DateTime? @map("confirmation_entrant_le") @db.Timestamp(6)
   utilisateurId       String      @map("utilisateur_id") @db.Uuid
   siteId              String?     @map("site_id") @db.Uuid
   vacationId          String?     @map("vacation_id") @db.Uuid
@@ -378,15 +398,47 @@ model Passation {
   utilisateur         Utilisateur @relation(fields: [utilisateurId], references: [id], onDelete: Restrict, map: "fk_passation_utilisateur")
   site                Site?       @relation(fields: [siteId], references: [id], onDelete: SetNull, map: "fk_passation_site")
   vacation            Vacation?   @relation(fields: [vacationId], references: [id], onDelete: SetNull, map: "fk_passation_vacation")
+  servicePoste        ServicePoste? @relation(fields: [priseDePosteServiceId], references: [id], onDelete: SetNull, map: "fk_passation_prise_de_poste_service")
 
   @@index([siteId, creeLe], map: "idx_passation_site_date")
   @@map("passation")
+}
+
+model AuditRegistre {
+  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  entite        String   @db.VarChar(80)
+  entiteId      String   @map("entite_id") @db.Text
+  siteId        String?  @map("site_id") @db.Uuid
+  action        String   @db.VarChar(20)
+  avant         Json?    @db.JsonB
+  apres         Json?    @db.JsonB
+  utilisateurId String?  @map("utilisateur_id") @db.Uuid
+  creeLe        DateTime @default(now()) @map("cree_le") @db.Timestamptz(6)
+
+  @@index([entite, entiteId, creeLe(sort: Desc)], map: "idx_audit_registre_entity_date")
+  @@index([siteId, creeLe(sort: Desc)], map: "idx_audit_registre_site_date")
+  @@map("audit_registre")
+}
+
+model DocumentRegistre {
+  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  entite        String   @db.VarChar(80)
+  entiteId      String   @map("entite_id") @db.Uuid
+  siteId        String   @map("site_id") @db.Uuid
+  documentId    String   @map("document_id") @db.Uuid
+  utilisateurId String   @map("utilisateur_id") @db.Uuid
+  creeLe        DateTime @default(now()) @map("cree_le") @db.Timestamptz(6)
+
+  @@unique([entite, entiteId, documentId], map: "uq_document_registre_link")
+  @@index([entite, entiteId, creeLe(sort: Desc)], map: "idx_document_registre_entry")
+  @@map("document_registre")
 }
 
 model Prestataire {
   id            String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   nom           String        @unique @db.VarChar(160)
   actif         Boolean       @default(true)
+  modifiePar    String?       @map("modifie_par") @db.Uuid
   employes      Employe[]
   comptesRendus CompteRendu[]
   materielsSousTraitant MaterielSousTraitant[]
@@ -403,6 +455,7 @@ model Poste {
   site          Site               @relation(fields: [siteId], references: [id], onDelete: Cascade, map: "fk_poste_site")
   comptesRendus CompteRendu[]
   agents        CompteRenduAgent[]
+  services      ServicePoste[]
 
   @@unique([siteId, nom], map: "uq_poste_site_nom")
   @@map("poste")
@@ -475,10 +528,13 @@ model SuiviCle {
   observations                      String?     @db.Text
   siteId                            String?     @map("site_id") @db.Uuid
   utilisateurId                     String?     @map("utilisateur_id") @db.Uuid
+  servicePosteId                    String?     @map("service_poste_id") @db.Uuid
   site                              Site?       @relation(fields: [siteId], references: [id], onDelete: Restrict, map: "fk_suivi_cle_site")
   utilisateur                      Utilisateur? @relation(fields: [utilisateurId], references: [id], onDelete: Restrict, map: "fk_suivi_cle_utilisateur")
+  servicePoste                     ServicePoste? @relation(fields: [servicePosteId], references: [id], onDelete: SetNull, map: "fk_suivi_cle_service_poste")
 
   @@index([siteId, dateSuivi], map: "idx_suivi_cle_site_date")
+  @@index([servicePosteId, dateSuivi(sort: Desc)], map: "idx_suivi_cle_service_poste")
   @@map("suivi_cle")
 }
 
@@ -508,10 +564,16 @@ model ControleAlcoolemie {
   temoin2Fonction String?   @map("temoin2_fonction") @db.VarChar(100)
   siteId        String      @map("site_id") @db.Uuid
   utilisateurId String      @map("utilisateur_id") @db.Uuid
+  servicePosteId String?    @map("service_poste_id") @db.Uuid
+  annuleLe      DateTime?   @map("annule_le") @db.Timestamptz(6)
+  annulePar     String?     @map("annule_par") @db.Uuid
+  modifiePar    String?     @map("modifie_par") @db.Uuid
   site          Site        @relation(fields: [siteId], references: [id], onDelete: Restrict, map: "fk_controle_alcoolemie_site")
+  servicePoste  ServicePoste? @relation(fields: [servicePosteId], references: [id], onDelete: SetNull, map: "fk_controle_alcoolemie_service_poste")
   utilisateur   Utilisateur @relation(fields: [utilisateurId], references: [id], onDelete: Restrict, map: "fk_controle_alcoolemie_utilisateur")
 
   @@index([siteId, dateControle, heure], map: "idx_alcoolemie_site_date")
+  @@index([servicePosteId, dateControle(sort: Desc)], map: "idx_alcoolemie_service_poste")
   @@map("controle_alcoolemie")
 }
 
@@ -556,6 +618,7 @@ model FluxLogistique {
   verification   String?     @db.Text
   visaAgent      String?     @map("visa_agent") @db.VarChar(255)
   priseDePosteId String?     @map("prise_de_poste_id") @db.Uuid
+  servicePosteId String?     @map("service_poste_id") @db.Uuid
   modifiePar     String?     @map("modifie_par") @db.Uuid
   annuleLe       DateTime?   @map("annule_le") @db.Timestamptz(6)
   clientRequestId String?    @map("client_request_id") @db.Uuid
@@ -563,10 +626,12 @@ model FluxLogistique {
   utilisateurId  String      @map("utilisateur_id") @db.Uuid
   site           Site        @relation(fields: [siteId], references: [id], onDelete: Restrict, map: "fk_flux_logistique_site")
   utilisateur    Utilisateur @relation(fields: [utilisateurId], references: [id], onDelete: Restrict, map: "fk_flux_logistique_utilisateur")
+  servicePoste   ServicePoste? @relation(fields: [servicePosteId], references: [id], onDelete: SetNull, map: "fk_flux_logistique_service_poste")
   audit           FluxLogistiqueAudit[]
   piecesJointes   FluxLogistiqueDocument[]
 
   @@index([siteId, dateOperation, typeFlux], map: "idx_flux_logistique_site_date")
+  @@index([servicePosteId, dateOperation(sort: Desc)], map: "idx_flux_logistique_service_poste")
   @@map("flux_logistique")
 }
 
@@ -625,10 +690,13 @@ model RegistreOrdure {
   observation   String      @db.Text
   siteId        String      @map("site_id") @db.Uuid
   utilisateurId String      @map("utilisateur_id") @db.Uuid
+  servicePosteId String?    @map("service_poste_id") @db.Uuid
   site          Site        @relation(fields: [siteId], references: [id], onDelete: Restrict, map: "fk_registre_ordures_site")
   utilisateur   Utilisateur @relation(fields: [utilisateurId], references: [id], onDelete: Restrict, map: "fk_registre_ordures_utilisateur")
+  servicePoste  ServicePoste? @relation(fields: [servicePosteId], references: [id], onDelete: SetNull, map: "fk_registre_ordures_service_poste")
 
   @@index([siteId, dateOperation, heure], map: "idx_registre_ordures_site_date")
+  @@index([servicePosteId, dateOperation(sort: Desc)], map: "idx_registre_ordures_service_poste")
   @@map("registre_ordures")
 }
 
@@ -645,10 +713,13 @@ model RegistreFerraille {
   motif         String      @db.Text
   siteId        String      @map("site_id") @db.Uuid
   utilisateurId String      @map("utilisateur_id") @db.Uuid
+  servicePosteId String?    @map("service_poste_id") @db.Uuid
   site          Site        @relation(fields: [siteId], references: [id], onDelete: Restrict, map: "fk_registre_ferrailles_site")
   utilisateur   Utilisateur @relation(fields: [utilisateurId], references: [id], onDelete: Restrict, map: "fk_registre_ferrailles_utilisateur")
+  servicePoste  ServicePoste? @relation(fields: [servicePosteId], references: [id], onDelete: SetNull, map: "fk_registre_ferrailles_service_poste")
 
   @@index([siteId, dateOperation, heure], map: "idx_registre_ferrailles_site_date")
+  @@index([servicePosteId, dateOperation(sort: Desc)], map: "idx_registre_ferrailles_service_poste")
   @@map("registre_ferrailles")
 }
 
@@ -664,10 +735,16 @@ model MouvementVelo {
   marqueVelo    String      @map("marque_velo") @db.VarChar(255)
   siteId        String      @map("site_id") @db.Uuid
   utilisateurId String      @map("utilisateur_id") @db.Uuid
+  servicePosteId String?    @map("service_poste_id") @db.Uuid
+  annuleLe      DateTime?   @map("annule_le") @db.Timestamptz(6)
+  annulePar     String?     @map("annule_par") @db.Uuid
+  modifiePar    String?     @map("modifie_par") @db.Uuid
   site          Site        @relation(fields: [siteId], references: [id], onDelete: Restrict, map: "fk_mouvement_velo_site")
   utilisateur   Utilisateur @relation(fields: [utilisateurId], references: [id], onDelete: Restrict, map: "fk_mouvement_velo_utilisateur")
+  servicePoste  ServicePoste? @relation(fields: [servicePosteId], references: [id], onDelete: SetNull, map: "fk_mouvement_velo_service_poste")
 
   @@index([siteId, dateOperation, heureEntree], map: "idx_mouvement_velo_site_date")
+  @@index([servicePosteId, dateOperation(sort: Desc)], map: "idx_mouvement_velo_service_poste")
   @@map("mouvement_velo")
 }
 
@@ -681,10 +758,16 @@ model MouvementMoto {
   heureSortie   DateTime?   @map("heure_sortie") @db.Time(0)
   siteId        String      @map("site_id") @db.Uuid
   utilisateurId String      @map("utilisateur_id") @db.Uuid
+  servicePosteId String?    @map("service_poste_id") @db.Uuid
+  annuleLe      DateTime?   @map("annule_le") @db.Timestamptz(6)
+  annulePar     String?     @map("annule_par") @db.Uuid
+  modifiePar    String?     @map("modifie_par") @db.Uuid
   site          Site        @relation(fields: [siteId], references: [id], onDelete: Restrict, map: "fk_mouvement_moto_site")
   utilisateur   Utilisateur @relation(fields: [utilisateurId], references: [id], onDelete: Restrict, map: "fk_mouvement_moto_utilisateur")
+  servicePoste  ServicePoste? @relation(fields: [servicePosteId], references: [id], onDelete: SetNull, map: "fk_mouvement_moto_service_poste")
 
   @@index([siteId, dateOperation, heureEntree], map: "idx_mouvement_moto_site_date")
+  @@index([servicePosteId, dateOperation(sort: Desc)], map: "idx_mouvement_moto_service_poste")
   @@map("mouvement_moto")
 }
 
@@ -698,6 +781,7 @@ model MouvementAps {
   updatedAt     DateTime    @default(now()) @map("updated_at") @db.Timestamp(6)
   site          Site        @relation(fields: [siteId], references: [id], onDelete: Restrict, map: "fk_mouvement_aps_site")
   utilisateur   Utilisateur @relation(fields: [utilisateurId], references: [id], onDelete: Restrict, map: "fk_mouvement_aps_utilisateur")
+  servicesPoste MouvementApsServicePoste[]
 
   @@unique([siteId, datePointage, service], map: "uq_mouvement_aps_site_date_service")
   @@index([siteId, datePointage], map: "idx_mouvement_aps_site_date")
@@ -717,6 +801,7 @@ model MouvementApsEvenement {
   updatedAt     DateTime    @default(now()) @map("updated_at") @db.Timestamp(6)
   site          Site        @relation(fields: [siteId], references: [id], onDelete: Restrict, map: "fk_mouvement_aps_evenement_site")
   utilisateur   Utilisateur @relation(fields: [utilisateurId], references: [id], onDelete: Restrict, map: "fk_mouvement_aps_evenement_utilisateur")
+  servicesPoste MouvementApsEvenementServicePoste[]
 
   @@index([siteId, dateOperation, heureEntree], map: "idx_mouvement_aps_evenement_site_date")
   @@map("mouvement_aps_evenement")
@@ -742,9 +827,43 @@ model PassationServiceAps {
   updatedAt     DateTime    @default(now()) @map("updated_at") @db.Timestamp(6)
   site          Site        @relation(fields: [siteId], references: [id], onDelete: Restrict, map: "fk_passation_service_aps_site")
   utilisateur   Utilisateur @relation(fields: [utilisateurId], references: [id], onDelete: Restrict, map: "fk_passation_service_aps_utilisateur")
+  servicesPoste PassationApsServicePoste[]
 
   @@index([siteId, dateOperation], map: "idx_passation_service_aps_site_date")
   @@map("mouvement_aps_passation")
+}
+
+model MouvementApsServicePoste {
+  mouvementApsId String @map("mouvement_aps_id") @db.Uuid
+  servicePosteId String @map("service_poste_id") @db.Uuid
+  mouvementAps   MouvementAps @relation(fields: [mouvementApsId], references: [id], onDelete: Cascade, map: "fk_mouvement_aps_service_poste_movement")
+  servicePoste   ServicePoste @relation(fields: [servicePosteId], references: [id], onDelete: Cascade, map: "fk_mouvement_aps_service_poste_service")
+
+  @@id([mouvementApsId, servicePosteId], map: "mouvement_aps_service_poste_pkey")
+  @@index([servicePosteId], map: "idx_mouvement_aps_service_poste_service")
+  @@map("mouvement_aps_service_poste")
+}
+
+model PassationApsServicePoste {
+  passationApsId String @map("passation_aps_id") @db.Uuid
+  servicePosteId String @map("service_poste_id") @db.Uuid
+  passationAps   PassationServiceAps @relation(fields: [passationApsId], references: [id], onDelete: Cascade, map: "fk_passation_aps_service_poste_handover")
+  servicePoste   ServicePoste @relation(fields: [servicePosteId], references: [id], onDelete: Cascade, map: "fk_passation_aps_service_poste_service")
+
+  @@id([passationApsId, servicePosteId], map: "passation_aps_service_poste_pkey")
+  @@index([servicePosteId], map: "idx_passation_aps_service_poste_service")
+  @@map("passation_aps_service_poste")
+}
+
+model MouvementApsEvenementServicePoste {
+  mouvementApsEvenementId String @map("mouvement_aps_evenement_id") @db.Uuid
+  servicePosteId          String @map("service_poste_id") @db.Uuid
+  mouvementApsEvenement   MouvementApsEvenement @relation(fields: [mouvementApsEvenementId], references: [id], onDelete: Cascade, map: "fk_mouvement_aps_evenement_service_poste_event")
+  servicePoste            ServicePoste @relation(fields: [servicePosteId], references: [id], onDelete: Cascade, map: "fk_mouvement_aps_evenement_service_poste_service")
+
+  @@id([mouvementApsEvenementId, servicePosteId], map: "mouvement_aps_evenement_service_poste_pkey")
+  @@index([servicePosteId], map: "idx_mouvement_aps_evenement_service_poste_service")
+  @@map("mouvement_aps_evenement_service_poste")
 }
 
 model ConfigurationPostesMouvementAps {
@@ -780,10 +899,13 @@ model SignalementLogistique {
   siteId           String      @map("site_id") @db.Uuid
   utilisateurId    String      @map("utilisateur_id") @db.Uuid
   priseDePosteId    String?     @map("prise_de_poste_id") @db.Uuid
+  servicePosteId    String?     @map("service_poste_id") @db.Uuid
   site             Site        @relation(fields: [siteId], references: [id], onDelete: Restrict, map: "fk_signalement_logistique_site")
   utilisateur      Utilisateur @relation(fields: [utilisateurId], references: [id], onDelete: Restrict, map: "fk_signalement_logistique_utilisateur")
+  servicePoste     ServicePoste? @relation(fields: [servicePosteId], references: [id], onDelete: SetNull, map: "fk_signalement_logistique_service_poste")
 
   @@index([siteId, dateOperation, heure], map: "idx_signalement_logistique_site_date")
+  @@index([servicePosteId, dateOperation(sort: Desc)], map: "idx_signalement_logistique_service_poste")
   @@map("signalement_logistique")
 }
 
@@ -798,10 +920,13 @@ model Ronde {
   siteId        String      @map("site_id") @db.Uuid
   utilisateurId String      @map("utilisateur_id") @db.Uuid
   priseDePosteId String?    @map("prise_de_poste_id") @db.Uuid
+  servicePosteId String?   @map("service_poste_id") @db.Uuid
   site          Site        @relation(fields: [siteId], references: [id], onDelete: Restrict, map: "fk_ronde_site")
   utilisateur   Utilisateur @relation(fields: [utilisateurId], references: [id], onDelete: Restrict, map: "fk_ronde_utilisateur")
+  servicePoste  ServicePoste? @relation(fields: [servicePosteId], references: [id], onDelete: SetNull, map: "fk_ronde_service_poste")
 
   @@index([siteId, debut], map: "idx_ronde_site_debut")
+  @@index([servicePosteId, debut(sort: Desc)], map: "idx_ronde_service_poste")
   @@map("ronde")
 }
 
@@ -839,11 +964,50 @@ model MainCourante {
   siteId          String      @map("site_id") @db.Uuid
   utilisateurId   String      @map("utilisateur_id") @db.Uuid
   priseDePosteId  String?     @map("prise_de_poste_id") @db.Uuid
+  servicePosteId  String?     @map("service_poste_id") @db.Uuid
   site            Site        @relation(fields: [siteId], references: [id], onDelete: Restrict, map: "fk_main_courante_site")
   utilisateur     Utilisateur @relation(fields: [utilisateurId], references: [id], onDelete: Restrict, map: "fk_main_courante_utilisateur")
+  servicePoste    ServicePoste? @relation(fields: [servicePosteId], references: [id], onDelete: SetNull, map: "fk_main_courante_service_poste")
 
   @@index([siteId, creeLe], map: "idx_main_courante_site_date")
+  @@index([servicePosteId, creeLe(sort: Desc)], map: "idx_main_courante_service_poste")
   @@map("main_courante")
+}
+
+model NotificationInterne {
+  id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  utilisateurId String   @map("utilisateur_id") @db.Uuid
+  siteId       String    @map("site_id") @db.Uuid
+  titre        String    @db.VarChar(200)
+  message      String    @db.Text
+  type         String    @db.VarChar(40)
+  entiteId     String?   @map("entite_id") @db.Uuid
+  lueLe        DateTime? @map("lue_le") @db.Timestamptz(6)
+  creeLe       DateTime  @default(now()) @map("cree_le") @db.Timestamptz(6)
+
+  @@index([utilisateurId, creeLe(sort: Desc)], map: "idx_notification_interne_user_unread")
+  @@map("notification_interne")
+}
+
+model ConsigneJournalPoste {
+  consigneId String   @map("consigne_id") @db.Uuid
+  posteId    String   @map("poste_id") @db.Uuid
+  creeLe     DateTime @default(now()) @map("cree_le") @db.Timestamptz(6)
+
+  @@id([consigneId, posteId])
+  @@map("consigne_journal_poste")
+}
+
+model ConsigneLecture {
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  consigneId   String   @map("consigne_id") @db.Uuid
+  posteId      String   @map("poste_id") @db.Uuid
+  utilisateurId String  @map("utilisateur_id") @db.Uuid
+  luLe         DateTime @default(now()) @map("lu_le") @db.Timestamptz(6)
+
+  @@unique([consigneId, posteId, utilisateurId], map: "uq_consigne_lecture_user_post")
+  @@index([consigneId, posteId, luLe(sort: Desc)], map: "idx_consigne_lecture_poste_read")
+  @@map("consigne_lecture")
 }
 
 model MouvementCourrier {
@@ -857,10 +1021,16 @@ model MouvementCourrier {
   heureSortie     DateTime?   @map("heure_sortie") @db.Time(0)
   siteId          String      @map("site_id") @db.Uuid
   utilisateurId   String      @map("utilisateur_id") @db.Uuid
+  servicePosteId  String?     @map("service_poste_id") @db.Uuid
+  annuleLe        DateTime?   @map("annule_le") @db.Timestamptz(6)
+  annulePar       String?     @map("annule_par") @db.Uuid
+  modifiePar      String?     @map("modifie_par") @db.Uuid
   site            Site        @relation(fields: [siteId], references: [id], onDelete: Restrict, map: "fk_mouvement_courrier_site")
   utilisateur     Utilisateur @relation(fields: [utilisateurId], references: [id], onDelete: Restrict, map: "fk_mouvement_courrier_utilisateur")
+  servicePoste    ServicePoste? @relation(fields: [servicePosteId], references: [id], onDelete: SetNull, map: "fk_mouvement_courrier_service_poste")
 
   @@index([siteId, dateOperation, heureEntree], map: "idx_mouvement_courrier_site_date")
+  @@index([servicePosteId, dateOperation(sort: Desc)], map: "idx_mouvement_courrier_service_poste")
   @@map("mouvement_courrier")
 }
 
@@ -871,17 +1041,23 @@ model MaterielSousTraitant {
   heureEntree   DateTime    @map("heure_entree") @db.Time(0)
   materiels     String      @db.Text
   nombre        Int
+  annuleLe      DateTime?   @map("annule_le") @db.Timestamptz(6)
+  annulePar     String?     @map("annule_par") @db.Uuid
+  modifiePar    String?     @map("modifie_par") @db.Uuid
   entreprise    String      @db.VarChar(255)
   prestataireId String     @map("prestataire_id") @db.Uuid
   heureSortie   DateTime?   @map("heure_sortie") @db.Time(0)
   siteId        String      @map("site_id") @db.Uuid
   utilisateurId String      @map("utilisateur_id") @db.Uuid
+  servicePosteId String?    @map("service_poste_id") @db.Uuid
   site          Site        @relation(fields: [siteId], references: [id], onDelete: Restrict, map: "fk_materiel_sous_traitant_site")
   utilisateur   Utilisateur @relation(fields: [utilisateurId], references: [id], onDelete: Restrict, map: "fk_materiel_sous_traitant_utilisateur")
   prestataire   Prestataire @relation(fields: [prestataireId], references: [id], onDelete: Restrict, map: "fk_materiel_sous_traitant_prestataire")
+  servicePoste  ServicePoste? @relation(fields: [servicePosteId], references: [id], onDelete: SetNull, map: "fk_materiel_sous_traitant_service_poste")
 
   @@index([siteId, dateOperation, heureEntree], map: "idx_materiel_sous_traitant_site_date")
   @@index([prestataireId], map: "idx_materiel_sous_traitant_prestataire")
+  @@index([servicePosteId, dateOperation(sort: Desc)], map: "idx_materiel_sous_traitant_service_poste")
   @@map("materiel_sous_traitant")
 }
 
@@ -893,16 +1069,22 @@ model MaterielStar {
   prenom        String      @db.VarChar(255)
   matricule     String      @db.VarChar(100)
   materiels     Json        @db.JsonB
+  annuleLe      DateTime?   @map("annule_le") @db.Timestamptz(6)
+  annulePar     String?     @map("annule_par") @db.Uuid
+  modifiePar    String?     @map("modifie_par") @db.Uuid
   prestataireId String     @map("prestataire_id") @db.Uuid
   heureSortie   DateTime?   @map("heure_sortie") @db.Time(0)
   siteId        String      @map("site_id") @db.Uuid
   utilisateurId String      @map("utilisateur_id") @db.Uuid
+  servicePosteId String?    @map("service_poste_id") @db.Uuid
   site          Site        @relation(fields: [siteId], references: [id], onDelete: Restrict, map: "fk_materiel_star_site")
   utilisateur   Utilisateur @relation(fields: [utilisateurId], references: [id], onDelete: Restrict, map: "fk_materiel_star_utilisateur")
   prestataire   Prestataire @relation(fields: [prestataireId], references: [id], onDelete: Restrict, map: "fk_materiel_star_prestataire")
+  servicePoste  ServicePoste? @relation(fields: [servicePosteId], references: [id], onDelete: SetNull, map: "fk_materiel_star_service_poste")
 
   @@index([siteId, dateOperation, heureEntree], map: "idx_materiel_star_site_date")
   @@index([prestataireId], map: "idx_materiel_star_prestataire")
+  @@index([servicePosteId, dateOperation(sort: Desc)], map: "idx_materiel_star_service_poste")
   @@map("materiel_star")
 }
 
@@ -999,6 +1181,45 @@ model DocumentSite {
   @@map("document_site")
 }
 
+model ServicePoste {
+  id          String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  siteId      String?     @map("site_id") @db.Uuid
+  posteId     String?     @map("poste_id") @db.Uuid
+  shiftType   ShiftAgent? @map("shift_type")
+  startedAt   DateTime    @default(now()) @map("started_at") @db.Timestamp(6)
+  endedAt     DateTime?   @map("ended_at") @db.Timestamp(6)
+  openedBy    String?     @map("ouvert_par") @db.Uuid
+  notes       String?     @db.Text
+  site        Site?       @relation(fields: [siteId], references: [id], onDelete: SetNull, map: "fk_service_poste_site")
+  poste       Poste?      @relation(fields: [posteId], references: [id], onDelete: Restrict, map: "fk_service_poste_poste")
+  utilisateur Utilisateur? @relation("ServicePosteOuvertPar", fields: [openedBy], references: [id], onDelete: SetNull, map: "fk_service_poste_ouvert_par")
+  agents      PriseDePoste[]
+  passagesVehicule PassageVehicule[]
+  passations Passation[]
+  suivisCles SuiviCle[]
+  apsMovements MouvementApsServicePoste[]
+  apsEvents MouvementApsEvenementServicePoste[]
+  apsHandovers PassationApsServicePoste[]
+  visitorPassages Passage[]
+  wasteRegisters RegistreOrdure[]
+  scrapRegisters RegistreFerraille[]
+  bicycleMovements MouvementVelo[]
+  motorcycleMovements MouvementMoto[]
+  controlesAlcoolemie ControleAlcoolemie[]
+  mouvementsCourrier MouvementCourrier[]
+  materielsSousTraitant MaterielSousTraitant[]
+  materielsStar MaterielStar[]
+  fluxLogistiques FluxLogistique[]
+  signalementsLogistiques SignalementLogistique[]
+  mainCourante MainCourante[]
+  rondes       Ronde[]
+  consignesJournal ConsigneJournal[]
+
+  @@index([siteId, startedAt(sort: Desc)], map: "idx_service_poste_site_started")
+  @@index([posteId, shiftType, endedAt], map: "idx_service_poste_poste_status")
+  @@map("service_poste")
+}
+
 model PriseDePoste {
   id               String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   matricule        String     @db.VarChar(50)
@@ -1014,6 +1235,7 @@ model PriseDePoste {
   shiftType        ShiftAgent? @map("shift_type")
   fonctionService  String?    @map("fonction_service") @db.VarChar(20)
   ouvertPar        String?    @map("ouvert_par") @db.Uuid
+  service          ServicePoste? @relation(fields: [serviceId], references: [id], onDelete: SetNull, map: "fk_prise_de_poste_service")
 
   @@index([serviceId, startedAt], map: "idx_prise_de_poste_service")
   @@map("prise_de_poste")
