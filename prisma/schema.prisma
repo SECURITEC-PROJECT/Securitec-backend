@@ -32,6 +32,7 @@ model Site {
   visiteurs               Visiteur[]
   zones                   Zone[]
   postes                  Poste[]
+  servicesSite            ServiceSite[]
   servicesPoste           ServicePoste[]
   contactsUrgence        ContactUrgence[]
   employes                Employe[]
@@ -483,6 +484,22 @@ model Poste {
 
   @@unique([siteId, nom], map: "uq_poste_site_nom")
   @@map("poste")
+}
+
+model ServiceSite {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  siteId      String   @map("site_id") @db.Uuid
+  nom         String   @db.VarChar(160)
+  departement String   @default("") @db.VarChar(160)
+  responsable String   @default("") @db.VarChar(160)
+  actif       Boolean  @default(true)
+  creeLe      DateTime @default(now()) @map("cree_le") @db.Timestamptz(6)
+  modifieLe   DateTime @default(now()) @map("modifie_le") @db.Timestamptz(6)
+  site        Site     @relation(fields: [siteId], references: [id], onDelete: Cascade, map: "fk_service_site_site")
+
+  @@unique([siteId, nom], map: "uq_service_site_site_nom")
+  @@index([siteId, actif, nom], map: "idx_service_site_site_actif")
+  @@map("service_site")
 }
 
 model Employe {
