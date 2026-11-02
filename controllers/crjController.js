@@ -117,7 +117,17 @@ SELECT
       'typeCle', k.type_cle,
       'nombreCles', k.nombre_cles,
       'heureRetour', k.heure_retour,
-      'lieu', k.lieu
+      'lieu', k.lieu,
+      'perceptionMatin', k.perception_matin,
+      'responsablePerceptionMatin', k.responsable_perception_matin,
+      'reintegrationMatin', k.reintegration_matin,
+      'responsableReintegrationMatin', k.responsable_reintegration_matin,
+      'perceptionApresMidi', k.perception_apres_midi,
+      'responsablePerceptionApresMidi', k.responsable_perception_apres_midi,
+      'reintegrationApresMidi', k.reintegration_apres_midi,
+      'responsableReintegrationApresMidi', k.responsable_reintegration_apres_midi,
+      'observations', k.observations,
+      'personneRetour', k.personne_retour
     ) ORDER BY k.heure_sortie NULLS LAST, k.created_at)
     FROM (
       SELECT sc.id, sc.date_suivi,
@@ -140,6 +150,16 @@ SELECT
                ''
              ) AS heure_retour,
              COALESCE(sc.lieu, '') AS lieu,
+             to_char(sc.perception_matin, 'HH24:MI') AS perception_matin,
+             COALESCE(sc.responsable_perception_matin, '') AS responsable_perception_matin,
+             to_char(sc.reintegration_matin, 'HH24:MI') AS reintegration_matin,
+             COALESCE(sc.responsable_reintegration_matin, '') AS responsable_reintegration_matin,
+             to_char(sc.perception_apres_midi, 'HH24:MI') AS perception_apres_midi,
+             COALESCE(sc.responsable_perception_apres_midi, '') AS responsable_perception_apres_midi,
+             to_char(sc.reintegration_apres_midi, 'HH24:MI') AS reintegration_apres_midi,
+             COALESCE(sc.responsable_reintegration_apres_midi, '') AS responsable_reintegration_apres_midi,
+             COALESCE(sc.observations, '') AS observations,
+             COALESCE(r.personne_habilitee, '') AS personne_retour,
              COALESCE(sc.cree_le, sc.created_at) AS created_at
       FROM suivi_cle sc
       LEFT JOIN LATERAL (
@@ -220,7 +240,7 @@ SELECT
   COALESCE((
     SELECT json_agg(x ORDER BY x.heure) FROM (
       SELECT date_operation::text AS date, to_char(heure, 'HH24:MI') AS heure,
-             personne, observations, description_faits, mesures_prises
+             camion, transporteur, document, casse, manquant, vides, phn, description_faits
       FROM signalement_logistique
       WHERE site_id = $1::uuid
         AND date_operation = $3::date
@@ -231,7 +251,8 @@ SELECT
   -- Violations de procédure et divers = main courante
   COALESCE((
     SELECT json_agg(m ORDER BY m.heure) FROM (
-      SELECT to_char(heure, 'HH24:MI') AS heure, category, people, nature_violation, type_entree,
+      SELECT to_char(${local("cree_le")}, 'DD/MM/YYYY') AS date,
+             to_char(heure, 'HH24:MI') AS heure, category, people, nature_violation, type_entree,
              description, mesures_prises
       FROM main_courante
       WHERE site_id = $1::uuid AND ${local("cree_le")}::date = $3::date
@@ -254,6 +275,25 @@ export async function generateCrj({ prestataireId, siteId, date }, pool) {
   if (!d?.prestataire) throw fail(404, "Prestataire introuvable.");
 
   const siteType = d.site.type_site === "AGENCE" ? "Agence" : "Usine";
+  const isMorning = (time) => /^\d{2}:\d{2}$/.test(txt(time)) && txt(time) < "12:00";
+  const cles = (d.cles ?? []).map((key) => {
+    const heurePerceptionMatin = isMorning(key.heureSortie) ? txt(key.heureSortie) : "";
+    const heurePerceptionApresMidi = key.heureSortie && !isMorning(key.heureSortie) ? txt(key.heureSortie) : "";
+    const heureReintegrationMatin = isMorning(key.heureRetour) ? txt(key.heureRetour) : "";
+    const heureReintegrationApresMidi = key.heureRetour && !isMorning(key.heureRetour) ? txt(key.heureRetour) : "";
+    return {
+      lieu: txt(key.lieu),
+      perceptionMatin: txt(key.perceptionMatin) || heurePerceptionMatin,
+      responsablePerceptionMatin: txt(key.responsablePerceptionMatin) || (heurePerceptionMatin ? txt(key.personne) : ""),
+      reintegrationMatin: txt(key.reintegrationMatin) || heureReintegrationMatin,
+      responsableReintegrationMatin: txt(key.responsableReintegrationMatin) || (heureReintegrationMatin ? txt(key.personneRetour) || txt(key.personne) : ""),
+      perceptionApresMidi: txt(key.perceptionApresMidi) || heurePerceptionApresMidi,
+      responsablePerceptionApresMidi: txt(key.responsablePerceptionApresMidi) || (heurePerceptionApresMidi ? txt(key.personne) : ""),
+      reintegrationApresMidi: txt(key.reintegrationApresMidi) || heureReintegrationApresMidi,
+      responsableReintegrationApresMidi: txt(key.responsableReintegrationApresMidi) || (heureReintegrationApresMidi ? txt(key.personneRetour) || txt(key.personne) : ""),
+      observations: txt(key.observations),
+    };
+  });
 
   // --- 1 - Agents groupés par poste depuis les pointages APS jour et nuit ---
   const pointages = { jour: new Map(), nuit: new Map() };
@@ -397,12 +437,15 @@ export async function generateCrj({ prestataireId, siteId, date }, pool) {
 
   // --- Anomalies ---
   const anomalies = d.signalements.map((s) => ({
-    date: txt(s.date) || day,
     heure: s.heure,
-    poste: txt(s.personne) || "-",
-    nature: txt(s.observations) || "-",
-    anomalie: txt(s.description_faits) || "-",
-    mesures: txt(s.mesures_prises) || "-",
+    camion: txt(s.camion),
+    transporteur: txt(s.transporteur),
+    titre: txt(s.document),
+    casse: txt(s.casse),
+    manquant: txt(s.manquant),
+    vides: txt(s.vides),
+    phn: txt(s.phn),
+    description: txt(s.description_faits),
   }));
 
   // --- Violations de procédure / divers (main courante) ---
@@ -413,15 +456,15 @@ export async function generateCrj({ prestataireId, siteId, date }, pool) {
     if (estViolation) {
       violations.push({
         heure: m.heure,
-        nomPrenom: txt(m.people) || "-",
-        obs: [txt(m.nature_violation), txt(m.description)].filter(Boolean).join(" — ") || "-",
-        mesures: txt(m.mesures_prises) || "-",
+        nomPrenom: txt(m.people),
+        obs: [txt(m.nature_violation), txt(m.description)].filter(Boolean).join(" — "),
+        mesures: txt(m.mesures_prises),
       });
     } else {
       divers.push({
-        dateHeure: m.heure,
-        faits: [txt(m.category), txt(m.description)].filter(Boolean).join(" — ") || "-",
-        mesures: txt(m.mesures_prises) || "-",
+        dateHeure: [txt(m.date), txt(m.heure)].filter(Boolean).join(" "),
+        faits: [txt(m.category), txt(m.description)].filter(Boolean).join(" — "),
+        mesures: txt(m.mesures_prises),
       });
     }
   }
@@ -436,7 +479,7 @@ export async function generateCrj({ prestataireId, siteId, date }, pool) {
     agentsPostes,
     pointageApsJourEnregistre: d.pointage_aps_jour_enregistre,
     pointageApsNuitEnregistre: d.pointage_aps_nuit_enregistre,
-    cles: d.cles ?? [],
+    cles,
     dechargements,
     chargements,
     stockExterieur: siteType === "Agence" ? stock : undefined,
