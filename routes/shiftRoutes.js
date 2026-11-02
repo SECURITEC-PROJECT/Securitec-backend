@@ -78,7 +78,7 @@ export async function handleShiftRoutes(request, response, pool, pathname, jwtSe
     const shiftId = parts[3];
     try {
       const { account } = await requireAccount();
-      if (Number(account.role) !== 2) throw Object.assign(new Error("Seul le chef de poste peut clôturer un service."), { status: 403 });
+      if (![1, 2].includes(Number(account.role))) throw Object.assign(new Error("Seul le chef de poste ou l’administrateur peut clôturer un service."), { status: 403 });
       const updated = await endShift(shiftId, pool, account.siteId);
       if (!updated) {
         json(response, 404, { error: "Prise de poste non trouvée." });
