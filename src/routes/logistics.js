@@ -4,7 +4,7 @@ const datePattern = /^\d{4}-\d{2}-\d{2}$/;
 const timePattern = /^(?:[01]\d|2[0-3]):[0-5]\d$/;
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const categories = new Set(["VIDES", "PLEINS_EAUX"]);
-const incidentTypes = new Set(["ANOMALIE", "VIOLATION_PROCEDURE"]);
+const incidentTypes = new Set(["ANOMALIE", "DIVERS", "VIOLATION_PROCEDURE"]);
 
 function validDate(value) {
   if (!datePattern.test(value)) return false;
@@ -66,7 +66,7 @@ export async function handleLogistics(request, response, pathname) {
         phn:text(body.phn,2000) || null, facts:text(body.facts,20000) || null, person:text(body.person,255) || null,
         observations:text(body.observations,20000) || null, measures:text(body.measures,20000) || null,
       };
-      if (type === "ANOMALIE" && !values.facts) { json(response,400,{error:"Décrivez les faits de l’anomalie."}); return; }
+      if (type !== "VIOLATION_PROCEDURE" && !values.facts) { json(response,400,{error:"Décrivez les faits du signalement."}); return; }
       if (type === "VIOLATION_PROCEDURE" && (!values.person || !values.observations)) { json(response,400,{error:"Indiquez le nom de la personne et les observations."}); return; }
       const client=await pool.connect();
       try {
