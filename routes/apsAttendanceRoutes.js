@@ -28,13 +28,49 @@ function validatePostes(rawPostes) {
     const name = typeof poste?.name === "string" ? poste.name.trim().replace(/\s+/g, " ").toLocaleUpperCase("fr") : "";
     const count = Number(poste?.count);
     const normalizedName = name.toLocaleUpperCase("fr");
-    if (!name || name.length > 80 || names.has(normalizedName)
+    if (!name || name.length > 160 || names.has(normalizedName)
       || !Number.isInteger(count) || count < 1 || count > 30) {
-      throw Object.assign(new Error("Chaque poste doit avoir un nom unique et un effectif entre 1 et 30."), { status: 400 });
+      throw Object.assign(new Error("Chaque poste doit avoir un nom unique (160 caractères maximum) et un effectif entre 1 et 30."), { status: 400 });
     }
     names.add(normalizedName);
     return { name, count };
   });
+}
+
+async function validateAdminPostes(pool, siteId, rawPostes) {
+  const postes = validatePostes(rawPostes);
+  const result = await pool.query(
+    "SELECT nom FROM poste WHERE site_id=$1::uuid AND actif=true",
+    [siteId],
+  );
+  const activeNames = new Map(result.rows.map(({ nom }) => [nom.trim().replace(/\s+/g, " ").toLocaleUpperCase("fr"), nom]));
+  return postes.map((poste) => {
+    const adminName = activeNames.get(poste.name.toLocaleUpperCase("fr"));
+    if (!adminName) {
+      throw Object.assign(new Error(`Le poste « ${poste.name} » n’est pas actif dans la gestion de l’administration.`), { status: 400 });
+    }
+    return { ...poste, name: adminName };
+  });
+}
+
+async function loadAdminPostConfiguration(pool, siteId, service) {
+  const [adminPosts, savedConfiguration] = await Promise.all([
+    pool.query(
+      "SELECT nom FROM poste WHERE site_id=$1::uuid AND actif=true ORDER BY nom",
+      [siteId],
+    ),
+    pool.query(
+      `SELECT postes FROM configuration_postes_aps WHERE site_id=$1::uuid AND service=$2`,
+      [siteId, service],
+    ),
+  ]);
+  const savedCounts = new Map((savedConfiguration.rows[0]?.postes ?? []).map(({ name, count }) => [
+    String(name).trim().replace(/\s+/g, " ").toLocaleUpperCase("fr"), Number(count),
+  ]));
+  return adminPosts.rows.map(({ nom }) => ({
+    name: nom,
+    count: savedCounts.get(nom.trim().replace(/\s+/g, " ").toLocaleUpperCase("fr")) || 1,
+  }));
 }
 
 async function replacePostConfiguration(client, siteId, service, postes, userId) {
@@ -67,13 +103,8 @@ export async function handleApsAttendanceRoutes(request, response, pool, pathnam
           return true;
         }
         const siteId = await resolveSite(pool, account, url.searchParams.get("siteId"));
-        const result = await pool.query(
-          `SELECT postes
-           FROM configuration_postes_aps
-           WHERE site_id=$1::uuid AND service=$2`,
-          [siteId, service],
-        );
-        json(response, 200, { postes: result.rows[0]?.postes ?? [] });
+        const postes = await loadAdminPostConfiguration(pool, siteId, service);
+        json(response, 200, { postes });
       } catch (error) {
         json(response, error.status || 500, { error: error.message || "Chargement des postes APS impossible." });
       }
@@ -94,8 +125,8 @@ export async function handleApsAttendanceRoutes(request, response, pool, pathnam
         json(response, 400, { error: "Service et postes sont obligatoires." });
         return true;
       }
-      const postes = validatePostes(body.postes);
       const siteId = await resolveSite(pool, account, body.siteId);
+      const postes = await validateAdminPostes(pool, siteId, body.postes);
       const client = await pool.connect();
       try {
         await client.query("BEGIN");
@@ -131,16 +162,11 @@ export async function handleApsAttendanceRoutes(request, response, pool, pathnam
         `SELECT data FROM ${table} WHERE site_id=$1::uuid AND date_pointage=$2::date LIMIT 1`,
         [siteId, date],
       );
-      const configuration = await pool.query(
-        `SELECT postes
-         FROM configuration_postes_aps
-         WHERE site_id=$1::uuid AND service=$2`,
-        [siteId, service],
-      );
+      const postes = await loadAdminPostConfiguration(pool, siteId, service);
       const data = result.rows[0]?.data ?? null;
       json(response, 200, {
         data,
-        postes: configuration.rows[0]?.postes ?? null,
+        postes,
       });
     } catch (error) {
       json(response, error.status || 500, { error: error.message || "Chargement du pointage impossible." });
@@ -165,7 +191,8 @@ export async function handleApsAttendanceRoutes(request, response, pool, pathnam
       return true;
     }
     const rawPostes = Array.isArray(body.postes) ? body.postes : Object.entries(data).map(([name, agents]) => ({ name, count: Array.isArray(agents) ? agents.length : 0 }));
-    const postes = validatePostes(rawPostes);
+    const siteId = await resolveSite(pool, account, body.siteId);
+    const postes = await validateAdminPostes(pool, siteId, rawPostes);
     const normalizedData = {};
     for (const poste of postes) {
       const agents = data[poste.name];
@@ -175,7 +202,6 @@ export async function handleApsAttendanceRoutes(request, response, pool, pathnam
       }
       normalizedData[poste.name] = agents;
     }
-    const siteId = await resolveSite(pool, account, body.siteId);
     const table = service === "jour" ? "pointage_aps_jour" : "pointage_aps_nuit";
     const client = await pool.connect();
     try {
