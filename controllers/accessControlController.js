@@ -34,6 +34,7 @@ export async function getKeyTracking(request, response, pool, userId) {
     const siteId = await getUserSiteId(pool, userId, new URL(request.url || "/", `http://${request.headers.host || "localhost"}`).searchParams.get("siteId"));
     const result = await pool.query(
       `SELECT k.id, k.date_suivi::text AS date,
+              k.lieu,
               k.nom_personne AS "lastName", k.prenom_personne AS "firstName",
               k.matricule_personne AS matricule, k.type_cle AS "keyType",
               k.nombre_cles AS quantity,
@@ -42,6 +43,7 @@ export async function getKeyTracking(request, response, pool, userId) {
               k.date_retour::text AS "returnDate",
               k.nom_retourneur AS "returnerLastName", k.prenom_retourneur AS "returnerFirstName",
               k.matricule_retourneur AS "returnerMatricule",
+              k.observations,
               s.nom AS "siteName", k.cree_le AS "createdAt",
               k.service_poste_id AS "servicePosteId"
        FROM suivi_cle k JOIN site s ON s.id = k.site_id
@@ -63,10 +65,12 @@ export async function createKeyTracking(request, response, pool, userId) {
     const employeeId = cleanText(body.employeeId, 36);
     const keyType = cleanText(body.keyType, 100);
     const departureTime = cleanText(body.departureTime, 5);
+    const lieu = cleanText(body.lieu, 255);
+    const observations = cleanText(body.observations, 20000);
     const quantity = Number(body.quantity);
     if (!validDate(date) || !uuidPattern.test(employeeId) || !keyType ||
-        !timePattern.test(departureTime) || !Number.isInteger(quantity) || quantity < 1 || quantity > 10000) {
-      return json(response, 400, { error: "Vérifiez la date, l’employé, le type de clé, la quantité et l’heure de sortie." });
+        !timePattern.test(departureTime) || !lieu || !Number.isInteger(quantity) || quantity < 1 || quantity > 10000) {
+      return json(response, 400, { error: "Vérifiez la date, l’employé, le type de clé, le lieu, la quantité et l’heure de sortie." });
     }
     const siteId = await getUserSiteId(pool, userId, body.siteId);
     const servicePosteId = await resolveServicePosteId(pool, siteId, body.priseDePosteId, body.posteId || null);
@@ -86,17 +90,17 @@ export async function createKeyTracking(request, response, pool, userId) {
     const result = await pool.query(
       `INSERT INTO suivi_cle
          (date_suivi, matricule_personne, nom_personne, prenom_personne,
-          type_cle, nombre_cles, heure_sortie, site_id, utilisateur_id, service_poste_id)
-       VALUES ($1::date, $2, $3, $4, $5, $6, $7::time, $8::uuid, $9::uuid, $10::uuid)
+         type_cle, nombre_cles, heure_sortie, lieu, observations, site_id, utilisateur_id, service_poste_id)
+      VALUES ($1::date, $2, $3, $4, $5, $6, $7::time, $8, $9, $10::uuid, $11::uuid, $12::uuid)
        RETURNING id, cree_le AS "createdAt", service_poste_id AS "servicePosteId"`,
       [date, employee.rows[0].matricule, employee.rows[0].nom, employee.rows[0].prenom,
-        keyType, quantity, departureTime, siteId, userId, servicePosteId],
+       keyType, quantity, departureTime, lieu, observations || null, siteId, userId, servicePosteId],
     );
     json(response, 201, { entry: {
       id: result.rows[0].id, date, lastName: employee.rows[0].nom, firstName: employee.rows[0].prenom,
       matricule: employee.rows[0].matricule, keyType, quantity, departureTime, returnTime: null,
       returnDate: null, returnerLastName: null, returnerFirstName: null, returnerMatricule: null,
-      createdAt: result.rows[0].createdAt,
+      lieu, observations, createdAt: result.rows[0].createdAt,
       servicePosteId: result.rows[0].servicePosteId,
     } });
   } catch (error) {

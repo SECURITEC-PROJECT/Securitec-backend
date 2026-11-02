@@ -122,13 +122,14 @@ export async function handleAccessControl(request, response, pathname) {
       const employeeId = text(body.employeeId, 36);
       const keyType = text(body.keyType, 100);
       const departureTime = text(body.departureTime, 5);
+      const lieu = text(body.lieu, 255);
       const quantity = Number(body.quantity);
       const siteId = account.siteId || text(body.siteId, 36);
       if (!validDate(date) || !uuidPattern.test(employeeId)
-        || !keyType || !timePattern.test(departureTime)
+        || !keyType || !timePattern.test(departureTime) || !lieu
         || !Number.isInteger(quantity) || quantity < 1 || quantity > 10000
         || !uuidPattern.test(siteId)) {
-        json(response, 400, { error: "Vérifiez la date, l’employé, le site, le type de clé, la quantité et l’heure de sortie." }); return;
+        json(response, 400, { error: "Vérifiez la date, l’employé, le site, le type de clé, le lieu, la quantité et l’heure de sortie." }); return;
       }
       const client = await pool.connect();
       try {
@@ -147,16 +148,16 @@ export async function handleAccessControl(request, response, pathname) {
         );
         if (!employee.rows[0]) throw Object.assign(new Error("Cet employé n’est pas habilité à prendre ce type de clé sur ce site."), { status: 400 });
         const result = await client.query(
-          `INSERT INTO suivi_cle (date_suivi, nom_personne, prenom_personne, matricule_personne, type_cle, nombre_cles, heure_sortie, site_id, utilisateur_id)
-           VALUES ($1,$2,$3,$4,$5,$6,$7::time,$8,$9)
+          `INSERT INTO suivi_cle (date_suivi, nom_personne, prenom_personne, matricule_personne, type_cle, nombre_cles, heure_sortie, lieu, site_id, utilisateur_id)
+           VALUES ($1,$2,$3,$4,$5,$6,$7::time,$8,$9,$10)
            RETURNING id, cree_le AS "createdAt"`,
-          [date, employee.rows[0].nom, employee.rows[0].prenom, employee.rows[0].matricule, keyType, quantity, departureTime, siteId, account.sub],
+          [date, employee.rows[0].nom, employee.rows[0].prenom, employee.rows[0].matricule, keyType, quantity, departureTime, lieu, siteId, account.sub],
         );
         await client.query("COMMIT");
         json(response, 201, { entry: {
           id: result.rows[0].id, date, lastName: employee.rows[0].nom, firstName: employee.rows[0].prenom,
           matricule: employee.rows[0].matricule, keyType, quantity, departureTime, returnTime: null,
-          siteName: account.siteNom, createdAt: result.rows[0].createdAt,
+          lieu, siteName: account.siteNom, createdAt: result.rows[0].createdAt,
         } });
       } catch (error) {
         await client.query("ROLLBACK").catch(() => {});

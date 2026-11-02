@@ -1383,18 +1383,25 @@ export async function updateLogisticsIncident(request, response, pool, userId, e
     if (!validDate(date) || !timePattern.test(time) || !facts) {
       return json(response, 400, { error: "Indiquez une date, une heure et une description valides." });
     }
+    const camion = cleanText(body.camion, 160) || null;
+    const transporteur = cleanText(body.transporteur) || null;
+    const document = cleanText(body.document, 160) || null;
+    const broken = cleanText(body.broken, 2000) || null;
+    const missing = cleanText(body.missing, 2000) || null;
+    const empty = cleanText(body.empty, 2000) || null;
+    const phn = cleanText(body.phn, 2000) || null;
     const account = await getAccount(pool, userId);
     const siteId = await resolveSite(pool, account, body);
     const result = await pool.query(
       `UPDATE signalement_logistique
-       SET date_operation=$1::date, heure=$2::time, personne=$3, observations=$4,
-           description_faits=$5, mesures_prises=$6
-       WHERE id=$7::uuid AND site_id=$8::uuid AND type_signalement IN ('ANOMALIE', 'DIVERS')
+       SET date_operation=$1::date, heure=$2::time, camion=$3, transporteur=$4,
+           document=$5, casse=$6, manquant=$7, vides=$8, phn=$9,
+           description_faits=$10, personne=NULL, observations=NULL, mesures_prises=NULL
+       WHERE id=$11::uuid AND site_id=$12::uuid AND type_signalement IN ('ANOMALIE', 'DIVERS')
        RETURNING id, date_operation AS date, to_char(heure, 'HH24:MI') AS time,
-                 personne AS person, observations, description_faits AS facts,
-                 mesures_prises AS measures`,
-      [date, time, cleanText(body.person) || null, cleanText(body.observations, 20000) || null,
-        facts, cleanText(body.measures, 20000) || null, entryId, siteId],
+                 camion, transporteur, document, casse AS broken, manquant AS missing,
+                 vides AS empty, phn, description_faits AS facts`,
+      [date, time, camion, transporteur, document, broken, missing, empty, phn, facts, entryId, siteId],
     );
     if (!result.rows[0]) return json(response, 404, { error: "Signalement introuvable pour ce site." });
     json(response, 200, { entry: result.rows[0] });
