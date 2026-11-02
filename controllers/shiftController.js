@@ -207,11 +207,12 @@ export async function endShift(shiftId, pool, siteId = null) {
   try {
     await client.query("BEGIN");
     const service = await client.query(
-      `SELECT sp.id FROM service_poste sp
-       LEFT JOIN prise_de_poste p ON p.service_id=sp.id
-       WHERE (sp.id=$1::uuid OR p.id=$1::uuid)
+      `SELECT COALESCE(sp.id,p.service_id,p.id) AS id
+       FROM prise_de_poste p
+       LEFT JOIN service_poste sp ON sp.id=COALESCE(p.service_id,p.id)
+       WHERE (sp.id=$1::uuid OR p.id=$1::uuid OR p.service_id=$1::uuid)
          AND ($2::uuid IS NULL OR sp.site_id=$2::uuid OR p.site_de_travail IN (SELECT nom FROM site WHERE id=$2::uuid))
-       LIMIT 1 FOR UPDATE OF sp`,
+       LIMIT 1 FOR UPDATE OF p`,
       [shiftId, siteId],
     );
     if (!service.rows[0]) { await client.query("ROLLBACK"); return null; }
@@ -219,7 +220,7 @@ export async function endShift(shiftId, pool, siteId = null) {
     const closedAt = new Date();
     const result = await client.query(
       `UPDATE prise_de_poste SET ended_at=COALESCE(ended_at,NOW())
-      WHERE service_id=$1::uuid
+      WHERE service_id=$1::uuid OR id=$1::uuid
       RETURNING id,ended_at AT TIME ZONE 'UTC' AS ended_at`, [serviceId],
     );
     await client.query(`UPDATE service_poste SET ended_at=COALESCE(ended_at,NOW()) WHERE id=$1::uuid`, [serviceId]);
