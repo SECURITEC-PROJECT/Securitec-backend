@@ -475,7 +475,7 @@ export async function generateCrj({ prestataireId, siteId, date }, pool) {
       violations.push({
         heure: m.heure,
         nomPrenom: txt(m.people),
-        obs: [txt(m.nature_violation), txt(m.description)].filter(Boolean).join(" — "),
+        obs: txt(m.description) || txt(m.nature_violation),
         mesures: txt(m.mesures_prises),
       });
     } else {
