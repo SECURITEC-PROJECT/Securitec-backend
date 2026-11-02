@@ -40,6 +40,22 @@ const validDate = (value) => {
   return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === value;
 };
 
+const readPondBrut = (value) => {
+  if (!value || typeof value !== "object") return null;
+  const brut = Number(value.brut);
+  const tare = Number(value.tare);
+  const net = Number(value.net);
+  const clientFournisseur = cleanText(value.clientFournisseur, 255);
+  const produit = cleanText(value.produit, 255);
+  const remarque = cleanText(value.remarque, 2000);
+  if (!Number.isFinite(brut) || !Number.isFinite(tare) || brut <= 0 || tare <= 0
+    || !Number.isFinite(net) || brut > 9999999999.99 || tare > 9999999999.99 || net <= 0 || net > 9999999999.99
+  ) {
+    throw Object.assign(new Error("Saisissez un BRUT, une TARE et un NET positifs."), { status: 400 });
+  }
+  return { brut, tare, net, clientFournisseur, produit, remarque, observation: remarque };
+};
+
 async function getAccount(pool, userId) {
   const result = await pool.query(
     "SELECT id, nom, site_id, role FROM utilisateur WHERE id = $1::uuid LIMIT 1",
@@ -156,6 +172,9 @@ export async function getLogisticsEntries(request, response, pool, userId) {
               f.nom_chauffeur AS "nomChauffeur", f.nbr,
               f.numero_titre AS "numeroTitre", f.plomb, f.provenance,
               f.details_bouteilles AS "detailsBouteilles",
+              pond.brut, pond.tare, pond.net, pond.observation,
+              pond.client_fournisseur AS "clientFournisseur", pond.produit,
+              COALESCE(NULLIF(pond.remarque, ''), pond.observation, '') AS remarque,
               to_char(f.heure_pointe, 'HH24:MI') AS "heurePointe", f.designation, f.provenance,
               f.titre, f.cree, f.chauffeur, f.magasinier,
               f.type_chargement AS "typeChargement", f.proprietaire,
@@ -173,6 +192,7 @@ export async function getLogisticsEntries(request, response, pool, userId) {
        LEFT JOIN poste po ON po.id=pp.poste_id
        LEFT JOIN service_poste ON service_poste.id=f.service_poste_id
        LEFT JOIN poste service_post ON service_post.id=service_poste.poste_id
+       LEFT JOIN pond_brut pond ON pond.flux_id=f.id
        WHERE f.site_id = $1::uuid AND f.annule_le IS NULL
          AND ($2::date IS NULL OR f.date_operation >= $2::date)
          AND ($3::date IS NULL OR f.date_operation <= $3::date)
@@ -184,6 +204,31 @@ export async function getLogisticsEntries(request, response, pool, userId) {
   } catch (error) {
     console.error("GET /logistics failed:", error.code || error.name, error.message || "");
     json(response, error.status || 500, { error: error.status ? error.message : "Impossible de charger les flux logistiques." });
+  }
+}
+
+export async function getPondBrutEntries(request, response, pool, userId) {
+  try {
+    const account = await getAccount(pool, userId);
+    const siteId = await querySiteForRead(pool, account, request);
+    if (!siteId) return json(response, 200, { entries: [] });
+    const result = await pool.query(
+      `SELECT pond.id, pond.flux_id AS "fluxId", pond.date_operation::text AS date,
+              COALESCE(flux.immatriculation_vehicule, flux.vehicule, flux.camion) AS vehicule,
+              pond.brut, pond.tare, pond.net, pond.client_fournisseur AS "clientFournisseur", pond.produit,
+              COALESCE(NULLIF(pond.remarque, ''), pond.observation, '') AS remarque,
+              site.nom AS "siteName"
+       FROM pond_brut pond
+       JOIN flux_logistique flux ON flux.id=pond.flux_id
+       JOIN site ON site.id=pond.site_id
+       WHERE pond.site_id=$1::uuid AND flux.annule_le IS NULL
+       ORDER BY pond.date_operation DESC, pond.cree_le DESC LIMIT 5000`,
+      [siteId],
+    );
+    json(response, 200, { entries: result.rows });
+  } catch (error) {
+    console.error("GET /pond-brut failed:", error.code || error.name, error.message || "");
+    json(response, error.status || 500, { error: error.status ? error.message : "Impossible de charger le registre Pond Brut." });
   }
 }
 
@@ -498,7 +543,8 @@ export async function createLogisticsEntry(request, response, pool, userId) {
       const provenance = typeof body.provenance === "number"
         ? String(body.provenance)
         : cleanText(body.provenance, 100);
-      const poids = Number(body.poids);
+      const pondBrut = readPondBrut(body.pondBrut);
+      const poids = pondBrut ? pondBrut.net : Number(body.poids);
       const details = Array.isArray(body.detailsBouteilles) ? body.detailsBouteilles : [];
       const seenDesignations = new Set();
       const normalizedDetails = details.map((item) => {
@@ -527,12 +573,21 @@ export async function createLogisticsEntry(request, response, pool, userId) {
         [date, time, endTime, immatriculation, nomChauffeur, numeroTitre, plomb, provenance, poids,
           JSON.stringify(normalizedDetails), siteId, userId],
       );
+      if (pondBrut) {
+        await client.query(
+          `INSERT INTO pond_brut
+             (flux_id, site_id, utilisateur_id, date_operation, brut, tare, net, observation, client_fournisseur, produit, remarque)
+           VALUES ($1::uuid, $2::uuid, $3::uuid, $4::date, $5, $6, $7, $8, $9, $10, $11)`,
+          [result.rows[0].id, siteId, userId, date, pondBrut.brut, pondBrut.tare, pondBrut.net,
+            pondBrut.observation, pondBrut.clientFournisseur, pondBrut.produit, pondBrut.remarque],
+        );
+      }
       await client.query("COMMIT");
       return json(response, 201, {
         entry: {
           ...result.rows[0], date, type, heureArrivee: time, heureFin: endTime,
           immatriculationVehicule: immatriculation, nomChauffeur, numeroTitre, plomb, provenance,
-          poids, detailsBouteilles: normalizedDetails,
+          poids, ...(pondBrut || {}), detailsBouteilles: normalizedDetails,
           siteName: site.nom, siteType: site.type_site,
         },
       });
@@ -916,7 +971,8 @@ export async function updateEmptyBottleEntry(request, response, pool, userId, en
     const provenance = typeof body.provenance === "number"
       ? String(body.provenance)
       : cleanText(body.provenance, 100);
-    const poids = Number(body.poids);
+    const pondBrut = readPondBrut(body.pondBrut);
+    const poids = pondBrut ? pondBrut.net : Number(body.poids);
     const details = Array.isArray(body.detailsBouteilles) ? body.detailsBouteilles : [];
     const seenDesignations = new Set();
     const normalizedDetails = details.map((item) => {
@@ -955,11 +1011,24 @@ export async function updateEmptyBottleEntry(request, response, pool, userId, en
       await client.query("ROLLBACK");
       return json(response, 404, { error: "Réception de bouteilles introuvable sur ce site." });
     }
+    if (pondBrut) {
+      await client.query(
+        `INSERT INTO pond_brut
+           (flux_id, site_id, utilisateur_id, date_operation, brut, tare, net, observation, client_fournisseur, produit, remarque)
+         VALUES ($1::uuid, $2::uuid, $3::uuid, $4::date, $5, $6, $7, $8, $9, $10, $11)
+         ON CONFLICT (flux_id) DO UPDATE SET
+           site_id=EXCLUDED.site_id, utilisateur_id=EXCLUDED.utilisateur_id, date_operation=EXCLUDED.date_operation,
+           brut=EXCLUDED.brut, tare=EXCLUDED.tare, net=EXCLUDED.net, observation=EXCLUDED.observation,
+           client_fournisseur=EXCLUDED.client_fournisseur, produit=EXCLUDED.produit, remarque=EXCLUDED.remarque`,
+        [entryId, siteId, userId, date, pondBrut.brut, pondBrut.tare, pondBrut.net,
+          pondBrut.observation, pondBrut.clientFournisseur, pondBrut.produit, pondBrut.remarque],
+      );
+    }
     await client.query("COMMIT");
     json(response, 200, { entry: {
       id: entryId, date, type: "BOUTEILLES_VIDES", heureArrivee: time, heureFin: endTime,
       immatriculationVehicule: immatriculation, nomChauffeur, numeroTitre, plomb, provenance,
-      poids, detailsBouteilles: normalizedDetails,
+      poids, ...(pondBrut || {}), detailsBouteilles: normalizedDetails,
     } });
   } catch (error) {
     await client.query("ROLLBACK").catch(() => {});
