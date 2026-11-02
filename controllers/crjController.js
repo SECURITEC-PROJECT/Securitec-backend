@@ -248,6 +248,20 @@ SELECT
     ) x
   ), '[]'::json) AS signalements,
 
+  -- Signalements de type Divers depuis le module Anomalie & Divers
+  COALESCE((
+    SELECT json_agg(v ORDER BY v.date_operation, v.heure) FROM (
+      SELECT to_char(date_operation, 'DD/MM/YYYY') AS date,
+             to_char(date_operation, 'YYYY-MM-DD') AS date_operation,
+             to_char(heure, 'HH24:MI') AS heure,
+             description_faits, mesures_prises
+      FROM signalement_logistique
+      WHERE site_id = $1::uuid
+        AND date_operation = $3::date
+        AND type_signalement = 'DIVERS'
+    ) v
+  ), '[]'::json) AS divers_signalements,
+
   -- Violations de procédure et divers = main courante
   COALESCE((
     SELECT json_agg(m ORDER BY m.heure) FROM (
@@ -450,7 +464,11 @@ export async function generateCrj({ prestataireId, siteId, date }, pool) {
 
   // --- Violations de procédure / divers (main courante) ---
   const violations = [];
-  const divers = [];
+  const divers = d.divers_signalements.map((item) => ({
+    dateHeure: [txt(item.date), txt(item.heure)].filter(Boolean).join(" "),
+    faits: txt(item.description_faits),
+    mesures: txt(item.mesures_prises),
+  }));
   for (const m of d.main_courante) {
     const estViolation = txt(m.nature_violation) !== "" || /^VIOLATION/.test(norm(m.type_entree));
     if (estViolation) {
