@@ -7,7 +7,7 @@ const truckTypes = new Set(["DECHARGEMENT", "CHARGEMENT", "ORDURES"]);
 const fluxTypes = new Set(["DECHARGEMENT", "CHARGEMENT", "INVENTAIRE", "DECHETS", "BOUTEILLES_VIDES", "MATIERE_PREMIERE", "DEPOTAGE_FUEL", "ORDURES"]);
 const wasteRegisterDesignations = new Set(["Verres cassées", "Ordures", "Gravat"]);
 const logisticsDocumentTypes = new Set(["BON", "FACTURE", "BON_SORTIE"]);
-const incidentTypes = new Set(["ANOMALIE", "VIOLATION_PROCEDURE"]);
+const incidentTypes = new Set(["ANOMALIE", "DIVERS", "VIOLATION_PROCEDURE"]);
 const stockCategories = new Set(["VIDES", "PLEINS_EAUX"]);
 const bottleDesignations = new Set([
   "Bouteilles vides - 65 Cl", "Bouteilles vides - 50 Cl", "Bouteilles vides - 33 Cl",
@@ -1299,8 +1299,8 @@ export async function createLogisticsIncident(request, response, pool, userId) {
     if (requestedPostIds.length > 10 || requestedPostIds.some((value) => typeof value !== "string" || !uuidPattern.test(value))) {
       return json(response, 400, { error: "Sélectionnez au maximum dix postes pour diffuser la consigne." });
     }
-    if (type === "ANOMALIE" && !values.facts) {
-      return json(response, 400, { error: "Décrivez les faits de l’anomalie." });
+    if (type !== "VIOLATION_PROCEDURE" && !values.facts) {
+      return json(response, 400, { error: "Décrivez les faits du signalement." });
     }
     if (type === "VIOLATION_PROCEDURE" && (!values.person || !values.observations)) {
       return json(response, 400, { error: "Indiquez le nom de la personne et les observations." });
@@ -1337,7 +1337,8 @@ export async function createLogisticsIncident(request, response, pool, userId) {
         values.observations, values.measures, siteId, userId, priseDePosteId],
     );
     const incidentDescription = values.facts || values.observations || "Incident signalé";
-    const instruction = `Incident ${type === "ANOMALIE" ? "/ anomalie" : "de procédure"} : ${incidentDescription}\nMesures : ${values.measures || "Informer le responsable et appliquer les consignes de sécurité du site."}`.slice(0, 20000);
+    const typeLabel = type === "ANOMALIE" ? "anomalie" : type === "DIVERS" ? "divers" : "de procédure";
+    const instruction = `Incident ${typeLabel} : ${incidentDescription}\nMesures : ${values.measures || "Informer le responsable et appliquer les consignes de sécurité du site."}`.slice(0, 20000);
     const postTargets = targetPostIds.length ? targetPostIds : [{ id: null, nom: null }];
     for (const post of postTargets) {
       await client.query(
@@ -1348,7 +1349,9 @@ export async function createLogisticsIncident(request, response, pool, userId) {
         [siteId, instruction, account.nom, post.nom ? `Poste : ${post.nom}` : "Tous les postes du site", userId, priseDePosteId, post.id],
       );
     }
-    const notificationTitle = type === "ANOMALIE" ? "Nouvelle anomalie signalée" : "Nouvelle violation de procédure";
+    const notificationTitle = type === "ANOMALIE"
+      ? "Nouvelle anomalie signalée"
+      : type === "DIVERS" ? "Nouveau signalement divers" : "Nouvelle violation de procédure";
     const notificationMessage = `${incidentDescription}${targetPostIds.length ? ` · ${targetPostIds.map((post) => post.nom).join(", ")}` : " · Tous les postes du site"}`.slice(0, 2000);
     await client.query(
       `INSERT INTO notification_interne (utilisateur_id, site_id, titre, message, type, entite_id)
@@ -1386,18 +1389,18 @@ export async function updateLogisticsIncident(request, response, pool, userId, e
       `UPDATE signalement_logistique
        SET date_operation=$1::date, heure=$2::time, personne=$3, observations=$4,
            description_faits=$5, mesures_prises=$6
-       WHERE id=$7::uuid AND site_id=$8::uuid AND type_signalement='ANOMALIE'
+       WHERE id=$7::uuid AND site_id=$8::uuid AND type_signalement IN ('ANOMALIE', 'DIVERS')
        RETURNING id, date_operation AS date, to_char(heure, 'HH24:MI') AS time,
                  personne AS person, observations, description_faits AS facts,
                  mesures_prises AS measures`,
       [date, time, cleanText(body.person) || null, cleanText(body.observations, 20000) || null,
         facts, cleanText(body.measures, 20000) || null, entryId, siteId],
     );
-    if (!result.rows[0]) return json(response, 404, { error: "Anomalie introuvable pour ce site." });
+    if (!result.rows[0]) return json(response, 404, { error: "Signalement introuvable pour ce site." });
     json(response, 200, { entry: result.rows[0] });
   } catch (error) {
     console.error("PUT /logistics/incidents/:id failed:", error.code || error.name, error.message || "");
-    json(response, error.status || 500, { error: error.status ? error.message : "Impossible de modifier l'anomalie." });
+    json(response, error.status || 500, { error: error.status ? error.message : "Impossible de modifier le signalement." });
   }
 }
 
@@ -1407,13 +1410,13 @@ export async function deleteLogisticsIncident(request, response, pool, userId, e
     const url = new URL(request.url || "/", `http://${request.headers.host || "localhost"}`);
     const siteId = await resolveSite(pool, account, { siteId: url.searchParams.get("siteId") });
     const result = await pool.query(
-      "DELETE FROM signalement_logistique WHERE id=$1::uuid AND site_id=$2::uuid AND type_signalement='ANOMALIE' RETURNING id",
+      "DELETE FROM signalement_logistique WHERE id=$1::uuid AND site_id=$2::uuid AND type_signalement IN ('ANOMALIE', 'DIVERS') RETURNING id",
       [entryId, siteId],
     );
-    if (!result.rows[0]) return json(response, 404, { error: "Anomalie introuvable pour ce site." });
+    if (!result.rows[0]) return json(response, 404, { error: "Signalement introuvable pour ce site." });
     json(response, 200, { id: result.rows[0].id, deleted: true });
   } catch (error) {
     console.error("DELETE /logistics/incidents/:id failed:", error.code || error.name, error.message || "");
-    json(response, error.status || 500, { error: error.status ? error.message : "Impossible de supprimer l'anomalie." });
+    json(response, error.status || 500, { error: error.status ? error.message : "Impossible de supprimer le signalement." });
   }
 }
