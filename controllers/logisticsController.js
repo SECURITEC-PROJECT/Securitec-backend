@@ -1446,12 +1446,14 @@ export async function updateLogisticsIncident(request, response, pool, userId, e
       `UPDATE signalement_logistique
        SET date_operation=$1::date, heure=$2::time, camion=$3, transporteur=$4,
            document=$5, casse=$6, manquant=$7, vides=$8, phn=$9,
-           description_faits=$10, personne=NULL, observations=NULL, mesures_prises=NULL
-       WHERE id=$11::uuid AND site_id=$12::uuid AND type_signalement IN ('ANOMALIE', 'DIVERS')
+           description_faits=$10, mesures_prises=$11,
+           personne=NULL, observations=NULL
+       WHERE id=$12::uuid AND site_id=$13::uuid AND type_signalement IN ('ANOMALIE', 'DIVERS')
        RETURNING id, date_operation AS date, to_char(heure, 'HH24:MI') AS time,
                  camion, transporteur, document, casse AS broken, manquant AS missing,
-                 vides AS empty, phn, description_faits AS facts`,
-      [date, time, camion, transporteur, document, broken, missing, empty, phn, facts, entryId, siteId],
+                 vides AS empty, phn, description_faits AS facts, mesures_prises AS measures`,
+      [date, time, camion, transporteur, document, broken, missing, empty, phn, facts,
+        cleanText(body.measures, 20000) || null, entryId, siteId],
     );
     if (!result.rows[0]) return json(response, 404, { error: "Signalement introuvable pour ce site." });
     json(response, 200, { entry: result.rows[0] });
