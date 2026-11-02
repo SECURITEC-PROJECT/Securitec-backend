@@ -558,6 +558,10 @@ model SuiviCle {
   nombreCles                        Int?        @map("nombre_cles")
   heureSortie                       DateTime?   @map("heure_sortie") @db.Time(0)
   heureRetour                       DateTime?   @map("heure_retour") @db.Time(0)
+  dateRetour                        DateTime?   @map("date_retour") @db.Date
+  nomRetourneur                     String?     @map("nom_retourneur") @db.VarChar(100)
+  prenomRetourneur                  String?     @map("prenom_retourneur") @db.VarChar(100)
+  matriculeRetourneur               String?     @map("matricule_retourneur") @db.VarChar(50)
   perceptionMatin                   DateTime?   @map("perception_matin") @db.Time(0)
   responsablePerceptionMatin        String?     @map("responsable_perception_matin") @db.VarChar(255)
   reintegrationMatin                DateTime?   @map("reintegration_matin") @db.Time(0)

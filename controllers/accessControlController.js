@@ -39,6 +39,9 @@ export async function getKeyTracking(request, response, pool, userId) {
               k.nombre_cles AS quantity,
               to_char(k.heure_sortie, 'HH24:MI') AS "departureTime",
               to_char(k.heure_retour, 'HH24:MI') AS "returnTime",
+              k.date_retour::text AS "returnDate",
+              k.nom_retourneur AS "returnerLastName", k.prenom_retourneur AS "returnerFirstName",
+              k.matricule_retourneur AS "returnerMatricule",
               s.nom AS "siteName", k.cree_le AS "createdAt",
               k.service_poste_id AS "servicePosteId"
        FROM suivi_cle k JOIN site s ON s.id = k.site_id
@@ -92,6 +95,7 @@ export async function createKeyTracking(request, response, pool, userId) {
     json(response, 201, { entry: {
       id: result.rows[0].id, date, lastName: employee.rows[0].nom, firstName: employee.rows[0].prenom,
       matricule: employee.rows[0].matricule, keyType, quantity, departureTime, returnTime: null,
+      returnDate: null, returnerLastName: null, returnerFirstName: null, returnerMatricule: null,
       createdAt: result.rows[0].createdAt,
       servicePosteId: result.rows[0].servicePosteId,
     } });
@@ -145,15 +149,51 @@ export async function returnKeyTracking(request, response, pool, userId, entryId
     }
     const body = await readJson(request);
     const returnTime = cleanText(body.returnTime, 5);
-    if (!timePattern.test(returnTime)) return json(response, 400, { error: "Indiquez une heure de retour valide (HH:MM)." });
+    const returnDate = cleanText(body.returnDate, 10);
+    const returnerType = body.returnerType;
+    const returnerEmployeeId = cleanText(body.returnerEmployeeId, 36);
+    if (!timePattern.test(returnTime) || !validDate(returnDate)) return json(response, 400, { error: "Indiquez une date et une heure de retour valides." });
+    if (returnerType !== "same" && returnerType !== "other") return json(response, 400, { error: "Choisissez qui rend la clé." });
     const siteId = await getUserSiteId(pool, userId, body.siteId);
+    const movement = await pool.query(
+      `SELECT nom_personne AS "lastName", prenom_personne AS "firstName", matricule_personne AS matricule
+       FROM suivi_cle
+       WHERE id::text=$1 AND site_id=$2::uuid AND type_cle IS NOT NULL AND heure_retour IS NULL`,
+      [entryId, siteId],
+    );
+    if (!movement.rows[0]) {
+      const existing = await pool.query(
+        "SELECT heure_retour FROM suivi_cle WHERE id::text=$1 AND site_id=$2::uuid AND type_cle IS NOT NULL",
+        [entryId, siteId],
+      );
+      return json(response, existing.rows[0] ? 409 : 404, {
+        error: existing.rows[0] ? "Le retour de cette clé est déjà enregistré." : "Mouvement de clé introuvable.",
+      });
+    }
+    let returner = movement.rows[0];
+    if (returnerType === "other") {
+      if (!uuidPattern.test(returnerEmployeeId)) return json(response, 400, { error: "Sélectionnez la personne qui rend la clé." });
+      const selectedReturner = await pool.query(
+        `SELECT e.nom AS "lastName", e.prenom AS "firstName", e.matricule
+         FROM employe e
+         WHERE e.id=$1::uuid AND e.site_id=$2::uuid AND e.actif=true
+         LIMIT 1`,
+        [returnerEmployeeId, siteId],
+      );
+      if (!selectedReturner.rows[0]) return json(response, 400, { error: "La personne choisie n’est pas un employé actif de ce site." });
+      returner = selectedReturner.rows[0];
+    }
     const result = await pool.query(
       `UPDATE suivi_cle
-       SET heure_retour = $1::time
-       WHERE id::text = $2 AND site_id = $3::uuid
+       SET heure_retour = $1::time, date_retour=$2::date,
+           nom_retourneur=$3, prenom_retourneur=$4, matricule_retourneur=$5
+       WHERE id::text = $6 AND site_id = $7::uuid
          AND type_cle IS NOT NULL AND heure_retour IS NULL
-       RETURNING id, to_char(heure_retour, 'HH24:MI') AS "returnTime"`,
-      [returnTime, entryId, siteId],
+       RETURNING id, date_retour::text AS "returnDate",
+                 to_char(heure_retour, 'HH24:MI') AS "returnTime",
+                 nom_retourneur AS "returnerLastName", prenom_retourneur AS "returnerFirstName",
+                 matricule_retourneur AS "returnerMatricule"`,
+      [returnTime, returnDate, returner.lastName, returner.firstName, returner.matricule, entryId, siteId],
     );
     if (!result.rows[0]) {
       const existing = await pool.query(
@@ -167,7 +207,7 @@ export async function returnKeyTracking(request, response, pool, userId, entryId
     json(response, 200, { entry: result.rows[0] });
   } catch (error) {
     console.error("PATCH key return failed:", error.code || error.name, error.message || "");
-    json(response, error.status || 500, { error: error.status ? error.message : "Impossible d'enregistrer l’heure de retour." });
+    json(response, error.status || 500, { error: error.status ? error.message : "Impossible d’enregistrer le retour de la clé." });
   }
 }
 
