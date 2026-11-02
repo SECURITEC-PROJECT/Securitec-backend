@@ -135,13 +135,49 @@ function validatePostes(rawPostes) {
       ? poste.name.trim().replace(/\s+/g, " ").toLocaleUpperCase("fr")
       : "";
     const count = Number(poste?.count);
-    if (!name || name.length > 80 || names.has(name)
+    if (!name || name.length > 160 || names.has(name)
       || !Number.isInteger(count) || count < 1 || count > 30) {
-      throw Object.assign(new Error("Chaque poste doit avoir un nom unique et un effectif entre 1 et 30."), { status: 400 });
+      throw Object.assign(new Error("Chaque poste doit avoir un nom unique (160 caractères maximum) et un effectif entre 1 et 30."), { status: 400 });
     }
     names.add(name);
     return { name, count };
   });
+}
+
+async function validateAdminPostes(pool, siteId, rawPostes) {
+  const postes = validatePostes(rawPostes);
+  const result = await pool.query(
+    "SELECT nom FROM poste WHERE site_id=$1::uuid AND actif=true",
+    [siteId],
+  );
+  const activeNames = new Map(result.rows.map(({ nom }) => [nom.trim().replace(/\s+/g, " ").toLocaleUpperCase("fr"), nom]));
+  return postes.map((poste) => {
+    const adminName = activeNames.get(poste.name.toLocaleUpperCase("fr"));
+    if (!adminName) {
+      throw Object.assign(new Error(`Le poste « ${poste.name} » n’est pas actif dans la gestion de l’administration.`), { status: 400 });
+    }
+    return { ...poste, name: adminName };
+  });
+}
+
+async function loadAdminPostConfiguration(pool, siteId) {
+  const [adminPosts, savedConfiguration] = await Promise.all([
+    pool.query(
+      "SELECT nom FROM poste WHERE site_id=$1::uuid AND actif=true ORDER BY nom",
+      [siteId],
+    ),
+    pool.query(
+      "SELECT postes FROM configuration_postes_mouvement_aps WHERE site_id=$1::uuid LIMIT 1",
+      [siteId],
+    ),
+  ]);
+  const savedCounts = new Map((savedConfiguration.rows[0]?.postes ?? []).map(({ name, count }) => [
+    String(name).trim().replace(/\s+/g, " ").toLocaleUpperCase("fr"), Number(count),
+  ]));
+  return adminPosts.rows.map(({ nom }) => ({
+    name: nom,
+    count: savedCounts.get(nom.trim().replace(/\s+/g, " ").toLocaleUpperCase("fr")) || 1,
+  }));
 }
 
 function validateData(rawData, postes) {
@@ -170,14 +206,6 @@ function validateData(rawData, postes) {
 }
 
 async function saveConfiguration(client, siteId, postes, userId) {
-  for (const poste of postes) {
-    await client.query(
-      `INSERT INTO poste (nom,actif,site_id)
-       VALUES ($1,true,$2::uuid)
-       ON CONFLICT (site_id,nom) DO UPDATE SET actif=true`,
-      [poste.name, siteId],
-    );
-  }
   await client.query(
     `INSERT INTO configuration_postes_mouvement_aps (site_id,postes,utilisateur_id,updated_at)
      VALUES ($1::uuid,$2::jsonb,$3::uuid,NOW())
@@ -379,31 +407,27 @@ export async function handleApsMovementRoutes(request, response, pool, pathname,
       const service = readService(url.searchParams.get("service"));
       if (!validDate(date)) throw Object.assign(new Error("Date invalide."), { status: 400 });
       const siteId = await resolveSite(pool, account, url.searchParams.get("siteId"));
-      const [movement, configuration] = await Promise.all([
+      const [movement, postes] = await Promise.all([
         pool.query(
           `SELECT m.data,COALESCE((SELECT json_agg(link.service_poste_id ORDER BY link.service_poste_id)
              FROM mouvement_aps_service_poste link WHERE link.mouvement_aps_id=m.id),'[]'::json) AS "servicePosteIds"
            FROM mouvement_aps m WHERE m.site_id=$1::uuid AND m.date_pointage=$2::date AND m.service=$3 LIMIT 1`,
           [siteId, date, service],
         ),
-        pool.query(
-          "SELECT postes FROM configuration_postes_mouvement_aps WHERE site_id=$1::uuid LIMIT 1",
-          [siteId],
-        ),
+        loadAdminPostConfiguration(pool, siteId),
       ]);
       json(response, 200, {
         data: movement.rows[0]?.data ?? null,
         servicePosteIds: movement.rows[0]?.servicePosteIds ?? [],
-        postes: configuration.rows[0]?.postes ?? null,
+        postes,
       });
       return true;
     }
 
     if (request.method === "PUT" && pathname === configurationPath) {
-      if (Number(account.role) !== 1) throw Object.assign(new Error("Seul l’administrateur peut configurer les postes APS."), { status: 403 });
       const body = await readJson(request);
-      const postes = validatePostes(body?.postes);
       const siteId = await resolveSite(pool, account, body?.siteId);
+      const postes = await validateAdminPostes(pool, siteId, body?.postes);
       const client = await pool.connect();
       try {
         await client.query("BEGIN");
@@ -425,12 +449,8 @@ export async function handleApsMovementRoutes(request, response, pool, pathname,
       const service = readService(body?.service);
       if (!validDate(date)) throw Object.assign(new Error("Date invalide."), { status: 400 });
       const siteId = await resolveSite(pool, account, body?.siteId);
-      const configuration = await pool.query(
-        "SELECT postes FROM configuration_postes_mouvement_aps WHERE site_id=$1::uuid LIMIT 1",
-        [siteId],
-      );
-      if (!configuration.rows[0]?.postes) throw Object.assign(new Error("Les postes APS doivent d’abord être configurés par l’administrateur."), { status: 409 });
-      const postes = validatePostes(configuration.rows[0].postes);
+      const postes = await loadAdminPostConfiguration(pool, siteId);
+      if (!postes.length) throw Object.assign(new Error("Aucun poste actif n’est configuré pour ce site dans l’administration."), { status: 409 });
       const data = validateData(body?.data, postes);
       const client = await pool.connect();
       try {
