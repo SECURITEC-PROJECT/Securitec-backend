@@ -9,6 +9,7 @@ import {
   deleteWasteEntry,
   deleteEmptyBottleEntry,
   getLogisticsEntries,
+  getPondBrutEntries,
   getLogisticsAudit,
   getLogisticsAttachments,
   linkLogisticsAttachment,
@@ -28,6 +29,7 @@ import { json } from "../utils/helpers.js";
 
 const apiPrefix = "/api";
 const entriesPath = `${apiPrefix}/logistics`;
+const pondBrutPath = `${apiPrefix}/pond-brut`;
 const incidentsPath = `${entriesPath}/incidents`;
 const incidentEntryPath = /^\/api\/logistics\/incidents\/([0-9a-f-]{36})$/i;
 const wasteEntryPath = /^\/api\/logistics\/([0-9a-f-]+)$/i;
@@ -44,7 +46,7 @@ export async function handleFluxRoutes(request, response, pool, pathname, jwtSec
   const starParticulierMatch = starParticulierEntryPath.exec(pathname);
   const logisticsAuditMatch = logisticsAuditPath.exec(pathname);
   const logisticsAttachmentsMatch = logisticsAttachmentsPath.exec(pathname);
-  if (pathname !== entriesPath && pathname !== starParticulierPath && pathname !== incidentsPath
+  if (pathname !== entriesPath && pathname !== pondBrutPath && pathname !== starParticulierPath && pathname !== incidentsPath
     && !wasteMatch && !emptyBottleMatch && !incidentMatch && !starParticulierMatch
     && !logisticsAuditMatch && !logisticsAttachmentsMatch) return false;
 
@@ -64,6 +66,11 @@ export async function handleFluxRoutes(request, response, pool, pathname, jwtSec
   }
   if (logisticsAttachmentsMatch && request.method === "POST") {
     await linkLogisticsAttachment(request, response, pool, user.id, logisticsAttachmentsMatch[1]);
+    return true;
+  }
+
+  if (pathname === pondBrutPath && request.method === "GET") {
+    await getPondBrutEntries(request, response, pool, user.id);
     return true;
   }
 

@@ -43,6 +43,7 @@ model Site {
   suivisCles              SuiviCle[]
   controlesAlcoolemie     ControleAlcoolemie[]
   fluxLogistiques         FluxLogistique[]
+  pondBrut                PondBrut[]
   signalementsLogistiques SignalementLogistique[]
   rondes                  Ronde[]
   pointsVigilance         PointVigilance[]
@@ -89,6 +90,7 @@ model Utilisateur {
   suivisCles              SuiviCle[]
   controlesAlcoolemie     ControleAlcoolemie[]
   fluxLogistiques         FluxLogistique[]
+  pondBrut                PondBrut[]
   signalementsLogistiques SignalementLogistique[]
   rondes                  Ronde[]
   pointsVigilance         PointVigilance[]
@@ -674,10 +676,33 @@ model FluxLogistique {
   servicePoste   ServicePoste? @relation(fields: [servicePosteId], references: [id], onDelete: SetNull, map: "fk_flux_logistique_service_poste")
   audit           FluxLogistiqueAudit[]
   piecesJointes   FluxLogistiqueDocument[]
+  pondBrut        PondBrut?
 
   @@index([siteId, dateOperation, typeFlux], map: "idx_flux_logistique_site_date")
   @@index([servicePosteId, dateOperation(sort: Desc)], map: "idx_flux_logistique_service_poste")
   @@map("flux_logistique")
+}
+
+model PondBrut {
+  id            String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  fluxId        String         @unique @map("flux_id") @db.Uuid
+  siteId        String         @map("site_id") @db.Uuid
+  utilisateurId String         @map("utilisateur_id") @db.Uuid
+  dateOperation DateTime       @map("date_operation") @db.Date
+  brut          Decimal        @db.Decimal(12, 2)
+  tare          Decimal        @db.Decimal(12, 2)
+  net           Decimal        @db.Decimal(12, 2)
+  observation   String         @default("") @db.Text
+  clientFournisseur String     @default("") @map("client_fournisseur") @db.VarChar(255)
+  produit       String         @default("") @db.VarChar(255)
+  remarque      String         @default("") @db.Text
+  creeLe        DateTime       @default(now()) @map("cree_le") @db.Timestamptz(6)
+  flux          FluxLogistique @relation(fields: [fluxId], references: [id], onDelete: Cascade, map: "fk_pond_brut_flux")
+  site          Site           @relation(fields: [siteId], references: [id], onDelete: Restrict, map: "fk_pond_brut_site")
+  utilisateur   Utilisateur    @relation(fields: [utilisateurId], references: [id], onDelete: Restrict, map: "fk_pond_brut_utilisateur")
+
+  @@index([siteId, dateOperation(sort: Desc)], map: "idx_pond_brut_site_date")
+  @@map("pond_brut")
 }
 
 model FluxLogistiqueAudit {
