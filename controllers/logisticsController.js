@@ -117,21 +117,6 @@ async function requireRegisteredDriverVehicle(pool, siteId, vehicule) {
   }
 }
 
-async function requireRegisteredDriverName(pool, siteId, nomPrenom) {
-  const result = await pool.query(
-    `SELECT 1 FROM chauffeur
-     WHERE site_id = $1::uuid AND LOWER(BTRIM(nom_prenom)) = LOWER($2)
-     LIMIT 1`,
-    [siteId, nomPrenom],
-  );
-  if (!result.rows[0]) {
-    throw Object.assign(
-      new Error("Ce chauffeur n’est pas enregistré dans le module Chauffeurs pour ce site."),
-      { status: 400 },
-    );
-  }
-}
-
 async function requireDriverForMatricule(pool, siteId, matricule, nomPrenom) {
   const result = await pool.query(
     `SELECT 1 FROM chauffeur
@@ -626,7 +611,6 @@ export async function createLogisticsEntry(request, response, pool, userId) {
           quantity <= 0 || quantity > 9999999999.99 || !document || !provenance) {
         throw Object.assign(new Error("Renseignez l’heure de pointe, le véhicule, la désignation, une quantité positive, le bon de livraison/facture et la provenance."), { status: 400 });
       }
-      await requireRegisteredDriverVehicle(client, siteId, vehicule);
       const result = await client.query(
         `INSERT INTO flux_logistique
            (date_operation, type_flux, camion, heure_pointe, designation, quantite, document, provenance, site_id, utilisateur_id)
@@ -657,7 +641,6 @@ export async function createLogisticsEntry(request, response, pool, userId) {
           !chauffeur || !magasinier) {
         throw Object.assign(new Error("Renseignez l’heure de pointe, le titre, le plomb, une désignation Fuel oil ou Gasoil, une quantité positive, le nom du créateur, le chauffeur et le magasinier."), { status: 400 });
       }
-      await requireRegisteredDriverName(client, siteId, chauffeur);
       const result = await client.query(
         `INSERT INTO flux_logistique
            (date_operation, type_flux, heure_pointe, titre, plomb, designation, quantite, cree, chauffeur, magasinier, site_id, utilisateur_id)
@@ -1117,7 +1100,6 @@ export async function updateMatierePremiereEntry(request, response, pool, userId
       await client.query("ROLLBACK");
       return json(response, 404, { error: "Déchargement introuvable sur ce site." });
     }
-    await requireRegisteredDriverVehicle(client, siteId, vehicule);
     const result = await client.query(
       `UPDATE flux_logistique
        SET date_operation = $2::date, camion = $3, heure_pointe = $4::time,
@@ -1196,7 +1178,6 @@ export async function updateDepotageFuelEntry(request, response, pool, userId, e
       await client.query("ROLLBACK");
       return json(response, 404, { error: "Dépotage fuel/gasoil introuvable sur ce site." });
     }
-    await requireRegisteredDriverName(client, siteId, chauffeur);
     const result = await client.query(
       `UPDATE flux_logistique
        SET date_operation = $2::date, heure_pointe = $3::time, titre = $4, plomb = $5,
