@@ -354,6 +354,7 @@ export async function generateCrj({ prestataireId, siteId, date }, pool) {
   const pointages = { jour: new Map(), nuit: new Map() };
   const effectifs = { jour: new Map(), nuit: new Map() };
   const ordrePostes = [];
+  const configuredPostesByService = { jour: new Set(), nuit: new Set() };
   const aliasPostesJour = {
     GARAGE: "EX GARAGE",
     PG2: "PG2",
@@ -363,7 +364,10 @@ export async function generateCrj({ prestataireId, siteId, date }, pool) {
     POSTEDEGARDEII: "PG2",
     POSTEGARDE2: "PG2",
     POSTEDEGARDE2: "PG2",
-    FITAA: "FITAVA",
+    FITAA: "TERRAIN FIRAISANA",
+    FITAVA: "TERRAIN FIRAISANA",
+    FIRASANA: "TERRAIN FIRAISANA",
+    FIRAISANA: "TERRAIN FIRAISANA",
     EXTERIEUR: "PARKING EXTERIEUR",
   };
   for (const configuration of d.configured_postes ?? []) {
@@ -379,6 +383,7 @@ export async function generateCrj({ prestataireId, siteId, date }, pool) {
     for (const [savedName, count] of entries) {
       if (!Number.isInteger(count) || count < 1 || count > 30) continue;
       const name = service === "jour" ? aliasPostesJour[savedName] || savedName : savedName;
+      configuredPostesByService[service].add(name);
       effectifs[service].set(name, count);
       if (!ordrePostes.includes(name)) ordrePostes.push(name);
     }
@@ -386,6 +391,8 @@ export async function generateCrj({ prestataireId, siteId, date }, pool) {
   for (const agent of d.agents) {
     if (!pointages[agent.service]) continue;
     const poste = agent.service === "jour" ? aliasPostesJour[agent.poste] || agent.poste : agent.poste;
+    const configuredSet = configuredPostesByService[agent.service];
+    if (configuredSet.size > 0 && !configuredSet.has(poste)) continue;
     const parPoste = pointages[agent.service];
     if (!parPoste.has(poste)) parPoste.set(poste, []);
     const nomEmploye = [txt(agent.nom_employe), txt(agent.prenom_employe)].filter(Boolean).join(" ");
