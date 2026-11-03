@@ -1,0 +1,2 @@
+ALTER TABLE "suivi_cle"
+ADD COLUMN "non_rendu" BOOLEAN NOT NULL DEFAULT false;
