@@ -76,7 +76,7 @@ async function resolveSite(pool, account, requestedSiteId) {
 
 const selection = `SELECT q.id, q.donnees AS data, q.site_id AS "siteId", s.nom AS "siteName",
   q.cree_le AS "createdAt", q.modifie_le AS "updatedAt", q.service_poste_id AS "servicePosteId",
-  sp.poste_id AS "posteId", po.nom AS "posteNom", sp.shift_type AS "shiftType"
+  q.deleted_at AS "deletedAt", sp.poste_id AS "posteId", po.nom AS "posteNom", sp.shift_type AS "shiftType"
   FROM questionnaire_visiteur q JOIN site s ON s.id=q.site_id
   LEFT JOIN service_poste sp ON sp.id=q.service_poste_id
   LEFT JOIN poste po ON po.id=sp.poste_id`;
@@ -98,7 +98,7 @@ export async function handleVisitorQuestionnaireRoutes(request, response, pool, 
       if (!siteId) { json(response, 200, { entries: [] }); return true; }
       siteId = await resolveSite(pool, account, siteId);
       const result = await pool.query(
-        `${selection} WHERE q.site_id=$1::uuid ORDER BY q.date_operation DESC, q.cree_le DESC LIMIT 1000`,
+        `${selection} WHERE q.site_id=$1::uuid AND q.deleted_at IS NULL ORDER BY q.date_operation DESC, q.cree_le DESC LIMIT 1000`,
         [siteId],
       );
       json(response, 200, { entries: result.rows });
@@ -108,16 +108,25 @@ export async function handleVisitorQuestionnaireRoutes(request, response, pool, 
     if (request.method === "POST" && pathname === collectionPath) {
       const body = await readJson(request);
       const data = validateData(body.data);
+      const clientRequestId = text(body.clientRequestId, 36);
+      if (clientRequestId && !uuidPattern.test(clientRequestId)) { json(response, 400, { error: "Identifiant de demande invalide." }); return true; }
       const siteId = await resolveSite(pool, account, body.siteId);
+      if (clientRequestId) {
+        const replay = await pool.query(`${selection} WHERE q.client_request_id=$1::uuid AND q.site_id=$2::uuid`, [clientRequestId, siteId]);
+        if (replay.rows[0]) { json(response, 200, { entry: replay.rows[0] }); return true; }
+      }
       const servicePosteId = await resolveServicePosteId(pool, siteId, body.priseDePosteId, body.posteId || null);
       const result = await pool.query(
-        `INSERT INTO questionnaire_visiteur (date_operation, donnees, site_id, utilisateur_id, service_poste_id)
-         VALUES ($1::date, $2::jsonb, $3::uuid, $4::uuid, $5::uuid)
-         RETURNING id, donnees AS data, site_id AS "siteId", cree_le AS "createdAt", modifie_le AS "updatedAt", service_poste_id AS "servicePosteId"`,
-        [data.date, JSON.stringify(data), siteId, account.id, servicePosteId],
+        `INSERT INTO questionnaire_visiteur (date_operation, donnees, site_id, utilisateur_id, service_poste_id, client_request_id)
+         VALUES ($1::date, $2::jsonb, $3::uuid, $4::uuid, $5::uuid, $6::uuid)
+         ON CONFLICT (client_request_id) DO NOTHING RETURNING id`,
+        [data.date, JSON.stringify(data), siteId, account.id, servicePosteId, clientRequestId || null],
       );
-      const site = await pool.query("SELECT nom AS \"siteName\" FROM site WHERE id=$1::uuid", [siteId]);
-      json(response, 201, { entry: { ...result.rows[0], siteName: site.rows[0].siteName } });
+      const created = result.rows[0]
+        ? await pool.query(`${selection} WHERE q.id=$1::uuid`, [result.rows[0].id])
+        : await pool.query(`${selection} WHERE q.client_request_id=$1::uuid AND q.site_id=$2::uuid`, [clientRequestId, siteId]);
+      if (!created.rows[0]) { json(response, 409, { error: "Cette demande existe déjà pour un autre site." }); return true; }
+      json(response, result.rows[0] ? 201 : 200, { entry: created.rows[0] });
       return true;
     }
 
@@ -125,17 +134,33 @@ export async function handleVisitorQuestionnaireRoutes(request, response, pool, 
       if (!uuidPattern.test(entryMatch[1])) { json(response, 404, { error: "Questionnaire introuvable." }); return true; }
       const body = await readJson(request);
       const data = validateData(body.data);
+      const updateRequestId = text(body.clientRequestId, 36);
+      const expectedUpdatedAt = body.expectedUpdatedAt;
+      if ((updateRequestId && !uuidPattern.test(updateRequestId)) || (expectedUpdatedAt != null && (typeof expectedUpdatedAt !== "string" || !Number.isFinite(Date.parse(expectedUpdatedAt))))) {
+        json(response, 400, { error: "Identifiant ou version de demande invalide." }); return true;
+      }
       const siteId = await resolveSite(pool, account, body.siteId);
+      if (updateRequestId) {
+        const replay = await pool.query(`${selection} WHERE q.update_request_id=$1::uuid AND q.site_id=$2::uuid`, [updateRequestId, siteId]);
+        if (replay.rows[0]) { json(response, 200, { entry: replay.rows[0] }); return true; }
+      }
       const result = await pool.query(
         `UPDATE questionnaire_visiteur
-         SET date_operation=$2::date, donnees=$3::jsonb, modifie_le=CURRENT_TIMESTAMP
-         WHERE id=$1::uuid AND site_id=$4::uuid
-         RETURNING id, donnees AS data, site_id AS "siteId", cree_le AS "createdAt", modifie_le AS "updatedAt", service_poste_id AS "servicePosteId"`,
-        [entryMatch[1], data.date, JSON.stringify(data), siteId],
+         SET date_operation=$2::date, donnees=$3::jsonb, modifie_le=CURRENT_TIMESTAMP, update_request_id=$5::uuid
+         WHERE id=$1::uuid AND site_id=$4::uuid AND deleted_at IS NULL
+           AND ($6::timestamptz IS NULL OR date_trunc('milliseconds', modifie_le)=date_trunc('milliseconds', $6::timestamptz))
+         RETURNING id`,
+        [entryMatch[1], data.date, JSON.stringify(data), siteId, updateRequestId || null, expectedUpdatedAt || null],
       );
-      if (!result.rows[0]) { json(response, 404, { error: "Questionnaire introuvable sur ce site." }); return true; }
-      const site = await pool.query("SELECT nom AS \"siteName\" FROM site WHERE id=$1::uuid", [siteId]);
-      json(response, 200, { entry: { ...result.rows[0], siteName: site.rows[0].siteName } });
+      if (!result.rows[0]) {
+        const current = await pool.query("SELECT deleted_at FROM questionnaire_visiteur WHERE id=$1::uuid AND site_id=$2::uuid", [entryMatch[1], siteId]);
+        json(response, current.rows[0] && !current.rows[0].deleted_at ? 409 : 404, {
+          error: current.rows[0] && !current.rows[0].deleted_at ? "Ce questionnaire a changé depuis son chargement." : "Questionnaire introuvable sur ce site.",
+        });
+        return true;
+      }
+      const updated = await pool.query(`${selection} WHERE q.id=$1::uuid`, [entryMatch[1]]);
+      json(response, 200, { entry: updated.rows[0] });
       return true;
     }
 
@@ -143,11 +168,32 @@ export async function handleVisitorQuestionnaireRoutes(request, response, pool, 
       if (!uuidPattern.test(entryMatch[1])) { json(response, 404, { error: "Questionnaire introuvable." }); return true; }
       const url = new URL(request.url || "/", `http://${request.headers.host || "localhost"}`);
       const siteId = await resolveSite(pool, account, url.searchParams.get("siteId"));
+      const deleteRequestId = text(url.searchParams.get("clientRequestId"), 36);
+      const expectedUpdatedAt = url.searchParams.get("expectedUpdatedAt");
+      if ((deleteRequestId && !uuidPattern.test(deleteRequestId)) || (expectedUpdatedAt && !Number.isFinite(Date.parse(expectedUpdatedAt)))) {
+        json(response, 400, { error: "Identifiant ou version de demande invalide." }); return true;
+      }
+      if (deleteRequestId) {
+        const replay = await pool.query(
+          "SELECT id FROM questionnaire_visiteur WHERE delete_request_id=$1::uuid AND site_id=$2::uuid",
+          [deleteRequestId, siteId],
+        );
+        if (replay.rows[0]) { json(response, 200, { id: replay.rows[0].id, deleted: true }); return true; }
+      }
       const result = await pool.query(
-        "DELETE FROM questionnaire_visiteur WHERE id=$1::uuid AND site_id=$2::uuid RETURNING id",
-        [entryMatch[1], siteId],
+        `UPDATE questionnaire_visiteur SET deleted_at=CURRENT_TIMESTAMP, modifie_le=CURRENT_TIMESTAMP, delete_request_id=$3::uuid
+         WHERE id=$1::uuid AND site_id=$2::uuid AND deleted_at IS NULL
+           AND ($4::timestamptz IS NULL OR date_trunc('milliseconds', modifie_le)=date_trunc('milliseconds', $4::timestamptz))
+         RETURNING id`,
+        [entryMatch[1], siteId, deleteRequestId || null, expectedUpdatedAt || null],
       );
-      if (!result.rows[0]) { json(response, 404, { error: "Questionnaire introuvable sur ce site." }); return true; }
+      if (!result.rows[0]) {
+        const current = await pool.query("SELECT deleted_at FROM questionnaire_visiteur WHERE id=$1::uuid AND site_id=$2::uuid", [entryMatch[1], siteId]);
+        json(response, current.rows[0] && !current.rows[0].deleted_at ? 409 : 404, {
+          error: current.rows[0] && !current.rows[0].deleted_at ? "Ce questionnaire a changé depuis son chargement." : "Questionnaire introuvable sur ce site.",
+        });
+        return true;
+      }
       json(response, 200, { id: result.rows[0].id, deleted: true });
       return true;
     }

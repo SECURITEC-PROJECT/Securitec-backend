@@ -77,6 +77,7 @@ const selectEntry = `
          c.temoin_nom AS "temoinNom", c.temoin_matricule AS "temoinMatricule",
          c.temoin_fonction AS "temoinFonction", c.temoin2_nom AS "temoin2Nom",
          c.temoin2_matricule AS "temoin2Matricule", c.temoin2_fonction AS "temoin2Fonction",
+         c.modifie_le AS "updatedAt",
          c.site_id AS "siteId", s.nom AS "siteName", c.annule_le AS "annuleLe",
          c.service_poste_id AS "servicePosteId"
   FROM controle_alcoolemie c
@@ -104,7 +105,18 @@ export async function createAlcoholCheck(request, response, pool, userId) {
   try {
     const body = await readJson(request);
     const entry = validate(body);
+    const clientRequestId = cleanText(body.clientRequestId, 36);
+    if (clientRequestId && !uuidPattern.test(clientRequestId)) {
+      return json(response, 400, { error: "Identifiant de demande invalide." });
+    }
     const siteId = await getSiteId(pool, userId, body.siteId);
+    if (clientRequestId) {
+      const replay = await pool.query(
+        `${selectEntry} WHERE c.client_request_id=$1::uuid AND c.site_id=$2::uuid`,
+        [clientRequestId, siteId],
+      );
+      if (replay.rows[0]) return json(response, 200, { entry: replay.rows[0] });
+    }
     const servicePosteId = await resolveServicePosteId(pool, siteId, body.priseDePosteId, body.posteId || null);
     const result = await pool.query(
       `INSERT INTO controle_alcoolemie
@@ -112,19 +124,20 @@ export async function createAlcoholCheck(request, response, pool, userId) {
           appartenance, demandeur, type_demande, taux_mesure, civilite, type_appareil,
           testeur_nom, testeur_matricule, testeur_fonction,
           temoin_nom, temoin_matricule, temoin_fonction,
-          temoin2_nom, temoin2_matricule, temoin2_fonction, site_id, utilisateur_id, service_poste_id)
+          temoin2_nom, temoin2_matricule, temoin2_fonction, site_id, utilisateur_id, service_poste_id, client_request_id)
        VALUES ($1::date, $2::time, $3, $4, $5, $6, 'STAR', $7, 'Test ordinaire (Entrée/Sortie)',
-          $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20::uuid, $21::uuid, $22::uuid)
+          $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20::uuid, $21::uuid, $22::uuid, $23::uuid)
+       ON CONFLICT (client_request_id) DO NOTHING
        RETURNING id`,
       [entry.date, entry.heure, entry.matricule, entry.personne, entry.fonction, entry.resultat,
         entry.demandeur || null, entry.tauxMesure, entry.civilite, entry.typeAppareil, entry.testeurNom, entry.testeurMatricule,
         entry.testeurFonction, entry.temoinNom, entry.temoinMatricule, entry.temoinFonction,
-        entry.temoin2Nom, entry.temoin2Matricule, entry.temoin2Fonction, siteId, userId, servicePosteId],
+        entry.temoin2Nom, entry.temoin2Matricule, entry.temoin2Fonction, siteId, userId, servicePosteId, clientRequestId || null],
     );
-    const created = await pool.query(
-      `${selectEntry} WHERE c.id = $1::uuid`,
-      [result.rows[0].id],
-    );
+    const created = result.rows[0]
+      ? await pool.query(`${selectEntry} WHERE c.id = $1::uuid`, [result.rows[0].id])
+      : await pool.query(`${selectEntry} WHERE c.client_request_id=$1::uuid AND c.site_id=$2::uuid`, [clientRequestId, siteId]);
+    if (!created.rows[0]) return json(response, 409, { error: "Cette demande existe déjà pour un autre site." });
     json(response, 201, { entry: created.rows[0] });
   } catch (error) {
     console.error("POST alcohol check failed:", error.code || error.name, error.message || "");
@@ -137,6 +150,12 @@ export async function updateAlcoholCheck(request, response, pool, userId, entryI
     if (!uuidPattern.test(entryId)) return json(response, 404, { error: "Test alcool introuvable." });
     const body = await readJson(request);
     const entry = validate(body);
+    if (body.expectedUpdatedAt != null && (typeof body.expectedUpdatedAt !== "string" || !Number.isFinite(Date.parse(body.expectedUpdatedAt)))) {
+      return json(response, 400, { error: "Version du contrôle invalide." });
+    }
+    const expectedUpdatedAt = typeof body.expectedUpdatedAt === "string" && Number.isFinite(Date.parse(body.expectedUpdatedAt))
+      ? body.expectedUpdatedAt
+      : null;
     const siteId = await getSiteId(pool, userId, body.siteId);
     const result = await pool.query(
       `UPDATE controle_alcoolemie
@@ -145,15 +164,24 @@ export async function updateAlcoholCheck(request, response, pool, userId, entryI
            civilite = $10, type_appareil = $11, testeur_nom = $12, testeur_matricule = $13,
            testeur_fonction = $14, temoin_nom = $15, temoin_matricule = $16,
            temoin_fonction = $17, temoin2_nom = $18, temoin2_matricule = $19,
-           temoin2_fonction = $20, modifie_par = $22::uuid
+           temoin2_fonction = $20, modifie_par = $22::uuid, modifie_le = CURRENT_TIMESTAMP
        WHERE id = $1::uuid AND site_id = $21::uuid AND annule_le IS NULL
+         AND ($23::timestamptz IS NULL OR date_trunc('milliseconds', modifie_le) = date_trunc('milliseconds', $23::timestamptz))
        RETURNING id`,
       [entryId, entry.date, entry.heure, entry.matricule, entry.personne, entry.demandeur || null,
         entry.fonction, entry.resultat, entry.tauxMesure, entry.civilite, entry.typeAppareil, entry.testeurNom,
         entry.testeurMatricule, entry.testeurFonction, entry.temoinNom, entry.temoinMatricule,
-        entry.temoinFonction, entry.temoin2Nom, entry.temoin2Matricule, entry.temoin2Fonction, siteId, userId],
+        entry.temoinFonction, entry.temoin2Nom, entry.temoin2Matricule, entry.temoin2Fonction, siteId, userId, expectedUpdatedAt],
     );
-    if (!result.rows[0]) return json(response, 404, { error: "Test alcool introuvable sur ce site." });
+    if (!result.rows[0]) {
+      const current = await pool.query(
+        "SELECT id FROM controle_alcoolemie WHERE id=$1::uuid AND site_id=$2::uuid AND annule_le IS NULL",
+        [entryId, siteId],
+      );
+      return json(response, current.rows[0] ? 409 : 404, {
+        error: current.rows[0] ? "Ce contrôle a changé depuis son chargement. Rechargez-le avant de le modifier." : "Test alcool introuvable sur ce site.",
+      });
+    }
     const updated = await pool.query(
       `${selectEntry} WHERE c.id = $1::uuid`,
       [entryId],
@@ -170,11 +198,29 @@ export async function deleteAlcoholCheck(request, response, pool, userId, entryI
     if (!uuidPattern.test(entryId)) return json(response, 404, { error: "Test alcool introuvable." });
     const url = new URL(request.url || "/", `http://${request.headers.host || "localhost"}`);
     const siteId = await getSiteId(pool, userId, url.searchParams.get("siteId"));
+    const expectedUpdatedAt = url.searchParams.get("expectedUpdatedAt");
+    if (expectedUpdatedAt && !Number.isFinite(Date.parse(expectedUpdatedAt))) {
+      return json(response, 400, { error: "Version du contrôle invalide." });
+    }
     const result = await pool.query(
-      "UPDATE controle_alcoolemie SET annule_le=CURRENT_TIMESTAMP,annule_par=$3::uuid,modifie_par=$3::uuid WHERE id = $1::uuid AND site_id = $2::uuid AND annule_le IS NULL RETURNING id,annule_le AS \"annuleLe\"",
-      [entryId, siteId, userId],
+      `UPDATE controle_alcoolemie
+       SET annule_le=CURRENT_TIMESTAMP,annule_par=$3::uuid,modifie_par=$3::uuid,modifie_le=CURRENT_TIMESTAMP
+       WHERE id = $1::uuid AND site_id = $2::uuid AND annule_le IS NULL
+         AND ($4::timestamptz IS NULL OR date_trunc('milliseconds', modifie_le) = date_trunc('milliseconds', $4::timestamptz))
+       RETURNING id,annule_le AS "annuleLe"`,
+      [entryId, siteId, userId, expectedUpdatedAt],
     );
-    if (!result.rows[0]) return json(response, 404, { error: "Test alcool introuvable sur ce site." });
+    if (!result.rows[0]) {
+      const current = await pool.query(
+        "SELECT id, annule_le FROM controle_alcoolemie WHERE id=$1::uuid AND site_id=$2::uuid",
+        [entryId, siteId],
+      );
+      return json(response, current.rows[0] && !current.rows[0].annule_le ? 409 : 404, {
+        error: current.rows[0] && !current.rows[0].annule_le
+          ? "Ce contrôle a changé depuis son chargement. Rechargez-le avant de l’annuler."
+          : "Test alcool introuvable sur ce site.",
+      });
+    }
     json(response, 200, { id: result.rows[0].id, deleted: false, cancelled: true, annuleLe: result.rows[0].annuleLe });
   } catch (error) {
     console.error("DELETE alcohol check failed:", error.code || error.name, error.message || "");
