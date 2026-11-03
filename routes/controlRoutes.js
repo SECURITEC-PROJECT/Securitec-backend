@@ -6,6 +6,7 @@ import {
   getKeyEmployees,
   getKeyTracking,
   getKeyTypes,
+  markKeyTrackingNotReturned,
   returnKeyTracking,
 } from "../controllers/accessControlController.js";
 import { getBadges, scanBadge, updateBadgeStatus } from "../controllers/badgeController.js";
@@ -54,7 +55,7 @@ export async function handleControlRoutes(request, response, pool, pathname, jwt
 
   if (pathname.startsWith(`${apiPrefix}/access-control/key-`) ||
       pathname === `${apiPrefix}/access-control/keys` ||
-      /^\/api\/access-control\/keys\/[^/]+\/return$/.test(pathname)) {
+      /^\/api\/access-control\/keys\/[^/]+\/(?:return|not-returned)$/.test(pathname)) {
     const user = getRequestUser(request, jwtSecret);
     if (!user) {
       json(response, 401, { error: "Connectez-vous pour accéder au suivi des clés." });
@@ -80,6 +81,11 @@ export async function handleControlRoutes(request, response, pool, pathname, jwt
     const returnMatch = /^\/api\/access-control\/keys\/([^/]+)\/return$/.exec(pathname);
     if (returnMatch && method === "PATCH") {
       await returnKeyTracking(request, response, pool, user.id, returnMatch[1]);
+      return true;
+    }
+    const notReturnedMatch = /^\/api\/access-control\/keys\/([^/]+)\/not-returned$/.exec(pathname);
+    if (notReturnedMatch && method === "PATCH") {
+      await markKeyTrackingNotReturned(request, response, pool, user.id, notReturnedMatch[1]);
       return true;
     }
     json(response, 405, { error: "Méthode non autorisée." });

@@ -560,6 +560,7 @@ model SuiviCle {
   nombreCles                        Int?        @map("nombre_cles")
   heureSortie                       DateTime?   @map("heure_sortie") @db.Time(0)
   heureRetour                       DateTime?   @map("heure_retour") @db.Time(0)
+  nonRendu                           Boolean     @default(false) @map("non_rendu")
   dateRetour                        DateTime?   @map("date_retour") @db.Date
   nomRetourneur                     String?     @map("nom_retourneur") @db.VarChar(100)
   prenomRetourneur                  String?     @map("prenom_retourneur") @db.VarChar(100)

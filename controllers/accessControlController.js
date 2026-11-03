@@ -40,6 +40,7 @@ export async function getKeyTracking(request, response, pool, userId) {
               k.nombre_cles AS quantity,
               to_char(k.heure_sortie, 'HH24:MI') AS "departureTime",
               to_char(k.heure_retour, 'HH24:MI') AS "returnTime",
+              k.non_rendu AS "notReturned",
               k.date_retour::text AS "returnDate",
               k.nom_retourneur AS "returnerLastName", k.prenom_retourneur AS "returnerFirstName",
               k.matricule_retourneur AS "returnerMatricule",
@@ -75,17 +76,15 @@ export async function createKeyTracking(request, response, pool, userId) {
     const siteId = await getUserSiteId(pool, userId, body.siteId);
     const servicePosteId = await resolveServicePosteId(pool, siteId, body.priseDePosteId, body.posteId || null);
     const employee = await pool.query(
-      `SELECT e.nom, e.prenom, e.matricule, e.role
+      `SELECT e.nom, e.prenom, e.matricule
        FROM employe e
-       JOIN cle_habilitation ch ON LOWER(TRIM(ch.role_autorise)) = LOWER(TRIM(e.role))
        WHERE e.id=$1::uuid AND e.actif=true
          AND (e.site_id=$2::uuid OR e.site_id IS NULL)
-         AND LOWER(TRIM(ch.trousse_cle))=LOWER(TRIM($3))
        LIMIT 1`,
-      [employeeId, siteId, keyType],
+      [employeeId, siteId],
     );
     if (!employee.rows[0]) {
-      return json(response, 400, { error: "Cet employé n’est pas habilité à prendre ce type de clé sur ce site." });
+      return json(response, 400, { error: "Cet employé n’est pas actif ou n’appartient pas à ce site." });
     }
     const result = await pool.query(
       `INSERT INTO suivi_cle
@@ -98,7 +97,7 @@ export async function createKeyTracking(request, response, pool, userId) {
     );
     json(response, 201, { entry: {
       id: result.rows[0].id, date, lastName: employee.rows[0].nom, firstName: employee.rows[0].prenom,
-      matricule: employee.rows[0].matricule, keyType, quantity, departureTime, returnTime: null,
+      matricule: employee.rows[0].matricule, keyType, quantity, departureTime, returnTime: null, notReturned: false,
       returnDate: null, returnerLastName: null, returnerFirstName: null, returnerMatricule: null,
       lieu, observations, createdAt: result.rows[0].createdAt,
       servicePosteId: result.rows[0].servicePosteId,
@@ -162,7 +161,8 @@ export async function returnKeyTracking(request, response, pool, userId, entryId
     const movement = await pool.query(
       `SELECT nom_personne AS "lastName", prenom_personne AS "firstName", matricule_personne AS matricule
        FROM suivi_cle
-       WHERE id::text=$1 AND site_id=$2::uuid AND type_cle IS NOT NULL AND heure_retour IS NULL`,
+       WHERE id::text=$1 AND site_id=$2::uuid AND type_cle IS NOT NULL
+         AND heure_retour IS NULL AND non_rendu = false`,
       [entryId, siteId],
     );
     if (!movement.rows[0]) {
@@ -171,7 +171,7 @@ export async function returnKeyTracking(request, response, pool, userId, entryId
         [entryId, siteId],
       );
       return json(response, existing.rows[0] ? 409 : 404, {
-        error: existing.rows[0] ? "Le retour de cette clé est déjà enregistré." : "Mouvement de clé introuvable.",
+        error: existing.rows[0] ? "Ce mouvement est déjà clôturé ou signalé comme non rendu." : "Mouvement de clé introuvable.",
       });
     }
     let returner = movement.rows[0];
@@ -192,7 +192,7 @@ export async function returnKeyTracking(request, response, pool, userId, entryId
        SET heure_retour = $1::time, date_retour=$2::date,
            nom_retourneur=$3, prenom_retourneur=$4, matricule_retourneur=$5
        WHERE id::text = $6 AND site_id = $7::uuid
-         AND type_cle IS NOT NULL AND heure_retour IS NULL
+         AND type_cle IS NOT NULL AND heure_retour IS NULL AND non_rendu = false
        RETURNING id, date_retour::text AS "returnDate",
                  to_char(heure_retour, 'HH24:MI') AS "returnTime",
                  nom_retourneur AS "returnerLastName", prenom_retourneur AS "returnerFirstName",
@@ -205,13 +205,45 @@ export async function returnKeyTracking(request, response, pool, userId, entryId
         [entryId, siteId],
       );
       return json(response, existing.rows[0] ? 409 : 404, {
-        error: existing.rows[0] ? "Le retour de cette clé est déjà enregistré." : "Mouvement de clé introuvable.",
+        error: existing.rows[0] ? "Ce mouvement est déjà clôturé ou signalé comme non rendu." : "Mouvement de clé introuvable.",
       });
     }
     json(response, 200, { entry: result.rows[0] });
   } catch (error) {
     console.error("PATCH key return failed:", error.code || error.name, error.message || "");
     json(response, error.status || 500, { error: error.status ? error.message : "Impossible d’enregistrer le retour de la clé." });
+  }
+}
+
+export async function markKeyTrackingNotReturned(request, response, pool, userId, entryId) {
+  try {
+    if (!/^\d+$/.test(entryId) && !uuidPattern.test(entryId)) {
+      return json(response, 400, { error: "Mouvement de clé invalide." });
+    }
+    const body = await readJson(request);
+    const observations = cleanText(body.observations, 20000) || "Clés non rendu";
+    const siteId = await getUserSiteId(pool, userId, body.siteId);
+    const result = await pool.query(
+      `UPDATE suivi_cle
+       SET observations = $1, non_rendu = true
+       WHERE id::text = $2 AND site_id = $3::uuid
+         AND type_cle IS NOT NULL AND heure_retour IS NULL AND non_rendu = false
+       RETURNING id, observations, non_rendu AS "notReturned"`,
+      [observations || null, entryId, siteId],
+    );
+    if (!result.rows[0]) {
+      const existing = await pool.query(
+        "SELECT heure_retour FROM suivi_cle WHERE id::text=$1 AND site_id=$2::uuid AND type_cle IS NOT NULL",
+        [entryId, siteId],
+      );
+      return json(response, existing.rows[0] ? 409 : 404, {
+        error: existing.rows[0] ? "Ce mouvement ne peut plus être marqué comme non rendu." : "Mouvement de clé introuvable.",
+      });
+    }
+    json(response, 200, { entry: result.rows[0] });
+  } catch (error) {
+    console.error("PATCH key not-returned failed:", error.code || error.name, error.message || "");
+    json(response, error.status || 500, { error: error.status ? error.message : "Impossible d’enregistrer le statut de la clé." });
   }
 }
 
