@@ -85,15 +85,15 @@ SELECT
   COALESCE((
     SELECT json_agg(json_build_object('service', c.service, 'postes', c.postes) ORDER BY c.source_order)
     FROM (
-      SELECT 'jour' AS service, data AS postes, 1 AS source_order
+      SELECT 'jour' AS service, data AS postes, 0 AS source_order
       FROM pointage_aps_jour
       WHERE site_id = $1::uuid AND date_pointage = $3::date
       UNION ALL
-      SELECT 'nuit' AS service, data AS postes, 1 AS source_order
+      SELECT 'nuit' AS service, data AS postes, 0 AS source_order
       FROM pointage_aps_nuit
       WHERE site_id = $1::uuid AND date_pointage = $3::date
       UNION ALL
-      SELECT service, postes, 0 AS source_order
+      SELECT service, postes, 1 AS source_order
       FROM configuration_postes_aps
       WHERE site_id = $1::uuid
     ) c
@@ -127,7 +127,8 @@ SELECT
       'reintegrationApresMidi', k.reintegration_apres_midi,
       'responsableReintegrationApresMidi', k.responsable_reintegration_apres_midi,
       'observations', k.observations,
-      'personneRetour', k.personne_retour
+      'personneRetour', k.personne_retour,
+      'matriculeRetour', k.matricule_retour
     ) ORDER BY k.heure_sortie NULLS LAST, k.created_at)
     FROM (
       SELECT sc.id, sc.date_suivi,
@@ -159,11 +160,19 @@ SELECT
              to_char(sc.reintegration_apres_midi, 'HH24:MI') AS reintegration_apres_midi,
              COALESCE(sc.responsable_reintegration_apres_midi, '') AS responsable_reintegration_apres_midi,
              COALESCE(sc.observations, '') AS observations,
-             COALESCE(r.personne_habilitee, '') AS personne_retour,
+             COALESCE(
+               NULLIF(TRIM(CONCAT_WS(' ', NULLIF(r.nom_retourneur, ''), NULLIF(r.prenom_retourneur, ''))), ''),
+               NULLIF(r.personne_habilitee, ''),
+               NULLIF(TRIM(CONCAT_WS(' ', NULLIF(r.nom_personne, ''), NULLIF(r.prenom_personne, ''))), ''),
+               ''
+             ) AS personne_retour,
+             COALESCE(r.matricule_retourneur, r.matricule_personne, '') AS matricule_retour,
              COALESCE(sc.cree_le, sc.created_at) AS created_at
       FROM suivi_cle sc
       LEFT JOIN LATERAL (
-        SELECT r1.personne_habilitee, r1.heure, r1.created_at
+        SELECT r1.personne_habilitee, r1.heure, r1.created_at,
+               r1.nom_retourneur, r1.prenom_retourneur, r1.matricule_retourneur,
+               r1.nom_personne, r1.prenom_personne, r1.matricule_personne
         FROM suivi_cle r1
         WHERE r1.action = 'Réintégration' AND r1.perception_id = sc.id
         ORDER BY r1.created_at
@@ -262,6 +271,20 @@ SELECT
     ) v
   ), '[]'::json) AS divers_signalements,
 
+  -- Mouvements APS du site et de la date sélectionnés
+  COALESCE((
+    SELECT json_agg(m ORDER BY m.heure_entree, m.id)
+    FROM (
+      SELECT id,
+             to_char(heure_entree, 'HH24:MI') AS heure_entree,
+             mouvement,
+             observation,
+             to_char(heure_sortie, 'HH24:MI') AS heure_sortie
+      FROM mouvement_aps_evenement
+      WHERE site_id = $1::uuid AND date_operation = $3::date
+    ) m
+  ), '[]'::json) AS mouvements_aps,
+
   -- Violations de procédure et divers = main courante
   COALESCE((
     SELECT json_agg(m ORDER BY m.heure) FROM (
@@ -290,6 +313,12 @@ export async function generateCrj({ prestataireId, siteId, date }, pool) {
 
   const siteType = d.site.type_site === "AGENCE" ? "Agence" : "Usine";
   const isMorning = (time) => /^\d{2}:\d{2}$/.test(txt(time)) && txt(time) < "12:00";
+  const withMatricule = (name, matricule) => {
+    const personName = txt(name);
+    const personMatricule = txt(matricule);
+    if (!personName || !personMatricule || personName.includes(personMatricule)) return personName;
+    return `${personName} (${personMatricule})`;
+  };
   const cles = (d.cles ?? []).map((key) => {
     const heurePerceptionMatin = isMorning(key.heureSortie) ? txt(key.heureSortie) : "";
     const heurePerceptionApresMidi = key.heureSortie && !isMorning(key.heureSortie) ? txt(key.heureSortie) : "";
@@ -298,13 +327,25 @@ export async function generateCrj({ prestataireId, siteId, date }, pool) {
     return {
       lieu: txt(key.lieu),
       perceptionMatin: txt(key.perceptionMatin) || heurePerceptionMatin,
-      responsablePerceptionMatin: txt(key.responsablePerceptionMatin) || (heurePerceptionMatin ? txt(key.personne) : ""),
+      responsablePerceptionMatin: withMatricule(
+        txt(key.responsablePerceptionMatin) || (heurePerceptionMatin ? txt(key.personne) : ""),
+        key.matricule,
+      ),
       reintegrationMatin: txt(key.reintegrationMatin) || heureReintegrationMatin,
-      responsableReintegrationMatin: txt(key.responsableReintegrationMatin) || (heureReintegrationMatin ? txt(key.personneRetour) || txt(key.personne) : ""),
+      responsableReintegrationMatin: withMatricule(
+        txt(key.responsableReintegrationMatin) || (heureReintegrationMatin ? txt(key.personneRetour) || txt(key.personne) : ""),
+        key.matriculeRetour || key.matricule,
+      ),
       perceptionApresMidi: txt(key.perceptionApresMidi) || heurePerceptionApresMidi,
-      responsablePerceptionApresMidi: txt(key.responsablePerceptionApresMidi) || (heurePerceptionApresMidi ? txt(key.personne) : ""),
+      responsablePerceptionApresMidi: withMatricule(
+        txt(key.responsablePerceptionApresMidi) || (heurePerceptionApresMidi ? txt(key.personne) : ""),
+        key.matricule,
+      ),
       reintegrationApresMidi: txt(key.reintegrationApresMidi) || heureReintegrationApresMidi,
-      responsableReintegrationApresMidi: txt(key.responsableReintegrationApresMidi) || (heureReintegrationApresMidi ? txt(key.personneRetour) || txt(key.personne) : ""),
+      responsableReintegrationApresMidi: withMatricule(
+        txt(key.responsableReintegrationApresMidi) || (heureReintegrationApresMidi ? txt(key.personneRetour) || txt(key.personne) : ""),
+        key.matriculeRetour || key.matricule,
+      ),
       observations: txt(key.observations),
     };
   });
@@ -315,7 +356,13 @@ export async function generateCrj({ prestataireId, siteId, date }, pool) {
   const ordrePostes = [];
   const aliasPostesJour = {
     GARAGE: "EX GARAGE",
+    PG2: "PG2",
+    PGII: "PG2",
     PGIT: "PG2",
+    POSTEGARDEII: "PG2",
+    POSTEDEGARDEII: "PG2",
+    POSTEGARDE2: "PG2",
+    POSTEDEGARDE2: "PG2",
     FITAA: "FITAVA",
     EXTERIEUR: "PARKING EXTERIEUR",
   };
@@ -469,6 +516,12 @@ export async function generateCrj({ prestataireId, siteId, date }, pool) {
     faits: txt(item.description_faits),
     mesures: txt(item.mesures_prises),
   }));
+  const mouvementsAps = (d.mouvements_aps ?? []).map((movement) => ({
+    heureEntree: txt(movement.heure_entree),
+    mouvement: txt(movement.mouvement),
+    observation: txt(movement.observation),
+    heureSortie: txt(movement.heure_sortie),
+  }));
   for (const m of d.main_courante) {
     const estViolation = txt(m.nature_violation) !== "" || /^VIOLATION/.test(norm(m.type_entree));
     if (estViolation) {
@@ -507,5 +560,6 @@ export async function generateCrj({ prestataireId, siteId, date }, pool) {
     anomalies,
     violations,
     divers,
+    mouvementsAps,
   };
 }
