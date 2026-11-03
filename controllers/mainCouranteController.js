@@ -5,6 +5,15 @@ const entryTypes = new Set(["STANDARD", "VIOLATION", "DIVERS"]);
 const severities = new Set(["normal", "important", "grave", "urgent"]);
 const timePattern = /^(?:[01]\d|2[0-3]):[0-5]\d$/;
 const cleanText = (value, max = 255) => typeof value === "string" ? value.trim().slice(0, max) : "";
+const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+const selectCreatedEntry = `
+  SELECT m.id, m.type_entree AS "typeEntree", m.category, m.severity, m.zone, m.people,
+         m.statut_auteur AS "statutAuteur", m.nature_violation AS "natureViolation",
+         m.description, m.mesures_prises AS "mesuresPrises", to_char(m.heure, 'HH24:MI') AS heure,
+         m.cree_le AS "createdAt", m.site_id AS "siteId", s.nom AS "siteName",
+         m.prise_de_poste_id AS "priseDePosteId", m.service_poste_id AS "servicePosteId"
+  FROM main_courante m JOIN site s ON s.id=m.site_id`;
 
 async function getAccount(pool, userId) {
   const result = await pool.query("SELECT id, role, site_id FROM utilisateur WHERE id=$1::uuid LIMIT 1", [userId]);
@@ -54,6 +63,10 @@ export async function createMainCouranteEntry(request, response, pool, userId) {
   const client = await pool.connect();
   try {
     const body = await readJson(request);
+    const clientRequestId = cleanText(body.clientRequestId, 36);
+    if (clientRequestId && !uuidPattern.test(clientRequestId)) {
+      return json(response, 400, { error: "Identifiant de demande invalide." });
+    }
     const typeEntree = entryTypes.has(body.typeEntree) ? body.typeEntree : "";
     const category = cleanText(body.category, 80);
     const severity = severities.has(body.severity) ? body.severity : "";
@@ -79,16 +92,39 @@ export async function createMainCouranteEntry(request, response, pool, userId) {
     await client.query("BEGIN");
     const account = await getAccount(client, userId);
     const siteId = await resolveSite(client, account, body.siteId);
+    if (clientRequestId) {
+      const replay = await client.query(
+        `${selectCreatedEntry} WHERE m.client_request_id=$1::uuid AND m.site_id=$2::uuid`,
+        [clientRequestId, siteId],
+      );
+      if (replay.rows[0]) {
+        await client.query("COMMIT");
+        return json(response, 200, { entry: replay.rows[0] });
+      }
+    }
     const priseDePosteId = await resolvePriseDePosteId(client, siteId, body.priseDePosteId, body.posteId || null);
     const result = await client.query(
       `INSERT INTO main_courante
          (type_entree, category, severity, zone, people, statut_auteur, nature_violation,
-          description, mesures_prises, heure, site_id, utilisateur_id, prise_de_poste_id)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::time, $11::uuid, $12::uuid, $13::uuid)
+          description, mesures_prises, heure, site_id, utilisateur_id, prise_de_poste_id, client_request_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::time, $11::uuid, $12::uuid, $13::uuid, $14::uuid)
+       ON CONFLICT (client_request_id) DO NOTHING
        RETURNING id, service_poste_id AS "servicePosteId", cree_le AS "createdAt", to_char(heure, 'HH24:MI') AS heure`,
       [typeEntree, category, severity, values.zone, values.people, values.statutAuteur, values.natureViolation,
-        description, values.mesuresPrises, heure, siteId, userId, priseDePosteId],
+        description, values.mesuresPrises, heure, siteId, userId, priseDePosteId, clientRequestId || null],
     );
+    if (!result.rows[0]) {
+      const replay = await client.query(
+        `${selectCreatedEntry} WHERE m.client_request_id=$1::uuid AND m.site_id=$2::uuid`,
+        [clientRequestId, siteId],
+      );
+      if (!replay.rows[0]) {
+        await client.query("ROLLBACK");
+        return json(response, 409, { error: "Cette demande existe déjà pour un autre site." });
+      }
+      await client.query("COMMIT");
+      return json(response, 200, { entry: replay.rows[0] });
+    }
     const siteResult = await client.query("SELECT nom AS \"siteName\" FROM site WHERE id=$1::uuid", [siteId]);
     await client.query("COMMIT");
     json(response, 201, { entry: { id: result.rows[0].id, createdAt: result.rows[0].createdAt, heure: result.rows[0].heure,

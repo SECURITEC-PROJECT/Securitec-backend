@@ -2,6 +2,7 @@ import { json, readJson } from "../utils/helpers.js";
 import { resolveServicePosteId } from "../utils/priseDePoste.js";
 
 const timePattern = /^(?:[01]\d|2[0-3]):[0-5]\d$/;
+const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const statuses = new Set(["Conforme", "Non Conforme", "RAS"]);
 const cleanText = (value, max = 255) => typeof value === "string" ? value.trim().slice(0, max) : "";
 
@@ -55,10 +56,11 @@ export async function createVigilancePoints(request, response, pool, userId) {
       const elementVerifie = cleanText(item?.elementVerifie, 255);
       const statut = cleanText(item?.statut, 40);
       const heure = cleanText(item?.heure, 5);
-      if (!typePoint || !elementVerifie || !statuses.has(statut) || !timePattern.test(heure)) {
+      const clientRequestId = cleanText(item?.clientRequestId, 36);
+      if (!typePoint || !elementVerifie || !statuses.has(statut) || !timePattern.test(heure) || (clientRequestId && !uuidPattern.test(clientRequestId))) {
         throw Object.assign(new Error("Un point contient des champs invalides."), { status: 400 });
       }
-      return { typePoint, elementVerifie, statut, heure, observations: cleanText(item?.observations, 20000) || null, agentNom: cleanText(item?.agentNom) };
+      return { typePoint, elementVerifie, statut, heure, clientRequestId: clientRequestId || null, observations: cleanText(item?.observations, 20000) || null, agentNom: cleanText(item?.agentNom) };
     });
     if (entries.some((entry) => !entry.agentNom)) return json(response, 400, { error: "Le nom de l’agent contrôleur est obligatoire." });
 
@@ -69,14 +71,27 @@ export async function createVigilancePoints(request, response, pool, userId) {
     const created = [];
     for (const entry of entries) {
       const result = await client.query(
-        `INSERT INTO point_vigilance (type_point, element_verifie, statut, observations, heure, agent_nom, site_id, utilisateur_id, service_poste_id)
-         VALUES ($1, $2, $3, $4, $5::time, $6, $7::uuid, $8::uuid, $9::uuid)
+        `INSERT INTO point_vigilance (type_point, element_verifie, statut, observations, heure, agent_nom, site_id, utilisateur_id, service_poste_id, client_request_id)
+         VALUES ($1, $2, $3, $4, $5::time, $6, $7::uuid, $8::uuid, $9::uuid, $10::uuid)
+         ON CONFLICT (client_request_id) DO NOTHING
          RETURNING id, type_point AS "typePoint", element_verifie AS "elementVerifie", statut, observations,
                    to_char(heure, 'HH24:MI') AS heure, agent_nom AS "agentNom", cree_le AS "createdAt",
                    service_poste_id AS "servicePosteId"`,
-        [entry.typePoint, entry.elementVerifie, entry.statut, entry.observations, entry.heure, entry.agentNom, siteId, userId, servicePosteId],
+        [entry.typePoint, entry.elementVerifie, entry.statut, entry.observations, entry.heure, entry.agentNom, siteId, userId, servicePosteId, entry.clientRequestId],
       );
-      created.push({ ...result.rows[0], siteId });
+      if (result.rows[0]) {
+        created.push({ ...result.rows[0], siteId });
+      } else {
+        const replay = await client.query(
+          `SELECT id, type_point AS "typePoint", element_verifie AS "elementVerifie", statut, observations,
+                  to_char(heure, 'HH24:MI') AS heure, agent_nom AS "agentNom", cree_le AS "createdAt",
+                  service_poste_id AS "servicePosteId", site_id AS "siteId"
+           FROM point_vigilance WHERE client_request_id=$1::uuid AND site_id=$2::uuid`,
+          [entry.clientRequestId, siteId],
+        );
+        if (!replay.rows[0]) throw Object.assign(new Error("Une demande existe déjà pour un autre site."), { status: 409 });
+        created.push(replay.rows[0]);
+      }
     }
     await client.query("COMMIT");
     json(response, 201, { entries: created });

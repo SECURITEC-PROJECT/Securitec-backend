@@ -574,6 +574,9 @@ model SuiviCle {
   reintegrationApresMidi            DateTime?   @map("reintegration_apres_midi") @db.Time(0)
   responsableReintegrationApresMidi String?     @map("responsable_reintegration_apres_midi") @db.VarChar(255)
   observations                      String?     @db.Text
+  clientRequestId                   String?     @unique @map("client_request_id") @db.Uuid
+  returnRequestId                   String?     @unique @map("return_request_id") @db.Uuid
+  notReturnedRequestId              String?     @unique @map("not_returned_request_id") @db.Uuid
   siteId                            String?     @map("site_id") @db.Uuid
   utilisateurId                     String?     @map("utilisateur_id") @db.Uuid
   servicePosteId                    String?     @map("service_poste_id") @db.Uuid
@@ -610,6 +613,7 @@ model ControleAlcoolemie {
   temoin2Nom    String?     @map("temoin2_nom") @db.VarChar(255)
   temoin2Matricule String?  @map("temoin2_matricule") @db.VarChar(100)
   temoin2Fonction String?   @map("temoin2_fonction") @db.VarChar(100)
+  clientRequestId String?   @unique @map("client_request_id") @db.Uuid
   siteId        String      @map("site_id") @db.Uuid
   utilisateurId String      @map("utilisateur_id") @db.Uuid
   servicePosteId String?    @map("service_poste_id") @db.Uuid
@@ -810,6 +814,11 @@ model MouvementVelo {
   annuleLe      DateTime?   @map("annule_le") @db.Timestamptz(6)
   annulePar     String?     @map("annule_par") @db.Uuid
   modifiePar    String?     @map("modifie_par") @db.Uuid
+  updatedAt     DateTime    @default(now()) @map("modifie_le") @db.Timestamptz(6)
+  clientRequestId String?   @unique @map("client_request_id") @db.Uuid
+  updateRequestId String?   @unique @map("update_request_id") @db.Uuid
+  exitRequestId String?     @unique @map("exit_request_id") @db.Uuid
+  deleteRequestId String?   @unique @map("delete_request_id") @db.Uuid
   site          Site        @relation(fields: [siteId], references: [id], onDelete: Restrict, map: "fk_mouvement_velo_site")
   utilisateur   Utilisateur @relation(fields: [utilisateurId], references: [id], onDelete: Restrict, map: "fk_mouvement_velo_utilisateur")
   servicePoste  ServicePoste? @relation(fields: [servicePosteId], references: [id], onDelete: SetNull, map: "fk_mouvement_velo_service_poste")
@@ -833,6 +842,11 @@ model MouvementMoto {
   annuleLe      DateTime?   @map("annule_le") @db.Timestamptz(6)
   annulePar     String?     @map("annule_par") @db.Uuid
   modifiePar    String?     @map("modifie_par") @db.Uuid
+  updatedAt     DateTime    @default(now()) @map("modifie_le") @db.Timestamptz(6)
+  clientRequestId String?   @unique @map("client_request_id") @db.Uuid
+  updateRequestId String?   @unique @map("update_request_id") @db.Uuid
+  exitRequestId String?     @unique @map("exit_request_id") @db.Uuid
+  deleteRequestId String?   @unique @map("delete_request_id") @db.Uuid
   site          Site        @relation(fields: [siteId], references: [id], onDelete: Restrict, map: "fk_mouvement_moto_site")
   utilisateur   Utilisateur @relation(fields: [utilisateurId], references: [id], onDelete: Restrict, map: "fk_mouvement_moto_utilisateur")
   servicePoste  ServicePoste? @relation(fields: [servicePosteId], references: [id], onDelete: SetNull, map: "fk_mouvement_moto_service_poste")
@@ -1010,6 +1024,7 @@ model PointVigilance {
   observations   String?     @db.Text
   heure          DateTime    @db.Time(0)
   agentNom       String      @map("agent_nom") @db.VarChar(255)
+  clientRequestId String?    @unique @map("client_request_id") @db.Uuid
   siteId         String      @map("site_id") @db.Uuid
   utilisateurId  String      @map("utilisateur_id") @db.Uuid
   servicePosteId String?     @map("service_poste_id") @db.Uuid
@@ -1039,6 +1054,7 @@ model MainCourante {
   utilisateurId   String      @map("utilisateur_id") @db.Uuid
   priseDePosteId  String?     @map("prise_de_poste_id") @db.Uuid
   servicePosteId  String?     @map("service_poste_id") @db.Uuid
+  clientRequestId String?     @unique @map("client_request_id") @db.Uuid
   site            Site        @relation(fields: [siteId], references: [id], onDelete: Restrict, map: "fk_main_courante_site")
   utilisateur     Utilisateur @relation(fields: [utilisateurId], references: [id], onDelete: Restrict, map: "fk_main_courante_utilisateur")
   servicePoste    ServicePoste? @relation(fields: [servicePosteId], references: [id], onDelete: SetNull, map: "fk_main_courante_service_poste")
@@ -1099,6 +1115,11 @@ model MouvementCourrier {
   annuleLe        DateTime?   @map("annule_le") @db.Timestamptz(6)
   annulePar       String?     @map("annule_par") @db.Uuid
   modifiePar      String?     @map("modifie_par") @db.Uuid
+  updatedAt       DateTime    @default(now()) @map("modifie_le") @db.Timestamptz(6)
+  clientRequestId String?     @unique @map("client_request_id") @db.Uuid
+  updateRequestId String?     @unique @map("update_request_id") @db.Uuid
+  exitRequestId   String?     @unique @map("exit_request_id") @db.Uuid
+  deleteRequestId String?     @unique @map("delete_request_id") @db.Uuid
   site            Site        @relation(fields: [siteId], references: [id], onDelete: Restrict, map: "fk_mouvement_courrier_site")
   utilisateur     Utilisateur @relation(fields: [utilisateurId], references: [id], onDelete: Restrict, map: "fk_mouvement_courrier_utilisateur")
   servicePoste    ServicePoste? @relation(fields: [servicePosteId], references: [id], onDelete: SetNull, map: "fk_mouvement_courrier_service_poste")
@@ -1171,6 +1192,10 @@ model QuestionnaireVisiteur {
   siteId        String      @map("site_id") @db.Uuid
   utilisateurId String      @map("utilisateur_id") @db.Uuid
   servicePosteId String?     @map("service_poste_id") @db.Uuid
+  deletedAt     DateTime?   @map("deleted_at") @db.Timestamptz(6)
+  clientRequestId String?   @unique @map("client_request_id") @db.Uuid
+  updateRequestId String?   @unique @map("update_request_id") @db.Uuid
+  deleteRequestId String?   @unique @map("delete_request_id") @db.Uuid
   site          Site        @relation(fields: [siteId], references: [id], onDelete: Restrict, map: "fk_questionnaire_visiteur_site")
   utilisateur   Utilisateur @relation(fields: [utilisateurId], references: [id], onDelete: Restrict, map: "fk_questionnaire_visiteur_utilisateur")
   servicePoste  ServicePoste? @relation(fields: [servicePosteId], references: [id], onDelete: SetNull, map: "fk_questionnaire_visiteur_service_poste")

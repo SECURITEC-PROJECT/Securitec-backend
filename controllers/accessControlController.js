@@ -65,15 +65,32 @@ export async function createKeyTracking(request, response, pool, userId) {
     const date = cleanText(body.date, 10);
     const employeeId = cleanText(body.employeeId, 36);
     const keyType = cleanText(body.keyType, 100);
+    const clientRequestId = cleanText(body.clientRequestId, 36);
     const departureTime = cleanText(body.departureTime, 5);
     const lieu = cleanText(body.lieu, 255);
     const observations = cleanText(body.observations, 20000);
     const quantity = Number(body.quantity);
-    if (!validDate(date) || !uuidPattern.test(employeeId) || !keyType ||
+    if (!validDate(date) || !uuidPattern.test(employeeId) || (clientRequestId && !uuidPattern.test(clientRequestId)) || !keyType ||
         !timePattern.test(departureTime) || !lieu || !Number.isInteger(quantity) || quantity < 1 || quantity > 10000) {
       return json(response, 400, { error: "Vérifiez la date, l’employé, le type de clé, le lieu, la quantité et l’heure de sortie." });
     }
     const siteId = await getUserSiteId(pool, userId, body.siteId);
+    if (clientRequestId) {
+      const existing = await pool.query(
+        `SELECT id, date_suivi::text AS date, nom_personne AS "lastName", prenom_personne AS "firstName",
+                matricule_personne AS matricule, type_cle AS "keyType", nombre_cles AS quantity,
+                to_char(heure_sortie, 'HH24:MI') AS "departureTime", lieu, observations,
+                cree_le AS "createdAt", service_poste_id AS "servicePosteId"
+         FROM suivi_cle WHERE client_request_id=$1::uuid AND site_id=$2::uuid`,
+        [clientRequestId, siteId],
+      );
+      if (existing.rows[0]) {
+        return json(response, 200, { entry: {
+          ...existing.rows[0], returnTime: null, notReturned: false,
+          returnDate: null, returnerLastName: null, returnerFirstName: null, returnerMatricule: null,
+        } });
+      }
+    }
     const servicePosteId = await resolveServicePosteId(pool, siteId, body.priseDePosteId, body.posteId || null);
     const employee = await pool.query(
       `SELECT e.nom, e.prenom, e.matricule
@@ -89,12 +106,28 @@ export async function createKeyTracking(request, response, pool, userId) {
     const result = await pool.query(
       `INSERT INTO suivi_cle
          (date_suivi, matricule_personne, nom_personne, prenom_personne,
-         type_cle, nombre_cles, heure_sortie, lieu, observations, site_id, utilisateur_id, service_poste_id)
-      VALUES ($1::date, $2, $3, $4, $5, $6, $7::time, $8, $9, $10::uuid, $11::uuid, $12::uuid)
+         type_cle, nombre_cles, heure_sortie, lieu, observations, client_request_id, site_id, utilisateur_id, service_poste_id)
+      VALUES ($1::date, $2, $3, $4, $5, $6, $7::time, $8, $9, $10::uuid, $11::uuid, $12::uuid, $13::uuid)
+      ON CONFLICT (client_request_id) DO NOTHING
        RETURNING id, cree_le AS "createdAt", service_poste_id AS "servicePosteId"`,
       [date, employee.rows[0].matricule, employee.rows[0].nom, employee.rows[0].prenom,
-       keyType, quantity, departureTime, lieu, observations || null, siteId, userId, servicePosteId],
+       keyType, quantity, departureTime, lieu, observations || null, clientRequestId || null, siteId, userId, servicePosteId],
     );
+    if (!result.rows[0] && clientRequestId) {
+      const existing = await pool.query(
+        `SELECT id, date_suivi::text AS date, nom_personne AS "lastName", prenom_personne AS "firstName",
+                matricule_personne AS matricule, type_cle AS "keyType", nombre_cles AS quantity,
+                to_char(heure_sortie, 'HH24:MI') AS "departureTime", lieu, observations,
+                cree_le AS "createdAt", service_poste_id AS "servicePosteId"
+         FROM suivi_cle WHERE client_request_id=$1::uuid AND site_id=$2::uuid`,
+        [clientRequestId, siteId],
+      );
+      if (!existing.rows[0]) return json(response, 409, { error: "Cette demande existe déjà sur un autre site." });
+      return json(response, 200, { entry: {
+        ...existing.rows[0], returnTime: null, notReturned: false,
+        returnDate: null, returnerLastName: null, returnerFirstName: null, returnerMatricule: null,
+      } });
+    }
     json(response, 201, { entry: {
       id: result.rows[0].id, date, lastName: employee.rows[0].nom, firstName: employee.rows[0].prenom,
       matricule: employee.rows[0].matricule, keyType, quantity, departureTime, returnTime: null, notReturned: false,
@@ -153,11 +186,23 @@ export async function returnKeyTracking(request, response, pool, userId, entryId
     const body = await readJson(request);
     const returnTime = cleanText(body.returnTime, 5);
     const returnDate = cleanText(body.returnDate, 10);
+    const clientRequestId = cleanText(body.clientRequestId, 36);
     const returnerType = body.returnerType;
     const returnerEmployeeId = cleanText(body.returnerEmployeeId, 36);
     if (!timePattern.test(returnTime) || !validDate(returnDate)) return json(response, 400, { error: "Indiquez une date et une heure de retour valides." });
+    if (clientRequestId && !uuidPattern.test(clientRequestId)) return json(response, 400, { error: "Identifiant de demande invalide." });
     if (returnerType !== "same" && returnerType !== "other") return json(response, 400, { error: "Choisissez qui rend la clé." });
     const siteId = await getUserSiteId(pool, userId, body.siteId);
+    if (clientRequestId) {
+      const replay = await pool.query(
+        `SELECT id, date_retour::text AS "returnDate", to_char(heure_retour, 'HH24:MI') AS "returnTime",
+                nom_retourneur AS "returnerLastName", prenom_retourneur AS "returnerFirstName",
+                matricule_retourneur AS "returnerMatricule"
+         FROM suivi_cle WHERE return_request_id=$1::uuid AND site_id=$2::uuid`,
+        [clientRequestId, siteId],
+      );
+      if (replay.rows[0]) return json(response, 200, { entry: replay.rows[0] });
+    }
     const movement = await pool.query(
       `SELECT nom_personne AS "lastName", prenom_personne AS "firstName", matricule_personne AS matricule
        FROM suivi_cle
@@ -190,14 +235,15 @@ export async function returnKeyTracking(request, response, pool, userId, entryId
     const result = await pool.query(
       `UPDATE suivi_cle
        SET heure_retour = $1::time, date_retour=$2::date,
-           nom_retourneur=$3, prenom_retourneur=$4, matricule_retourneur=$5
-       WHERE id::text = $6 AND site_id = $7::uuid
+           nom_retourneur=$3, prenom_retourneur=$4, matricule_retourneur=$5,
+           return_request_id=$6::uuid
+         WHERE id::text = $7 AND site_id = $8::uuid
          AND type_cle IS NOT NULL AND heure_retour IS NULL AND non_rendu = false
        RETURNING id, date_retour::text AS "returnDate",
                  to_char(heure_retour, 'HH24:MI') AS "returnTime",
                  nom_retourneur AS "returnerLastName", prenom_retourneur AS "returnerFirstName",
                  matricule_retourneur AS "returnerMatricule"`,
-      [returnTime, returnDate, returner.lastName, returner.firstName, returner.matricule, entryId, siteId],
+      [returnTime, returnDate, returner.lastName, returner.firstName, returner.matricule, clientRequestId || null, entryId, siteId],
     );
     if (!result.rows[0]) {
       const existing = await pool.query(
@@ -222,14 +268,24 @@ export async function markKeyTrackingNotReturned(request, response, pool, userId
     }
     const body = await readJson(request);
     const observations = cleanText(body.observations, 20000) || "Clés non rendu";
+    const clientRequestId = cleanText(body.clientRequestId, 36);
+    if (clientRequestId && !uuidPattern.test(clientRequestId)) return json(response, 400, { error: "Identifiant de demande invalide." });
     const siteId = await getUserSiteId(pool, userId, body.siteId);
+    if (clientRequestId) {
+      const replay = await pool.query(
+        `SELECT id, observations, non_rendu AS "notReturned"
+         FROM suivi_cle WHERE not_returned_request_id=$1::uuid AND site_id=$2::uuid`,
+        [clientRequestId, siteId],
+      );
+      if (replay.rows[0]) return json(response, 200, { entry: replay.rows[0] });
+    }
     const result = await pool.query(
       `UPDATE suivi_cle
-       SET observations = $1, non_rendu = true
-       WHERE id::text = $2 AND site_id = $3::uuid
+       SET observations = $1, non_rendu = true, not_returned_request_id=$2::uuid
+       WHERE id::text = $3 AND site_id = $4::uuid
          AND type_cle IS NOT NULL AND heure_retour IS NULL AND non_rendu = false
        RETURNING id, observations, non_rendu AS "notReturned"`,
-      [observations || null, entryId, siteId],
+      [observations || null, clientRequestId || null, entryId, siteId],
     );
     if (!result.rows[0]) {
       const existing = await pool.query(
