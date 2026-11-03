@@ -356,7 +356,13 @@ export async function generateCrj({ prestataireId, siteId, date }, pool) {
   const ordrePostes = [];
   const aliasPostesJour = {
     GARAGE: "EX GARAGE",
+    PG2: "PG2",
+    PGII: "PG2",
     PGIT: "PG2",
+    POSTEGARDEII: "PG2",
+    POSTEDEGARDEII: "PG2",
+    POSTEGARDE2: "PG2",
+    POSTEDEGARDE2: "PG2",
     FITAA: "FITAVA",
     EXTERIEUR: "PARKING EXTERIEUR",
   };
