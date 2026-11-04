@@ -189,7 +189,7 @@ SELECT
     SELECT json_agg(f ORDER BY f.cree_le) FROM (
       SELECT type_flux, type_chargement, camion, immatriculation_vehicule, vehicule, transporteur,
              nom_chauffeur, chauffeur, magasinier, cree, proprietaire,
-             document, facture, numero_titre, titre, plomb, lp,
+             document, facture, type_dechet, numero_titre, titre, plomb, lp,
              article, quantite, categorie_stock, cree_le,
              to_char(heure_arrivee, 'HH24:MI') AS heure_arrivee,
              to_char(heure_sortie, 'HH24:MI') AS heure_sortie,
@@ -197,7 +197,7 @@ SELECT
              designation, nbr, quantite_texte, destinataire, provenance, poids,
              numero_pesage, details_bouteilles
       FROM flux_logistique
-      WHERE site_id = $1::uuid AND date_operation = $3::date
+      WHERE site_id = $1::uuid AND date_operation = $3::date AND annule_le IS NULL
     ) f
   ), '[]'::json) AS flux,
 
@@ -442,19 +442,85 @@ export async function generateCrj({ prestataireId, siteId, date }, pool) {
       continue;
     }
 
-    if (type === "CHARGEMENT" && ["STAR", "PARTICULIER"].includes(norm(f.type_chargement))) {
+    if (type === "MATIERE_PREMIERE") {
+      dechargements.push({
+        camion: txt(f.immatriculation_vehicule) || txt(f.vehicule) || txt(f.camion) || "-",
+        transporteur: "-",
+        titre: txt(f.document) || "-",
+        plomb: "-",
+        heureDebut: txt(f.heure_pointe) || "-",
+        heureFin: "-",
+        comptage: txt(f.quantite) || "-",
+        provenance: txt(f.provenance) || "-",
+      });
+      continue;
+    }
+
+    if (type === "DEPOTAGE_FUEL") {
+      dechargements.push({
+        camion: txt(f.immatriculation_vehicule) || txt(f.vehicule) || txt(f.camion) || "-",
+        transporteur: txt(f.chauffeur) || "-",
+        titre: txt(f.titre) || "-",
+        plomb: txt(f.plomb) || "-",
+        heureDebut: txt(f.heure_pointe) || "-",
+        heureFin: "-",
+        comptage: txt(f.quantite) || "-",
+        provenance: "-",
+      });
+      continue;
+    }
+
+    if (type === "DECHETS") {
+      const wasteType = txt(f.type_dechet) === "DRECHE"
+        ? "Drêche"
+        : txt(f.type_dechet) === "LEVURE"
+          ? "Levure"
+          : "Déchets";
+      chargements.push({
+        camion: txt(f.vehicule) || txt(f.camion) || "-",
+        transporteur: txt(f.vehicule) || txt(f.camion) || "-",
+        titre: [
+          wasteType,
+          txt(f.numero_pesage) ? `Pesage ${txt(f.numero_pesage)}` : "",
+          txt(f.facture) ? `Facture ${txt(f.facture)}` : "",
+        ].filter(Boolean).join(" · ") || "-",
+        plomb: txt(f.plomb) || "-",
+        heureDebut: "-",
+        heureFin: txt(f.heure_sortie) || "-",
+        comptage: txt(f.poids) ? `${txt(f.poids)} kg` : "-",
+        provenance: "-",
+        destination: [
+          txt(f.type_dechet) === "DRECHE" ? "Drêche" : txt(f.type_dechet) === "LEVURE" ? "Levure" : "",
+          txt(f.destinataire),
+        ].filter(Boolean).join(" · ") || "-",
+      });
+      continue;
+    }
+
+    if (type === "ORDURES") {
+      chargements.push({
+        camion: txt(f.immatriculation_vehicule) || txt(f.vehicule) || txt(f.camion) || "-",
+        transporteur: txt(f.transporteur) || txt(f.immatriculation_vehicule) || txt(f.vehicule) || txt(f.camion) || "-",
+        titre: txt(f.facture) || txt(f.document) || "-",
+        plomb: txt(f.plomb) || "-",
+        heureDebut: "-",
+        heureFin: "-",
+        comptage: txt(f.nbr) || "-",
+        provenance: "-",
+        destination: [txt(f.designation), txt(f.destinataire)].filter(Boolean).join(" · ") || "-",
+      });
+      continue;
+    }
+
+    if (type === "CHARGEMENT" && ["STAR", "PARTICULIER", "PALETTE"].includes(norm(f.type_chargement))) {
       const chargementDetails = [
         txt(f.designation),
         txt(f.quantite_texte),
         f.poids == null ? "" : `${f.poids} kg`,
       ].filter(Boolean).join(" · ");
       chargements.push({
-        camion: txt(f.camion) || "-",
-        transporteur: [
-          norm(f.type_chargement) === "STAR" ? "STAR" : "PARTICULIER",
-          txt(f.proprietaire),
-          txt(f.nom_chauffeur),
-        ].filter(Boolean).join(" · "),
+        camion: txt(f.immatriculation_vehicule) || txt(f.camion) || "-",
+        transporteur: txt(f.camion) || "-",
         titre: [txt(f.lp) ? `LP ${txt(f.lp)}` : "", txt(f.titre) ? `N° ${txt(f.titre)}` : ""].filter(Boolean).join(" · ") || "-",
         plomb: txt(f.plomb) || "-",
         heureDebut: txt(f.heure_arrivee) || "-",
