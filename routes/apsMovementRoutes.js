@@ -267,19 +267,28 @@ export async function handleApsMovementRoutes(request, response, pool, pathname,
 
     if (pathname === handoversPath && request.method === "POST") {
       const body = await readJson(request);
+      if (body.clientRequestId && !uuidPattern.test(body.clientRequestId)) throw Object.assign(new Error("Identifiant de requête invalide."), { status: 400 });
       const entry = validateHandover(body);
       const siteId = await resolveSite(pool, account, body?.siteId);
+      if (body.clientRequestId) {
+        const previous = await pool.query(
+          `${handoverSelect} WHERE h.client_request_id=$1::uuid AND h.site_id=$2::uuid`,
+          [body.clientRequestId, siteId],
+        );
+        if (previous.rows[0]) { json(response, 200, { entry: previous.rows[0] }); return true; }
+      }
       await validateHandoverSignatories(pool, siteId, entry);
       const result = await pool.query(
         `INSERT INTO mouvement_aps_passation
            (site_id,date_operation,materiel,chaine_est,chaine_ouest,cles_rendus,cles_non_rendus,
             etat_des_lieux,consigne,evenement,remarque,cp_descendant_matricule,
+            client_request_id,
             cp_montant_matricule,utilisateur_id)
-         VALUES ($1::uuid,$2::date,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14::uuid)
+           VALUES ($1::uuid,$2::date,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13::uuid,$14,$15::uuid)
          RETURNING id`,
         [siteId, entry.date, entry.materiel, entry.chaineEst, entry.chaineOuest, entry.clesRendus,
           entry.clesNonRendus, entry.etatDesLieux, entry.consigne, entry.evenement, entry.remarque,
-          entry.cpDescendantMatricule, entry.cpMontantMatricule, account.id],
+          entry.cpDescendantMatricule, body.clientRequestId || null, entry.cpMontantMatricule, account.id],
       );
       await replaceApsServiceLinks(pool, "passation_aps_service_poste", "passation_aps_id", result.rows[0].id, siteId, entry.date);
       const saved = await pool.query(`${handoverSelect} WHERE h.id=$1::uuid`, [result.rows[0].id]);
@@ -317,8 +326,7 @@ export async function handleApsMovementRoutes(request, response, pool, pathname,
         "DELETE FROM mouvement_aps_passation WHERE id=$1::uuid AND site_id=$2::uuid RETURNING id",
         [handoverRecordMatch[1], siteId],
       );
-      if (!result.rows[0]) throw Object.assign(new Error("Passation introuvable."), { status: 404 });
-      json(response, 200, { id: result.rows[0].id, deleted: true });
+      json(response, 200, { id: result.rows[0]?.id || handoverRecordMatch[1], deleted: true });
       return true;
     }
 
@@ -343,16 +351,28 @@ export async function handleApsMovementRoutes(request, response, pool, pathname,
 
     if (pathname === eventsPath && request.method === "POST") {
       const body = await readJson(request);
+      if (body.clientRequestId && !uuidPattern.test(body.clientRequestId)) throw Object.assign(new Error("Identifiant de requête invalide."), { status: 400 });
       const entry = validateEvent(body);
       const siteId = await resolveSite(pool, account, body?.siteId);
+      if (body.clientRequestId) {
+        const previous = await pool.query(
+          `SELECT e.id,TO_CHAR(e.date_operation,'YYYY-MM-DD') AS date,
+             TO_CHAR(e.heure_entree,'HH24:MI') AS "heureEntree",e.mouvement,e.observation,
+             TO_CHAR(e.heure_sortie,'HH24:MI') AS "heureSortie",e.site_id AS "siteId"
+           FROM mouvement_aps_evenement e
+           WHERE e.client_request_id=$1::uuid AND e.site_id=$2::uuid`,
+          [body.clientRequestId, siteId],
+        );
+        if (previous.rows[0]) { json(response, 200, { entry: previous.rows[0] }); return true; }
+      }
       const result = await pool.query(
         `INSERT INTO mouvement_aps_evenement
-           (site_id,date_operation,heure_entree,mouvement,observation,heure_sortie,utilisateur_id)
-         VALUES ($1::uuid,$2::date,$3::time,$4,$5,NULLIF($6,'')::time,$7::uuid)
+           (site_id,date_operation,heure_entree,mouvement,observation,heure_sortie,utilisateur_id,client_request_id)
+         VALUES ($1::uuid,$2::date,$3::time,$4,$5,NULLIF($6,'')::time,$7::uuid,$8::uuid)
          RETURNING id,TO_CHAR(date_operation,'YYYY-MM-DD') AS date,
            TO_CHAR(heure_entree,'HH24:MI') AS "heureEntree",mouvement,
            observation,TO_CHAR(heure_sortie,'HH24:MI') AS "heureSortie",site_id AS "siteId"`,
-        [siteId, entry.date, entry.heureEntree, entry.mouvement, entry.observation, entry.heureSortie, account.id],
+        [siteId, entry.date, entry.heureEntree, entry.mouvement, entry.observation, entry.heureSortie, account.id, body.clientRequestId || null],
       );
       await replaceApsServiceLinks(pool, "mouvement_aps_evenement_service_poste", "mouvement_aps_evenement_id", result.rows[0].id, siteId, entry.date);
       const saved = await pool.query(
@@ -397,8 +417,7 @@ export async function handleApsMovementRoutes(request, response, pool, pathname,
         "DELETE FROM mouvement_aps_evenement WHERE id=$1::uuid AND site_id=$2::uuid RETURNING id",
         [eventRecordMatch[1], siteId],
       );
-      if (!result.rows[0]) throw Object.assign(new Error("Mouvement introuvable."), { status: 404 });
-      json(response, 200, { id: result.rows[0].id, deleted: true });
+      json(response, 200, { id: result.rows[0]?.id || eventRecordMatch[1], deleted: true });
       return true;
     }
 

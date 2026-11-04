@@ -4,6 +4,7 @@ import { json, readJson } from "../utils/helpers.js";
 const prefix = "/api";
 const camerasPath = `${prefix}/cameras`;
 const zonesPath = `${prefix}/camera-zones`;
+const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const clean = (value, max = 255) => typeof value === "string" ? value.trim().slice(0, max) : "";
 
 function cameraValues(body) {
@@ -77,13 +78,26 @@ export async function handleCameraRoutes(request, response, pool, pathname, jwtS
     }
     if (pathname === camerasPath && request.method === "POST") {
       const body = await readJson(request);
+      if (body.clientRequestId && !uuidPattern.test(body.clientRequestId)) throw Object.assign(new Error("Identifiant de requête invalide."), { status: 400 });
       const values = cameraValues(body);
       const targetSite = await resolveSite(pool, account, clean(body.siteId, 36));
       const client = await pool.connect();
       try {
         await client.query("BEGIN");
+        if (body.clientRequestId) {
+          const previous = await client.query(
+            `${cameraSelect} JOIN zone request_zone ON request_zone.id=c.zone_id
+             WHERE c.client_request_id=$1::uuid AND request_zone.site_id=$2::uuid`,
+            [body.clientRequestId, targetSite],
+          );
+          if (previous.rows[0]) {
+            await client.query("COMMIT");
+            json(response, 200, { camera: previous.rows[0] });
+            return true;
+          }
+        }
         const zoneId = await resolveZone(client, targetSite, body);
-        const inserted = await client.query("INSERT INTO camera (nom,url_flux,etat,zone_id) VALUES ($1,$2,'EN_SERVICE',$3::uuid) RETURNING id", [values.name, values.streamUrl, zoneId]);
+        const inserted = await client.query("INSERT INTO camera (nom,url_flux,etat,zone_id,client_request_id) VALUES ($1,$2,'EN_SERVICE',$3::uuid,$4::uuid) RETURNING id", [values.name, values.streamUrl, zoneId, body.clientRequestId || null]);
         const result = await client.query(`${cameraSelect} WHERE c.id=$1::uuid`, [inserted.rows[0].id]);
         await client.query("COMMIT");
         json(response, 201, { camera: result.rows[0] });
@@ -120,8 +134,7 @@ export async function handleCameraRoutes(request, response, pool, pathname, jwtS
     if (idMatch && request.method === "DELETE") {
       const siteId = await resolveSite(pool, account, url.searchParams.get("siteId"), true);
       const result = await pool.query("DELETE FROM camera c USING zone z WHERE c.zone_id=z.id AND c.id=$1::uuid AND ($2::uuid IS NULL OR z.site_id=$2::uuid) RETURNING c.id", [idMatch[1], siteId]);
-      if (!result.rows[0]) throw Object.assign(new Error("Caméra introuvable sur ce site."), { status: 404 });
-      json(response, 200, { id: result.rows[0].id, deleted: true }); return true;
+      json(response, 200, { id: result.rows[0]?.id || idMatch[1], deleted: true }); return true;
     }
     json(response, 405, { error: "Méthode non autorisée." });
     return true;

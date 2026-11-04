@@ -327,6 +327,7 @@ model LectureBadge {
 
 model Camera {
   id      String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  clientRequestId String? @unique(map: "camera_client_request_id_key") @map("client_request_id") @db.Uuid
   nom     String @db.VarChar(255)
   urlFlux String @map("url_flux") @db.Text
   etat    String @db.VarChar(100)
@@ -880,6 +881,7 @@ model MouvementAps {
 
 model MouvementApsEvenement {
   id            String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  clientRequestId String?    @unique(map: "mouvement_aps_evenement_client_request_id_key") @map("client_request_id") @db.Uuid
   creeLe        DateTime    @default(now()) @map("cree_le") @db.Timestamp(6)
   dateOperation DateTime    @map("date_operation") @db.Date
   heureEntree   DateTime    @map("heure_entree") @db.Time(0)
@@ -899,6 +901,7 @@ model MouvementApsEvenement {
 
 model PassationServiceAps {
   id            String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  clientRequestId String?   @unique(map: "mouvement_aps_passation_client_request_id_key") @map("client_request_id") @db.Uuid
   creeLe        DateTime    @default(now()) @map("cree_le") @db.Timestamp(6)
   dateOperation DateTime    @map("date_operation") @db.Date
   materiel      String      @db.VarChar(3000)
