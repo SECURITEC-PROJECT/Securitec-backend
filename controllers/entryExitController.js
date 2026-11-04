@@ -79,6 +79,32 @@ export async function createVisitor(request, response, pool, userId) {
     await client.query("BEGIN");
     const account = await getAccount(client, userId);
     const siteId = await resolveSite(client, account, body);
+    const clientRequestId = uuidPattern.test(body.clientRequestId || "") ? body.clientRequestId : null;
+    if (clientRequestId) {
+      const existing = await client.query(
+        `SELECT p.id, p.entree AS entered_at, p.service_poste_id AS "servicePosteId",
+                p.badge_numero AS badge,
+                v.site_id, s.nom AS site_name, s.type_site AS site_type
+         FROM passage p
+         JOIN visiteur v ON v.id=p.visiteur_id
+         LEFT JOIN site s ON s.id=v.site_id
+         WHERE p.client_request_id=$1::uuid AND v.site_id=$2::uuid`,
+        [clientRequestId, siteId],
+      );
+      if (existing.rows[0]) {
+        await client.query("COMMIT");
+        json(response, 201, { visitor: {
+          id: existing.rows[0].id, site_id: existing.rows[0].site_id,
+          full_name: name, company: cleanText(body.company), id_document: cleanText(body.id_document, 4),
+          document_type: cleanText(body.document_type, 80), host, reason,
+          badge: existing.rows[0].badge || cleanText(body.badge, 80), vehicle: cleanText(body.vehicle, 50),
+          zone: cleanText(body.zone) || "Accueil", equipment: cleanText(body.equipment, 20000),
+          entered_at: existing.rows[0].entered_at, servicePosteId: existing.rows[0].servicePosteId,
+          exited_at: null, site_name: existing.rows[0].site_name, site_type: existing.rows[0].site_type,
+        } });
+        return;
+      }
+    }
     const servicePosteId = await resolveServicePosteId(client, siteId, body.priseDePosteId, body.posteId || null);
     const banned = await client.query(
       `SELECT identite FROM visiteur
@@ -100,13 +126,13 @@ export async function createVisitor(request, response, pool, userId) {
       [name, cleanText(body.company) || null, siteId, badge.rows[0].id],
     );
     const passage = await client.query(
-      `INSERT INTO passage (entree, motif, badge_id, visiteur_id, type_piece, piece_fin, hote, zone, materiel, immatriculation, badge_numero, saisi_par_id,service_poste_id)
-       VALUES (COALESCE($12::date + $13::time,NOW()),$1,$2::uuid,$3::uuid,$4,$5,$6,$7,$8,$9,$10,$11::uuid,$14::uuid)
+      `INSERT INTO passage (entree, motif, badge_id, visiteur_id, type_piece, piece_fin, hote, zone, materiel, immatriculation, badge_numero, saisi_par_id,service_poste_id,client_request_id)
+       VALUES (COALESCE($12::date + $13::time,NOW()),$1,$2::uuid,$3::uuid,$4,$5,$6,$7,$8,$9,$10,$11::uuid,$14::uuid,$15::uuid)
        RETURNING id, entree AS entered_at, service_poste_id AS "servicePosteId"`,
       [reason, badge.rows[0].id, visitor.rows[0].id, cleanText(body.document_type, 80) || null,
         cleanText(body.id_document, 4) || null, host, cleanText(body.zone) || "Accueil",
         cleanText(body.equipment, 20000) || null, cleanText(body.vehicle, 50) || null, badgeNumber, userId,
-        entryDate || null, entryTime || null, servicePosteId],
+        entryDate || null, entryTime || null, servicePosteId, clientRequestId],
     );
     const site = await client.query("SELECT id AS site_id, nom AS site_name, type_site AS site_type FROM site WHERE id=$1::uuid", [siteId]);
     await client.query("COMMIT");
@@ -266,6 +292,19 @@ export async function exitVisitor(request, response, pool, userId, passageId) {
   try {
     const body = await readJson(request);
     const account = await getAccount(pool, userId);
+    const requestedSiteId = new URL(request.url || "/", `http://${request.headers.host || "localhost"}`).searchParams.get("siteId");
+    const siteId = account.site_id && account.role !== 1 ? account.site_id : requestedSiteId || null;
+    const clientRequestId = uuidPattern.test(body.clientRequestId || "") ? body.clientRequestId : null;
+    if (clientRequestId) {
+      const existing = await pool.query(
+        `SELECT p.id, p.sortie AS exited_at, p.notes_sortie AS exit_notes
+         FROM passage p JOIN visiteur v ON v.id=p.visiteur_id
+         WHERE p.id=$1::uuid AND p.exit_client_request_id=$2::uuid
+           AND ($3::uuid IS NULL OR v.site_id=$3::uuid)`,
+        [passageId, clientRequestId, siteId],
+      );
+      if (existing.rows[0]) return json(response, 200, { visitor: existing.rows[0] });
+    }
     const extra = cleanText(body.extraEquipment, 500);
     const note = extra
       ? `Autre matériel déclaré à la sortie : ${extra}`
@@ -273,11 +312,12 @@ export async function exitVisitor(request, response, pool, userId, passageId) {
         ? "Contrôle de sortie effectué."
         : "Sortie visiteur enregistrée.";
     const result = await pool.query(
-      `UPDATE passage p SET sortie=NOW(), notes_sortie=$1, sortie_par_id=$2::uuid
+      `UPDATE passage p SET sortie=NOW(), notes_sortie=$1, sortie_par_id=$2::uuid,
+         exit_client_request_id=$5::uuid
        FROM visiteur v WHERE p.id=$3::uuid AND p.visiteur_id=v.id AND p.sortie IS NULL
          AND ($4::uuid IS NULL OR v.site_id=$4::uuid)
        RETURNING p.id, p.sortie AS exited_at, p.notes_sortie AS exit_notes`,
-      [note, userId, passageId, account.site_id && account.role !== 1 ? account.site_id : null],
+      [note, userId, passageId, siteId, clientRequestId],
     );
     if (!result.rows[0]) return json(response, 404, { error: "Visiteur absent du site ou déjà sorti." });
     json(response, 200, { visitor: result.rows[0] });
@@ -346,6 +386,33 @@ export async function createVehicle(request, response, pool, userId) {
     await client.query("BEGIN");
     const account = await getAccount(client, userId);
     const siteId = await resolveSite(client, account, body);
+    const clientRequestId = uuidPattern.test(body.clientRequestId || "") ? body.clientRequestId : null;
+    if (clientRequestId) {
+      const existing = await client.query(
+        `SELECT pv.id, pv.entree AS entered_at, pv.service_poste_id AS "servicePosteId",
+                v.immatriculation AS plate, v.type, pv.transporteur AS category, pv.conducteur AS "ownerName",
+                pv.passagers AS "passengersEntry", pv.passagers_sortie AS "passengersOut",
+                pv.site_id AS "siteId", s.nom AS site_name
+         FROM passage_vehicule pv
+         JOIN vehicule v ON v.id=pv.vehicule_id
+         LEFT JOIN site s ON s.id=pv.site_id
+         WHERE pv.client_request_id=$1::uuid AND pv.site_id=$2::uuid`,
+        [clientRequestId, siteId],
+      );
+      if (existing.rows[0]) {
+        await client.query("COMMIT");
+        json(response, 201, { vehicle: {
+          ...existing.rows[0],
+          passengersEntry: Number(existing.rows[0].passengersEntry),
+          entryDate, entryTime, exitDate: null, exitTime: null,
+          driver: existing.rows[0].ownerName, reason, zone: cleanText(body.zone) || "Accueil",
+          operation: cleanText(body.operation, 40), seal_number: cleanText(body.seal_number, 100),
+          document_reference: cleanText(body.document_reference, 100), load_state: cleanText(body.load_state, 40),
+          compliant: body.compliant === true, exited_at: null,
+        } });
+        return;
+      }
+    }
     const servicePosteId = await resolveServicePosteId(client, siteId, body.priseDePosteId, body.posteId || null);
     const type = cleanText(body.type, 100) || "Véhicule";
     const vehicle = await client.query(
@@ -355,16 +422,16 @@ export async function createVehicle(request, response, pool, userId) {
     );
     const result = await client.query(
       `INSERT INTO passage_vehicule (entree, vehicule_id, vacation_id, transporteur, conducteur, passagers,
-         motif, zone, operation, reference, plomb, etat_chargement, controle_conforme, saisi_par_id, site_id, service_poste_id)
+         motif, zone, operation, reference, plomb, etat_chargement, controle_conforme, saisi_par_id, site_id, service_poste_id, client_request_id)
       VALUES (${newMovement ? "$15::date + $16::time" : "NOW()"},$1::uuid,(SELECT id FROM vacation WHERE utilisateur_id=$2::uuid AND cloture IS NULL ORDER BY ouverture DESC LIMIT 1),
-         $3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$2::uuid,$13::uuid,$14::uuid)
+         $3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$2::uuid,$13::uuid,$14::uuid,${newMovement ? "$17::uuid" : "$15::uuid"})
        RETURNING id, entree AS entered_at, service_poste_id AS "servicePosteId"`,
       [vehicle.rows[0].id, userId, newMovement ? category : cleanText(body.company) || null, driver,
        newMovement ? String(passengersEntry) : cleanText(body.passengers, 255) || null,
        reason, cleanText(body.zone) || "Accueil", cleanText(body.operation, 40) || "Autre passage",
        cleanText(body.document_reference, 100) || null, cleanText(body.seal_number, 100) || null,
        cleanText(body.load_state, 40) || null, body.compliant === true, siteId,
-       servicePosteId, ...(newMovement ? [entryDate, entryTime] : [])],
+       servicePosteId, ...(newMovement ? [entryDate, entryTime, clientRequestId] : [clientRequestId])],
     );
     const site = await client.query("SELECT id AS site_id, nom AS site_name FROM site WHERE id=$1::uuid", [siteId]);
     await client.query("COMMIT");
@@ -392,20 +459,33 @@ export async function createVehicle(request, response, pool, userId) {
 export async function exitVehicle(request, response, pool, userId, passageId) {
   try {
     const body = await readJson(request);
+    const clientRequestId = uuidPattern.test(body.clientRequestId || "") ? body.clientRequestId : null;
     const hasPassengerCount = body.passengersOut !== undefined && body.passengersOut !== null && body.passengersOut !== "";
     if (hasPassengerCount && !validPassengerCount(body.passengersOut)) {
       return json(response, 400, { error: "Le nombre de personnes à la sortie doit être un entier entre 0 et 10 000." });
     }
     const account = await getAccount(pool, userId);
     const requestedSiteId = new URL(request.url || "/", `http://${request.headers.host || "localhost"}`).searchParams.get("siteId");
+    const siteId = account.site_id && account.role !== 1 ? account.site_id : requestedSiteId || null;
+    if (clientRequestId) {
+      const existing = await pool.query(
+        `SELECT id, sortie AS exited_at, passagers_sortie AS "passengersOut",
+                to_char(sortie, 'HH24:MI') AS "exitTime"
+         FROM passage_vehicule
+         WHERE id=$1::uuid AND exit_client_request_id=$2::uuid
+           AND ($3::uuid IS NULL OR site_id=$3::uuid)`,
+        [passageId, clientRequestId, siteId],
+      );
+      if (existing.rows[0]) return json(response, 200, { vehicle: existing.rows[0] });
+    }
     const result = await pool.query(
       `UPDATE passage_vehicule SET sortie=NOW(), sortie_par_id=$1::uuid,modifie_par=$1::uuid,
+         exit_client_request_id=$6::uuid,
          passagers_sortie=CASE WHEN $4::boolean THEN $5::integer ELSE passagers_sortie END
        WHERE id=$2::uuid AND sortie IS NULL AND annule_le IS NULL AND ($3::uuid IS NULL OR site_id=$3::uuid)
        RETURNING id, sortie AS exited_at, passagers_sortie AS "passengersOut",
                  to_char(sortie, 'HH24:MI') AS "exitTime"`,
-      [userId, passageId, account.site_id && account.role !== 1 ? account.site_id : requestedSiteId || null,
-        hasPassengerCount, hasPassengerCount ? Number(body.passengersOut) : null],
+      [userId, passageId, siteId, hasPassengerCount, hasPassengerCount ? Number(body.passengersOut) : null, clientRequestId],
     );
     if (!result.rows[0]) return json(response, 404, { error: "Véhicule présent introuvable ou déjà sorti." });
     json(response, 200, { vehicle: result.rows[0] });

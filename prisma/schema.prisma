@@ -192,6 +192,8 @@ model Visiteur {
 
 model Passage {
   id              String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  clientRequestId String?   @unique @map("client_request_id") @db.Uuid
+  exitClientRequestId String? @unique @map("exit_client_request_id") @db.Uuid
   entree          DateTime  @db.Timestamp(6)
   sortie          DateTime? @db.Timestamp(6)
   motif           String?   @db.Text
@@ -347,6 +349,8 @@ model Vehicule {
 
 model PassageVehicule {
   id               String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  clientRequestId  String?   @unique @map("client_request_id") @db.Uuid
+  exitClientRequestId String? @unique @map("exit_client_request_id") @db.Uuid
   entree           DateTime  @db.Timestamp(6)
   sortie           DateTime? @db.Timestamp(6)
   photos           String?   @db.Text
