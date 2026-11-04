@@ -1001,6 +1001,7 @@ model SignalementLogistique {
 
 model Ronde {
   id            String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  clientRequestId String?    @unique(map: "ronde_client_request_id_key") @map("client_request_id") @db.Uuid
   creeLe        DateTime    @default(now()) @map("cree_le") @db.Timestamp(6)
   nomParcours   String      @map("nom_parcours") @db.VarChar(160)
   debut         DateTime    @default(now()) @db.Timestamp(6)
