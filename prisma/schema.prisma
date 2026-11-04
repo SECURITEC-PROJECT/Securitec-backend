@@ -1135,6 +1135,10 @@ model MouvementCourrier {
 
 model MaterielSousTraitant {
   id            String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  clientRequestId String?    @unique @map("client_request_id") @db.Uuid
+  updateRequestId String?    @unique @map("update_request_id") @db.Uuid
+  exitRequestId   String?    @unique @map("exit_request_id") @db.Uuid
+  cancelRequestId String?    @unique @map("cancel_request_id") @db.Uuid
   creeLe        DateTime    @default(now()) @map("cree_le") @db.Timestamp(6)
   dateOperation DateTime    @map("date_operation") @db.Date
   heureEntree   DateTime    @map("heure_entree") @db.Time(0)
@@ -1162,6 +1166,10 @@ model MaterielSousTraitant {
 
 model MaterielStar {
   id            String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  clientRequestId String?    @unique @map("client_request_id") @db.Uuid
+  updateRequestId String?    @unique @map("update_request_id") @db.Uuid
+  exitRequestId   String?    @unique @map("exit_request_id") @db.Uuid
+  cancelRequestId String?    @unique @map("cancel_request_id") @db.Uuid
   creeLe        DateTime    @default(now()) @map("cree_le") @db.Timestamp(6)
   dateOperation DateTime    @map("date_operation") @db.Date
   heureEntree   DateTime    @map("heure_entree") @db.Time(0)
