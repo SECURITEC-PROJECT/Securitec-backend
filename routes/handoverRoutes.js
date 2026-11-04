@@ -1,4 +1,4 @@
-import { createHandover, getHandovers } from "../controllers/handoverController.js";
+import { completeHandover, createHandover, getHandovers } from "../controllers/handoverController.js";
 import { getRequestUser } from "../utils/auth.js";
 import { json } from "../utils/helpers.js";
 
@@ -7,6 +7,20 @@ const apiPrefix = "/api";
 export async function handleHandoverRoutes(request, response, pool, pathname, jwtSecret) {
   if (request.method === "GET" && pathname === `${apiPrefix}/handovers`) {
     await getHandovers(request, response, pool);
+    return true;
+  }
+  if (request.method === "POST" && pathname === `${apiPrefix}/handovers/complete`) {
+    const user = getRequestUser(request, jwtSecret);
+    if (!user) {
+      json(response, 401, { error: "Connectez-vous pour enregistrer une passation." });
+      return true;
+    }
+    const account = await pool.query("SELECT role,site_id AS \"siteId\" FROM utilisateur WHERE id=$1::uuid AND actif=true", [user.id]);
+    if (Number(account.rows[0]?.role) !== 2) {
+      json(response, 403, { error: "Seul un chef de poste peut valider une passation." });
+      return true;
+    }
+    await completeHandover(request, response, pool, user.id, account.rows[0].siteId);
     return true;
   }
   if (request.method === "POST" && pathname === `${apiPrefix}/handovers`) {

@@ -132,7 +132,7 @@ export async function handleControlRoutes(request, response, pool, pathname, jwt
     await scanBadge(request, response, pool);
     return true;
   }
-  const badgeMatch = pathname.match(/^\/api\/badges\/(\d+)$/);
+  const badgeMatch = pathname.match(/^\/api\/badges\/([0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/i);
   if (method === "PUT" && badgeMatch) {
     await updateBadgeStatus(request, response, pool, badgeMatch[1]);
     return true;

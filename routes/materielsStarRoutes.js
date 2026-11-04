@@ -97,16 +97,24 @@ export async function handleMaterielsStarRoutes(request, response, pool, pathnam
       const body = await readJson(request);
       const entry = readEntry(body);
       const siteId = await resolveSite(pool, account, body.siteId);
+      const requestId = uuidPattern.test(body.clientRequestId || "") ? body.clientRequestId : null;
+      if (requestId) {
+        const existing = await pool.query(
+          `${entrySelect} WHERE m.client_request_id=$1::uuid AND m.site_id=$2::uuid`,
+          [requestId, siteId],
+        );
+        if (existing.rows[0]) { json(response, 201, { entry: existing.rows[0] }); return true; }
+      }
       const servicePosteId = await resolveServicePosteId(pool, siteId, body.priseDePosteId);
       const provider = await resolveProvider(pool, entry.prestataireId);
       const result = await pool.query(
-        `INSERT INTO materiel_star (date_operation, heure_entree, prenom, matricule, materiels, prestataire_id, site_id, utilisateur_id, service_poste_id)
-         VALUES ($1::date, $2::time, $3, $4, $5::jsonb, $6::uuid, $7::uuid, $8::uuid, $9::uuid)
+        `INSERT INTO materiel_star (date_operation, heure_entree, prenom, matricule, materiels, prestataire_id, site_id, utilisateur_id, service_poste_id, client_request_id)
+         VALUES ($1::date, $2::time, $3, $4, $5::jsonb, $6::uuid, $7::uuid, $8::uuid, $9::uuid, $10::uuid)
          RETURNING id, date_operation::text AS date, to_char(heure_entree, 'HH24:MI') AS "heureEntree",
                    prenom, matricule, prestataire_id AS "providerId", materiels AS items,
                    to_char(heure_sortie, 'HH24:MI') AS "heureSortie",
                    site_id AS "siteId", service_poste_id AS "servicePosteId"`,
-        [entry.date, entry.heureEntree, entry.prenom, entry.matricule, JSON.stringify(entry.items), provider.id, siteId, account.id, servicePosteId],
+        [entry.date, entry.heureEntree, entry.prenom, entry.matricule, JSON.stringify(entry.items), provider.id, siteId, account.id, servicePosteId, requestId],
       );
       const site = await pool.query("SELECT nom AS \"siteName\" FROM site WHERE id=$1::uuid", [siteId]);
       json(response, 201, { entry: { ...result.rows[0], provider: provider.nom, siteName: site.rows[0].siteName } });
@@ -118,6 +126,14 @@ export async function handleMaterielsStarRoutes(request, response, pool, pathnam
       const body = await readJson(request);
       const entry = readEntry(body);
       const siteId = await resolveSite(pool, account, body.siteId);
+      const updateRequestId = uuidPattern.test(body.updateRequestId || "") ? body.updateRequestId : null;
+      if (updateRequestId) {
+        const replay = await pool.query(
+          `${entrySelect} WHERE m.id=$1::uuid AND m.site_id=$2::uuid AND m.update_request_id=$3::uuid`,
+          [entryMatch[1], siteId, updateRequestId],
+        );
+        if (replay.rows[0]) { json(response, 200, { entry: replay.rows[0] }); return true; }
+      }
       const existing = await pool.query(
         "SELECT prestataire_id FROM materiel_star WHERE id=$1::uuid AND site_id=$2::uuid AND annule_le IS NULL",
         [entryMatch[1], siteId],
@@ -126,13 +142,13 @@ export async function handleMaterielsStarRoutes(request, response, pool, pathnam
       const provider = await resolveProvider(pool, entry.prestataireId, existing.rows[0].prestataire_id);
       const result = await pool.query(
         `UPDATE materiel_star
-         SET date_operation=$2::date, heure_entree=$3::time, prenom=$4, matricule=$5, materiels=$6::jsonb, prestataire_id=$7::uuid,modifie_par=$9::uuid
+         SET date_operation=$2::date, heure_entree=$3::time, prenom=$4, matricule=$5, materiels=$6::jsonb, prestataire_id=$7::uuid,modifie_par=$9::uuid,update_request_id=$10::uuid
          WHERE id=$1::uuid AND site_id=$8::uuid AND annule_le IS NULL
          RETURNING id, date_operation::text AS date, to_char(heure_entree, 'HH24:MI') AS "heureEntree",
                    prenom, matricule, prestataire_id AS "providerId", materiels AS items,
                    to_char(heure_sortie, 'HH24:MI') AS "heureSortie",
                    site_id AS "siteId"`,
-        [entryMatch[1], entry.date, entry.heureEntree, entry.prenom, entry.matricule, JSON.stringify(entry.items), provider.id, siteId, account.id],
+        [entryMatch[1], entry.date, entry.heureEntree, entry.prenom, entry.matricule, JSON.stringify(entry.items), provider.id, siteId, account.id, updateRequestId],
       );
       if (!result.rows[0]) { json(response, 404, { error: "Mouvement introuvable sur ce site." }); return true; }
       const site = await pool.query("SELECT nom AS \"siteName\" FROM site WHERE id=$1::uuid", [siteId]);
@@ -144,9 +160,22 @@ export async function handleMaterielsStarRoutes(request, response, pool, pathnam
       if (!uuidPattern.test(entryMatch[1])) { json(response, 404, { error: "Mouvement introuvable." }); return true; }
       const url = new URL(request.url || "/", `http://${request.headers.host || "localhost"}`);
       const siteId = await resolveSite(pool, account, url.searchParams.get("siteId"));
+      const cancelRequestId = uuidPattern.test(url.searchParams.get("clientRequestId") || "") ? url.searchParams.get("clientRequestId") : null;
       const client = await pool.connect();
       try {
         await client.query("BEGIN");
+        if (cancelRequestId) {
+          const replay = await client.query(
+            `SELECT id, annule_le AS "annuleLe" FROM materiel_star
+             WHERE id=$1::uuid AND site_id=$2::uuid AND cancel_request_id=$3::uuid`,
+            [entryMatch[1], siteId, cancelRequestId],
+          );
+          if (replay.rows[0]) {
+            await client.query("COMMIT");
+            json(response, 200, { id: replay.rows[0].id, deleted: false, cancelled: true, annuleLe: replay.rows[0].annuleLe });
+            return true;
+          }
+        }
         const existing = await client.query(
           "SELECT id, heure_sortie,annule_le FROM materiel_star WHERE id=$1::uuid AND site_id=$2::uuid FOR UPDATE",
           [entryMatch[1], siteId],
@@ -166,7 +195,7 @@ export async function handleMaterielsStarRoutes(request, response, pool, pathnam
           json(response, 409, { error: "Ce mouvement est déjà annulé." });
           return true;
         }
-        await client.query("UPDATE materiel_star SET annule_le=CURRENT_TIMESTAMP,annule_par=$3::uuid,modifie_par=$3::uuid WHERE id=$1::uuid AND site_id=$2::uuid", [entryMatch[1], siteId, account.id]);
+        await client.query("UPDATE materiel_star SET annule_le=CURRENT_TIMESTAMP,annule_par=$3::uuid,modifie_par=$3::uuid,cancel_request_id=$4::uuid WHERE id=$1::uuid AND site_id=$2::uuid", [entryMatch[1], siteId, account.id, cancelRequestId]);
         await client.query("COMMIT");
         json(response, 200, { id: entryMatch[1], deleted: false, cancelled: true });
       } catch (error) {
@@ -180,14 +209,26 @@ export async function handleMaterielsStarRoutes(request, response, pool, pathnam
 
     if (request.method === "PATCH" && exitMatch) {
       if (!uuidPattern.test(exitMatch[1])) { json(response, 404, { error: "Mouvement introuvable." }); return true; }
+      const body = await readJson(request);
       const url = new URL(request.url || "/", `http://${request.headers.host || "localhost"}`);
       const siteId = await resolveSite(pool, account, url.searchParams.get("siteId"));
+      const exitRequestId = uuidPattern.test(body.clientRequestId || "") ? body.clientRequestId : null;
+      const heureSortie = text(body.heureSortie, 5);
+      if (heureSortie && !timePattern.test(heureSortie)) { json(response, 400, { error: "Indiquez une heure de sortie valide." }); return true; }
+      if (exitRequestId) {
+        const replay = await pool.query(
+          `SELECT id, to_char(heure_sortie, 'HH24:MI') AS "heureSortie"
+           FROM materiel_star WHERE id=$1::uuid AND site_id=$2::uuid AND exit_request_id=$3::uuid`,
+          [exitMatch[1], siteId, exitRequestId],
+        );
+        if (replay.rows[0]) { json(response, 200, { entry: replay.rows[0] }); return true; }
+      }
       const result = await pool.query(
         `UPDATE materiel_star
-         SET heure_sortie=timezone('Indian/Antananarivo', CURRENT_TIMESTAMP)::time(0),modifie_par=$3::uuid
+         SET heure_sortie=COALESCE($3::time(0),timezone('Indian/Antananarivo', CURRENT_TIMESTAMP)::time(0)),modifie_par=$4::uuid,exit_request_id=$5::uuid
          WHERE id=$1::uuid AND site_id=$2::uuid AND heure_sortie IS NULL AND annule_le IS NULL
          RETURNING id, to_char(heure_sortie, 'HH24:MI') AS "heureSortie"`,
-        [exitMatch[1], siteId, account.id],
+        [exitMatch[1], siteId, heureSortie || null, account.id, exitRequestId],
       );
       if (!result.rows[0]) { json(response, 404, { error: "Mouvement introuvable ou sortie déjà enregistrée." }); return true; }
       json(response, 200, { entry: result.rows[0] });

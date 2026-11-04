@@ -69,20 +69,39 @@ export async function createPatrol(request, response, pool, userId) {
   const client = await pool.connect();
   try {
     const body = await readJson(request);
+    if (!body || typeof body !== "object" || Array.isArray(body)) {
+      return json(response, 400, { error: "Données de ronde invalides." });
+    }
+    if (body.clientRequestId && !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(body.clientRequestId)) {
+      return json(response, 400, { error: "Identifiant de requête invalide." });
+    }
     const routeName = cleanText(body.routeName, 160);
     if (!routeName) return json(response, 400, { error: "Le nom du parcours est obligatoire." });
     const points = cleanCheckpoints(body.checkpoints || []);
     await client.query("BEGIN");
     const account = await getAccount(client, userId);
     const siteId = await resolveSite(client, account, body.siteId);
+    if (body.clientRequestId) {
+      const existing = await client.query(
+        `SELECT id,nom_parcours AS route_name,debut AS started_at,fin AS ended_at,
+                points AS checkpoints,observations AS anomalies,site_id AS "siteId",
+                service_poste_id AS "servicePosteId"
+         FROM ronde WHERE client_request_id=$1::uuid AND site_id=$2::uuid AND utilisateur_id=$3::uuid`,
+        [body.clientRequestId, siteId, userId],
+      );
+      if (existing.rows[0]) {
+        await client.query("COMMIT");
+        return json(response, 200, { patrol: existing.rows[0] });
+      }
+    }
     const priseDePosteId = await resolvePriseDePosteId(client, siteId, body.priseDePosteId, body.posteId || null);
     const result = await client.query(
-      `INSERT INTO ronde (nom_parcours, points, site_id, utilisateur_id, prise_de_poste_id)
-       VALUES ($1, $2::jsonb, $3::uuid, $4::uuid, $5::uuid)
+      `INSERT INTO ronde (nom_parcours, points, site_id, utilisateur_id, prise_de_poste_id, client_request_id)
+       VALUES ($1, $2::jsonb, $3::uuid, $4::uuid, $5::uuid, $6::uuid)
        RETURNING id, nom_parcours AS route_name, debut AS started_at, fin AS ended_at,
                  points AS checkpoints, observations AS anomalies, site_id AS "siteId",
                  service_poste_id AS "servicePosteId"`,
-      [routeName, JSON.stringify(points), siteId, userId, priseDePosteId],
+      [routeName, JSON.stringify(points), siteId, userId, priseDePosteId, body.clientRequestId || null],
     );
     await client.query("COMMIT");
     json(response, 201, { patrol: result.rows[0] });
@@ -126,8 +145,15 @@ export async function finishPatrol(request, response, pool, userId, patrolId) {
                  points AS checkpoints, observations AS anomalies, site_id AS "siteId"`,
       [observations, patrolId, userId],
     );
-    if (!result.rows[0]) return json(response, 404, { error: "Ronde active introuvable ou déjà clôturée." });
-    json(response, 200, { patrol: result.rows[0] });
+    if (result.rows[0]) return json(response, 200, { patrol: result.rows[0] });
+    const existing = await pool.query(
+      `SELECT id, nom_parcours AS route_name, debut AS started_at, fin AS ended_at,
+              points AS checkpoints, observations AS anomalies, site_id AS "siteId"
+       FROM ronde WHERE id = $1::uuid AND utilisateur_id = $2::uuid AND fin IS NOT NULL`,
+      [patrolId, userId],
+    );
+    if (!existing.rows[0]) return json(response, 404, { error: "Ronde active introuvable." });
+    json(response, 200, { patrol: existing.rows[0] });
   } catch (error) {
     console.error("POST /patrols/:id/finish failed:", error.code || error.name, error.message || "");
     json(response, error.status || 500, { error: error.status ? error.message : "Impossible de clôturer la ronde." });

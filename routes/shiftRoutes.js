@@ -56,6 +56,9 @@ export async function handleShiftRoutes(request, response, pool, pathname, jwtSe
       const { user, account } = await requireAccount();
       if (Number(account.role) !== 2) throw Object.assign(new Error("Seul le chef de poste peut ouvrir un service."), { status: 403 });
       const data = await readJson(request);
+      if (data.clientRequestId && !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(data.clientRequestId)) {
+        throw Object.assign(new Error("Identifiant de requête invalide."), { status: 400 });
+      }
       if (account.siteId && data.siteId && data.siteId !== account.siteId) {
         throw Object.assign(new Error("Accès refusé à ce site."), { status: 403 });
       }
@@ -79,7 +82,12 @@ export async function handleShiftRoutes(request, response, pool, pathname, jwtSe
     try {
       const { account } = await requireAccount();
       if (![1, 2].includes(Number(account.role))) throw Object.assign(new Error("Seul le chef de poste ou l’administrateur peut clôturer un service."), { status: 403 });
-      const updated = await endShift(shiftId, pool, account.siteId);
+      const hasBody = Number(request.headers["content-length"] || 0) > 0 || Boolean(request.headers["transfer-encoding"]);
+      const body = hasBody ? await readJson(request) : {};
+      if (body.clientRequestId && !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(body.clientRequestId)) {
+        throw Object.assign(new Error("Identifiant de requête invalide."), { status: 400 });
+      }
+      const updated = await endShift(shiftId, pool, account.siteId, body.clientRequestId || null);
       if (!updated) {
         json(response, 404, { error: "Prise de poste non trouvée." });
       } else {

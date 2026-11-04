@@ -192,6 +192,8 @@ model Visiteur {
 
 model Passage {
   id              String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  clientRequestId String?   @unique @map("client_request_id") @db.Uuid
+  exitClientRequestId String? @unique @map("exit_client_request_id") @db.Uuid
   entree          DateTime  @db.Timestamp(6)
   sortie          DateTime? @db.Timestamp(6)
   motif           String?   @db.Text
@@ -325,6 +327,7 @@ model LectureBadge {
 
 model Camera {
   id      String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  clientRequestId String? @unique(map: "camera_client_request_id_key") @map("client_request_id") @db.Uuid
   nom     String @db.VarChar(255)
   urlFlux String @map("url_flux") @db.Text
   etat    String @db.VarChar(100)
@@ -347,6 +350,8 @@ model Vehicule {
 
 model PassageVehicule {
   id               String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  clientRequestId  String?   @unique @map("client_request_id") @db.Uuid
+  exitClientRequestId String? @unique @map("exit_client_request_id") @db.Uuid
   entree           DateTime  @db.Timestamp(6)
   sortie           DateTime? @db.Timestamp(6)
   photos           String?   @db.Text
@@ -382,6 +387,7 @@ model PassageVehicule {
 
 model Passation {
   id                  String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  clientRequestId     String?     @unique(map: "passation_client_request_id_key") @map("client_request_id") @db.Uuid
   creeLe              DateTime    @default(now()) @map("cree_le") @db.Timestamp(6)
   sortantNom          String      @map("sortant_nom") @db.VarChar(255)
   sortantMatricule    String      @map("sortant_matricule") @db.VarChar(50)
@@ -875,6 +881,7 @@ model MouvementAps {
 
 model MouvementApsEvenement {
   id            String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  clientRequestId String?    @unique(map: "mouvement_aps_evenement_client_request_id_key") @map("client_request_id") @db.Uuid
   creeLe        DateTime    @default(now()) @map("cree_le") @db.Timestamp(6)
   dateOperation DateTime    @map("date_operation") @db.Date
   heureEntree   DateTime    @map("heure_entree") @db.Time(0)
@@ -894,6 +901,7 @@ model MouvementApsEvenement {
 
 model PassationServiceAps {
   id            String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  clientRequestId String?   @unique(map: "mouvement_aps_passation_client_request_id_key") @map("client_request_id") @db.Uuid
   creeLe        DateTime    @default(now()) @map("cree_le") @db.Timestamp(6)
   dateOperation DateTime    @map("date_operation") @db.Date
   materiel      String      @db.VarChar(3000)
@@ -996,6 +1004,7 @@ model SignalementLogistique {
 
 model Ronde {
   id            String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  clientRequestId String?    @unique(map: "ronde_client_request_id_key") @map("client_request_id") @db.Uuid
   creeLe        DateTime    @default(now()) @map("cree_le") @db.Timestamp(6)
   nomParcours   String      @map("nom_parcours") @db.VarChar(160)
   debut         DateTime    @default(now()) @db.Timestamp(6)
@@ -1131,6 +1140,10 @@ model MouvementCourrier {
 
 model MaterielSousTraitant {
   id            String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  clientRequestId String?    @unique @map("client_request_id") @db.Uuid
+  updateRequestId String?    @unique @map("update_request_id") @db.Uuid
+  exitRequestId   String?    @unique @map("exit_request_id") @db.Uuid
+  cancelRequestId String?    @unique @map("cancel_request_id") @db.Uuid
   creeLe        DateTime    @default(now()) @map("cree_le") @db.Timestamp(6)
   dateOperation DateTime    @map("date_operation") @db.Date
   heureEntree   DateTime    @map("heure_entree") @db.Time(0)
@@ -1158,6 +1171,10 @@ model MaterielSousTraitant {
 
 model MaterielStar {
   id            String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  clientRequestId String?    @unique @map("client_request_id") @db.Uuid
+  updateRequestId String?    @unique @map("update_request_id") @db.Uuid
+  exitRequestId   String?    @unique @map("exit_request_id") @db.Uuid
+  cancelRequestId String?    @unique @map("cancel_request_id") @db.Uuid
   creeLe        DateTime    @default(now()) @map("cree_le") @db.Timestamp(6)
   dateOperation DateTime    @map("date_operation") @db.Date
   heureEntree   DateTime    @map("heure_entree") @db.Time(0)
@@ -1291,6 +1308,8 @@ model ServicePoste {
   siteId      String?     @map("site_id") @db.Uuid
   posteId     String?     @map("poste_id") @db.Uuid
   shiftType   ShiftAgent? @map("shift_type")
+  clientRequestId String? @unique(map: "service_poste_client_request_id_key") @map("client_request_id") @db.Uuid
+  endRequestId String? @unique(map: "service_poste_end_request_id_key") @map("end_request_id") @db.Uuid
   startedAt   DateTime    @default(now()) @map("started_at") @db.Timestamp(6)
   endedAt     DateTime?   @map("ended_at") @db.Timestamp(6)
   openedBy    String?     @map("ouvert_par") @db.Uuid
