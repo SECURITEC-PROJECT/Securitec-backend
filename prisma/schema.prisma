@@ -386,6 +386,7 @@ model PassageVehicule {
 
 model Passation {
   id                  String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  clientRequestId     String?     @unique(map: "passation_client_request_id_key") @map("client_request_id") @db.Uuid
   creeLe              DateTime    @default(now()) @map("cree_le") @db.Timestamp(6)
   sortantNom          String      @map("sortant_nom") @db.VarChar(255)
   sortantMatricule    String      @map("sortant_matricule") @db.VarChar(50)
@@ -1303,6 +1304,8 @@ model ServicePoste {
   siteId      String?     @map("site_id") @db.Uuid
   posteId     String?     @map("poste_id") @db.Uuid
   shiftType   ShiftAgent? @map("shift_type")
+  clientRequestId String? @unique(map: "service_poste_client_request_id_key") @map("client_request_id") @db.Uuid
+  endRequestId String? @unique(map: "service_poste_end_request_id_key") @map("end_request_id") @db.Uuid
   startedAt   DateTime    @default(now()) @map("started_at") @db.Timestamp(6)
   endedAt     DateTime?   @map("ended_at") @db.Timestamp(6)
   openedBy    String?     @map("ouvert_par") @db.Uuid

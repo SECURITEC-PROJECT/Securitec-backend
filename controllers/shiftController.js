@@ -38,7 +38,7 @@ export async function getShiftPosts(pool, siteId) {
   return result.rows;
 }
 
-async function createGroupedShift(data, pool, userId) {
+async function createGroupedShift(data, pool, userId, transactionClient = null) {
   const siteId = typeof data.siteId === "string" ? data.siteId : "";
   const posteId = typeof data.posteId === "string" ? data.posteId : "";
   const shiftType = typeof data.shiftType === "string" ? data.shiftType.toUpperCase() : "";
@@ -53,9 +53,37 @@ async function createGroupedShift(data, pool, userId) {
     throw Object.assign(new Error("Chaque agent doit avoir un matricule unique."), { status: 400 });
   }
 
-  const client = await pool.connect();
+  const ownsTransaction = !transactionClient;
+  const client = transactionClient || await pool.connect();
   try {
-    await client.query("BEGIN");
+    if (ownsTransaction) await client.query("BEGIN");
+    if (data.clientRequestId) {
+      const existing = await client.query(
+        `SELECT id,site_id AS "siteId",poste_id AS "posteId",shift_type AS "shiftType"
+         FROM service_poste WHERE client_request_id=$1::uuid AND site_id=$2::uuid`,
+        [data.clientRequestId, siteId],
+      );
+      if (existing.rows[0]) {
+        const service = existing.rows[0];
+        const post = await client.query(`SELECT nom FROM poste WHERE id=$1::uuid`, [service.posteId]);
+        const existingShifts = await client.query(
+          `SELECT id,matricule,nom,prenom,prestataire,site_de_travail,notes,
+                  started_at AT TIME ZONE 'UTC' AS started_at,
+                  ended_at AT TIME ZONE 'UTC' AS ended_at,
+                  poste_id AS "posteId",shift_type AS "shiftType",fonction_service AS "fonctionService"
+           FROM prise_de_poste WHERE service_id=$1::uuid ORDER BY CASE WHEN fonction_service='CHEF' THEN 0 ELSE 1 END`,
+          [service.id],
+        );
+        if (ownsTransaction) await client.query("COMMIT");
+        return {
+          serviceId: service.id,
+          posteId: service.posteId,
+          posteNom: post.rows[0]?.nom || "",
+          shiftType: service.shiftType,
+          shifts: existingShifts.rows.map((shift) => ({ ...shift, serviceId: service.id, posteId: service.posteId, posteNom: post.rows[0]?.nom || "", siteId: service.siteId })),
+        };
+      }
+    }
     const post = await client.query(
       `SELECT p.id, p.nom, p.site_id AS "siteId", s.nom AS "siteName"
        FROM poste p JOIN site s ON s.id=p.site_id
@@ -111,9 +139,9 @@ async function createGroupedShift(data, pool, userId) {
     const serviceId = randomUUID();
     const serviceNotes = typeof data.notes === "string" ? data.notes.trim().slice(0, 5000) : "";
     await client.query(
-      `INSERT INTO service_poste (id,site_id,poste_id,shift_type,started_at,ouvert_par,notes)
-       VALUES ($1::uuid,$2::uuid,$3::uuid,$4::shift_agent,NOW(),$5::uuid,$6)`,
-      [serviceId, siteId, posteId, shiftType, userId, serviceNotes],
+      `INSERT INTO service_poste (id,site_id,poste_id,shift_type,started_at,ouvert_par,notes,client_request_id)
+       VALUES ($1::uuid,$2::uuid,$3::uuid,$4::shift_agent,NOW(),$5::uuid,$6,$7::uuid)`,
+      [serviceId, siteId, posteId, shiftType, userId, serviceNotes, data.clientRequestId || null],
     );
     const leaderResult = await client.query(
       `INSERT INTO prise_de_poste
@@ -142,21 +170,21 @@ async function createGroupedShift(data, pool, userId) {
       );
       shifts.push(result.rows[0]);
     }
-    await client.query("COMMIT");
+    if (ownsTransaction) await client.query("COMMIT");
     return { serviceId, posteId, posteNom: post.rows[0].nom, shiftType, shifts: shifts.map((shift) => ({ ...shift, serviceId, posteId, posteNom: post.rows[0].nom, siteId: post.rows[0].siteId })) };
   } catch (error) {
-    await client.query("ROLLBACK").catch(() => {});
+    if (ownsTransaction) await client.query("ROLLBACK").catch(() => {});
     if (error.code === "23505") throw Object.assign(new Error("Une prise de poste est déjà ouverte pour ce poste et ce service."), { status: 409 });
     throw error;
   } finally {
-    client.release();
+    if (ownsTransaction) client.release();
   }
 }
 
 // Créer une nouvelle prise de poste
-export async function createShift(data, pool, userId) {
+export async function createShift(data, pool, userId, transactionClient = null) {
   if (data?.posteId && data?.shiftType && data?.chefMatricule) {
-    return createGroupedShift(data, pool, userId);
+    return createGroupedShift(data, pool, userId, transactionClient);
   }
   const { matricule, nom, prenom, prestataire, site_de_travail, notes } = data;
 
@@ -202,10 +230,21 @@ export async function createShift(data, pool, userId) {
 }
 
 // Clôturer une prise de poste
-export async function endShift(shiftId, pool, siteId = null) {
+export async function endShift(shiftId, pool, siteId = null, clientRequestId = null) {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
+    if (clientRequestId) {
+      const previous = await client.query(
+        `SELECT id,ended_at AT TIME ZONE 'UTC' AS ended_at FROM service_poste
+         WHERE end_request_id=$1::uuid AND ($2::uuid IS NULL OR site_id=$2::uuid)`,
+        [clientRequestId, siteId],
+      );
+      if (previous.rows[0]) {
+        await client.query("COMMIT");
+        return previous.rows[0];
+      }
+    }
     const service = await client.query(
       `SELECT COALESCE(sp.id,p.service_id,p.id) AS id
        FROM prise_de_poste p
@@ -223,7 +262,10 @@ export async function endShift(shiftId, pool, siteId = null) {
       WHERE service_id=$1::uuid OR id=$1::uuid
       RETURNING id,ended_at AT TIME ZONE 'UTC' AS ended_at`, [serviceId],
     );
-    await client.query(`UPDATE service_poste SET ended_at=COALESCE(ended_at,NOW()) WHERE id=$1::uuid`, [serviceId]);
+    await client.query(
+      `UPDATE service_poste SET ended_at=COALESCE(ended_at,NOW()),end_request_id=COALESCE(end_request_id,$2::uuid) WHERE id=$1::uuid`,
+      [serviceId, clientRequestId],
+    );
     await client.query("COMMIT");
     if (!result.rows.length) return { id: serviceId, ended_at: closedAt };
     return result.rows.find((row) => row.fonction_service === "CHEF") || result.rows[0];
