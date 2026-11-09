@@ -455,7 +455,11 @@ export async function createVehicle(request, response, pool, userId) {
     if (client) await client.query("ROLLBACK").catch(() => {});
     console.error("POST /vehicles failed:", error.code || error.name, error.message || "");
     const status = error.code === "23505" ? 409 : error.status || 500;
-    json(response, status, { error: error.code === "23505" ? "Ce véhicule est déjà enregistré comme présent." : error.status ? error.message : "Impossible d’enregistrer l’entrée du véhicule." });
+    const localRequest = /^(localhost|127\.0\.0\.1)(:\d+)?$/i.test(request.headers.host || "");
+    json(response, status, {
+      error: error.code === "23505" ? "Ce véhicule est déjà enregistré comme présent." : error.status ? error.message : "Impossible d’enregistrer l’entrée du véhicule.",
+      ...(localRequest ? { debug: `${error.code || error.name}: ${error.message || "erreur inconnue"}` } : {}),
+    });
   } finally { client?.release(); }
 }
 
