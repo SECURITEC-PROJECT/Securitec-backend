@@ -744,8 +744,8 @@ export async function createLogisticsEntry(request, response, pool, userId) {
       const verification = cleanText(body.verification, 2000);
       const visaAgent = cleanText(body.visaAgent, 255);
       if (!immatriculation || !timePattern.test(heureSortie) || !designation || !nbr
-        || !facture || !destinataire || !logisticsDocumentTypes.has(typeDocument) || !emetteur || !verification || !visaAgent) {
-        throw Object.assign(new Error("Renseignez le type et le numéro du document, l’émetteur, l’objet, la vérification et le visa de l’agent."), { status: 400 });
+        || !facture || !destinataire || !logisticsDocumentTypes.has(typeDocument)) {
+        throw Object.assign(new Error("Renseignez le type et le numéro du document, la date, le véhicule, l’heure, l’objet et la destination."), { status: 400 });
       }
       const result = await client.query(
         `INSERT INTO flux_logistique
@@ -854,9 +854,8 @@ export async function updateTruckLogisticsEntry(request, response, pool, userId,
       const verification = cleanText(body.verification, 2000);
       const visaAgent = cleanText(body.visaAgent, 255);
       if (!validDate(date) || !immatriculation || !timePattern.test(heureSortie)
-        || !designation || !nbr || !facture || !destinataire || !logisticsDocumentTypes.has(typeDocument)
-        || !emetteur || !verification || !visaAgent) {
-        return json(response, 400, { error: "Renseignez la date, le véhicule, l’heure, le type/numéro du document, l’émetteur, l’objet, la vérification et le visa de l’agent." });
+        || !designation || !nbr || !facture || !destinataire || !logisticsDocumentTypes.has(typeDocument)) {
+        return json(response, 400, { error: "Renseignez la date, le véhicule, l’heure, le type/numéro du document, l’objet et la destination." });
       }
 
       await client.query("BEGIN");
