@@ -120,12 +120,15 @@ export async function handleAccessControl(request, response, pathname) {
       const body = await readJson(request);
       const date = text(body.date, 10);
       const employeeId = text(body.employeeId, 36);
+      const lastName = text(body.lastName, 255);
+      const firstName = text(body.firstName, 255);
+      const matricule = text(body.matricule, 50);
       const keyType = text(body.keyType, 100);
       const departureTime = text(body.departureTime, 5);
       const lieu = text(body.lieu, 255);
       const quantity = Number(body.quantity);
       const siteId = account.siteId || text(body.siteId, 36);
-      if (!validDate(date) || !uuidPattern.test(employeeId)
+      if (!validDate(date) || (employeeId && !uuidPattern.test(employeeId)) || (!employeeId && !lastName)
         || !keyType || !timePattern.test(departureTime) || !lieu
         || !Number.isInteger(quantity) || quantity < 1 || quantity > 10000
         || !uuidPattern.test(siteId)) {
@@ -136,27 +139,33 @@ export async function handleAccessControl(request, response, pathname) {
         await client.query("BEGIN");
         const site = await client.query("SELECT id FROM site WHERE id=$1::uuid AND actif=true", [siteId]);
         if (!site.rows[0]) throw Object.assign(new Error("Site introuvable ou archivé."), { status: 404 });
-        const employee = await client.query(
-          `SELECT e.nom, e.prenom, e.matricule
-           FROM employe e JOIN cle_habilitation ch
-             ON LOWER(TRIM(ch.role_autorise)) = LOWER(TRIM(e.role))
-           WHERE e.id=$1::uuid AND e.actif=true
-             AND (e.site_id=$2::uuid OR e.site_id IS NULL)
-             AND LOWER(TRIM(ch.trousse_cle))=LOWER(TRIM($3))
-           LIMIT 1`,
-          [employeeId, siteId, keyType],
-        );
-        if (!employee.rows[0]) throw Object.assign(new Error("Cet employé n’est pas habilité à prendre ce type de clé sur ce site."), { status: 400 });
+        let person;
+        if (employeeId) {
+          const employee = await client.query(
+            `SELECT e.nom, e.prenom, e.matricule
+             FROM employe e JOIN cle_habilitation ch
+               ON LOWER(TRIM(ch.role_autorise)) = LOWER(TRIM(e.role))
+             WHERE e.id=$1::uuid AND e.actif=true
+               AND (e.site_id=$2::uuid OR e.site_id IS NULL)
+               AND LOWER(TRIM(ch.trousse_cle))=LOWER(TRIM($3))
+             LIMIT 1`,
+            [employeeId, siteId, keyType],
+          );
+          if (!employee.rows[0]) throw Object.assign(new Error("Cet employé n’est pas habilité à prendre ce type de clé sur ce site."), { status: 400 });
+          person = employee.rows[0];
+        } else {
+          person = { nom: lastName, prenom: firstName, matricule };
+        }
         const result = await client.query(
           `INSERT INTO suivi_cle (date_suivi, nom_personne, prenom_personne, matricule_personne, type_cle, nombre_cles, heure_sortie, lieu, site_id, utilisateur_id)
            VALUES ($1,$2,$3,$4,$5,$6,$7::time,$8,$9,$10)
            RETURNING id, cree_le AS "createdAt"`,
-          [date, employee.rows[0].nom, employee.rows[0].prenom, employee.rows[0].matricule, keyType, quantity, departureTime, lieu, siteId, account.sub],
+          [date, person.nom, person.prenom, person.matricule || null, keyType, quantity, departureTime, lieu, siteId, account.sub],
         );
         await client.query("COMMIT");
         json(response, 201, { entry: {
-          id: result.rows[0].id, date, lastName: employee.rows[0].nom, firstName: employee.rows[0].prenom,
-          matricule: employee.rows[0].matricule, keyType, quantity, departureTime, returnTime: null,
+          id: result.rows[0].id, date, lastName: person.nom, firstName: person.prenom,
+          matricule: person.matricule || "", keyType, quantity, departureTime, returnTime: null,
           lieu, siteName: account.siteNom, createdAt: result.rows[0].createdAt,
         } });
       } catch (error) {
