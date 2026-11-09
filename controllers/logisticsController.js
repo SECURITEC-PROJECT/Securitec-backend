@@ -695,7 +695,7 @@ export async function createLogisticsEntry(request, response, pool, userId) {
       return json(response, 201, {
         entry: {
           ...result.rows[0], date, type, heurePointe: time, titre, plomb, designation,
-          immatriculationVehicule, quantite: quantity, cree, chauffeur, magasinier, siteName: site.nom, siteType: site.type_site,
+          immatriculationVehicule: immatriculation, quantite: quantity, cree, chauffeur, magasinier, siteName: site.nom, siteType: site.type_site,
         },
       });
     }
