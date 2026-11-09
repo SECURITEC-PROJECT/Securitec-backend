@@ -311,13 +311,16 @@ export async function exitVisitor(request, response, pool, userId, passageId) {
       : body.equipmentOut === true
         ? "Contrôle de sortie effectué."
         : "Sortie visiteur enregistrée.";
+    const importedExit = typeof body.exitedAt === "string" && !Number.isNaN(Date.parse(body.exitedAt))
+      ? body.exitedAt
+      : null;
     const result = await pool.query(
-      `UPDATE passage p SET sortie=NOW(), notes_sortie=$1, sortie_par_id=$2::uuid,
+      `UPDATE passage p SET sortie=COALESCE($6::timestamp, NOW()), notes_sortie=$1, sortie_par_id=$2::uuid,
          exit_client_request_id=$5::uuid
        FROM visiteur v WHERE p.id=$3::uuid AND p.visiteur_id=v.id AND p.sortie IS NULL
          AND ($4::uuid IS NULL OR v.site_id=$4::uuid)
        RETURNING p.id, p.sortie AS exited_at, p.notes_sortie AS exit_notes`,
-      [note, userId, passageId, siteId, clientRequestId],
+      [note, userId, passageId, siteId, clientRequestId, importedExit],
     );
     if (!result.rows[0]) return json(response, 404, { error: "Visiteur absent du site ou déjà sorti." });
     json(response, 200, { visitor: result.rows[0] });
