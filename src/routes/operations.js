@@ -251,13 +251,21 @@ export async function handleOperations(request, response, pathname) {
       }
       if (request.method === "POST") {
         const body = await readJson(request);
-        const agent = text(body.agentName);
-        const matricule = text(body.matricule, 50);
-        const provider = text(body.providerName, 160);
-        const post = text(body.postName, 160);
-        const siteName = text(body.siteName || account.siteNom);
+        const agent = text(body.agentName || `${text(body.prenom, 120)} ${text(body.nom, 120)}`);
+        const matricule = text(body.matricule || body.chefMatricule, 50);
+        const provider = text(body.providerName || body.prestataire || "Non renseigné", 160);
+        const post = text(body.postName || body.posteNom, 160);
+        const siteName = text(body.siteName || body.site_de_travail || account.siteNom);
+        const startedAt = text(body.startedAt, 40);
+        const endedAt = text(body.endedAt, 40);
+        const shiftType = ["JOUR", "NUIT"].includes(body.shiftType) ? body.shiftType : null;
+        const validTimestamp = (value) => !value || Number.isFinite(Date.parse(value));
         if (!agent || !matricule || !provider || !post || !siteName) {
           json(response, 400, { error: "Renseignez agent, matricule, prestataire, site et poste." });
+          return;
+        }
+        if (!validTimestamp(startedAt) || !validTimestamp(endedAt) || (startedAt && endedAt && Date.parse(endedAt) < Date.parse(startedAt))) {
+          json(response, 400, { error: "Vérifiez les dates et heures de prise et de fin de service." });
           return;
         }
         const client = await pool.connect();
@@ -266,12 +274,12 @@ export async function handleOperations(request, response, pathname) {
           if (account.siteId && account.siteNom && siteName.toLocaleLowerCase() !== account.siteNom.toLocaleLowerCase()) throw Object.assign(new Error("Le compte est limité au site associé à sa session."), { status: 403 });
           const siteId = account.siteId || await getOrCreateSite(client, siteName, body.siteType);
           const result = await client.query(
-            `INSERT INTO vacation (ouverture, utilisateur_id, agent_nom, matricule, prestataire_nom, site_id, poste_nom, shift_type, checklist, observations)
-             VALUES (COALESCE($1::timestamptz,NOW()),$2,$3,$4,$5,$6,$7,$8::shift_agent,$9::jsonb,$10) RETURNING id, ouverture AS started_at`,
-             [body.startedAt || null, account.sub, agent, matricule, provider, siteId, post, null, JSON.stringify(body.checklist || {}), text(body.observations, 20000)],
+            `INSERT INTO vacation (ouverture, cloture, utilisateur_id, agent_nom, matricule, prestataire_nom, site_id, poste_nom, shift_type, checklist, observations)
+             VALUES (COALESCE($1::timestamptz,NOW()),$2::timestamptz,$3,$4,$5,$6,$7,$8,$9::shift_agent,$10::jsonb,$11) RETURNING id, ouverture AS started_at, cloture AS ended_at`,
+             [startedAt || null, endedAt || null, account.sub, agent, matricule, provider, siteId, post, shiftType, JSON.stringify(body.checklist || {}), text(body.observations, 20000)],
           );
           await client.query("COMMIT");
-          json(response, 201, { shift: { ...result.rows[0], agent_name: agent, matricule, prestataire: provider, site: siteName, siteId, post_name: post, shift: null, ended_at: null, checklist: body.checklist || {}, notes: text(body.observations, 20000) } });
+          json(response, 201, { shift: { ...result.rows[0], agent_name: agent, matricule, prestataire: provider, site: siteName, siteId, post_name: post, shift: shiftType, ended_at: result.rows[0].ended_at, checklist: body.checklist || {}, notes: text(body.observations, 20000) } });
         } catch (error) {
           await client.query("ROLLBACK").catch(() => {});
           json(response, error.status || (error.code === "23505" ? 409 : 500), { error: error.message || (error.code === "23505" ? "Une vacation est déjà ouverte pour ce matricule." : "Ouverture de vacation impossible.") });

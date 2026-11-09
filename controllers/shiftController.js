@@ -199,6 +199,18 @@ export async function createShift(data, pool, userId, transactionClient = null) 
   }
 
   const serviceId = randomUUID();
+  const startedAt = typeof data.startedAt === "string" && Number.isFinite(Date.parse(data.startedAt))
+    ? new Date(data.startedAt).toISOString()
+    : null;
+  const endedAt = typeof data.endedAt === "string" && Number.isFinite(Date.parse(data.endedAt))
+    ? new Date(data.endedAt).toISOString()
+    : null;
+  if (data.startedAt && !startedAt || data.endedAt && !endedAt || startedAt && endedAt && Date.parse(endedAt) < Date.parse(startedAt)) {
+    throw Object.assign(new Error("Vérifiez les dates et heures de prise et de fin de service."), { status: 400 });
+  }
+  const shiftType = ["JOUR", "NUIT"].includes(String(data.shiftType || "").toUpperCase())
+    ? String(data.shiftType).toUpperCase()
+    : null;
   const values = [
     matricule,
     nom,
@@ -211,22 +223,39 @@ export async function createShift(data, pool, userId, transactionClient = null) 
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
-    const site = await client.query(`SELECT id FROM site WHERE LOWER(BTRIM(nom))=LOWER(BTRIM($1)) LIMIT 1`, [values[4]]);
+    const site = data.siteId
+      ? await client.query(`SELECT id,nom FROM site WHERE id=$1::uuid LIMIT 1`, [data.siteId])
+      : await client.query(`SELECT id,nom FROM site WHERE LOWER(BTRIM(nom))=LOWER(BTRIM($1)) LIMIT 1`, [values[4]]);
+    if (data.siteId && !site.rows[0]) throw Object.assign(new Error("Le site sélectionné est introuvable."), { status: 400 });
+    const siteName = site.rows[0]?.nom || values[4];
+    const postName = typeof data.posteNom === "string" ? data.posteNom.trim() : "";
+    const post = postName && site.rows[0]
+      ? await client.query(`SELECT id FROM poste WHERE site_id=$1::uuid AND LOWER(BTRIM(nom))=LOWER(BTRIM($2)) AND actif=true LIMIT 1`, [site.rows[0].id, postName])
+      : { rows: [] };
     await client.query(
-      `INSERT INTO service_poste (id,site_id,started_at,ouvert_par,notes) VALUES ($1::uuid,$2::uuid,NOW(),$3::uuid,$4)`,
-      [serviceId, site.rows[0]?.id || null, userId || null, values[5]],
+      `INSERT INTO service_poste (id,site_id,poste_id,shift_type,started_at,ended_at,ouvert_par,notes)
+       VALUES ($1::uuid,$2::uuid,$3::uuid,$4::shift_agent,COALESCE($5::timestamp,NOW()),$6::timestamp,$7::uuid,$8)`,
+      [serviceId, site.rows[0]?.id || null, post.rows[0]?.id || null, shiftType, startedAt, endedAt, userId || null, values[5]],
     );
     const result = await client.query(
       `INSERT INTO prise_de_poste (matricule,nom,prenom,prestataire,site_de_travail,notes,started_at,service_id,fonction_service,ouvert_par)
-       VALUES ($1,$2,$3,$4,$5,$6,NOW(),$7::uuid,'CHEF',$8::uuid)
+       VALUES ($1,$2,$3,$4,$5,$6,COALESCE($7::timestamp,NOW()),$8::uuid,'CHEF',$9::uuid)
        RETURNING id,matricule,nom,prenom,prestataire,site_de_travail,notes,
                  started_at AT TIME ZONE 'UTC' AS started_at,
                  ended_at AT TIME ZONE 'UTC' AS ended_at,poste_id AS "posteId",
                  service_id AS "serviceId",shift_type AS "shiftType",fonction_service AS "fonctionService"`,
-      [...values, serviceId, userId || null],
+      [values[0], values[1], values[2], values[3], siteName, values[5], startedAt, serviceId, userId || null],
     );
+    if (post.rows[0]) {
+      await client.query(
+        `UPDATE prise_de_poste SET poste_id=$1::uuid,shift_type=$2::shift_agent,ended_at=$3::timestamp WHERE id=$4::uuid`,
+        [post.rows[0].id, shiftType, endedAt, result.rows[0].id],
+      );
+    } else if (endedAt) {
+      await client.query(`UPDATE prise_de_poste SET ended_at=$1::timestamp WHERE id=$2::uuid`, [endedAt, result.rows[0].id]);
+    }
     await client.query("COMMIT");
-    return { ...result.rows[0], serviceId };
+    return { ...result.rows[0], siteId: site.rows[0]?.id || null, posteId: post.rows[0]?.id || null, posteNom: postName || null, shiftType, serviceId };
   } catch (error) {
     await client.query("ROLLBACK").catch(() => {});
     throw error;
