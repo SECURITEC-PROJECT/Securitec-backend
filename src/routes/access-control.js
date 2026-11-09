@@ -102,6 +102,9 @@ export async function handleAccessControl(request, response, pathname) {
           k.matricule_personne AS matricule, k.type_cle AS "keyType", k.nombre_cles AS quantity,
           to_char(k.heure_sortie,'HH24:MI') AS "departureTime",
           to_char(k.heure_retour,'HH24:MI') AS "returnTime",
+          k.date_retour::text AS "returnDate", k.non_rendu AS "notReturned",
+          k.nom_retourneur AS "returnerLastName", k.prenom_retourneur AS "returnerFirstName",
+          k.matricule_retourneur AS "returnerMatricule",
           to_char(k.perception_matin,'HH24:MI') AS "perceptionMatin", k.responsable_perception_matin AS "responsablePerceptionMatin",
           to_char(k.reintegration_matin,'HH24:MI') AS "reintegrationMatin", k.responsable_reintegration_matin AS "responsableReintegrationMatin",
           to_char(k.perception_apres_midi,'HH24:MI') AS "perceptionApresMidi", k.responsable_perception_apres_midi AS "responsablePerceptionApresMidi",
@@ -123,6 +126,13 @@ export async function handleAccessControl(request, response, pathname) {
       const lastName = text(body.lastName, 255);
       const firstName = text(body.firstName, 255);
       const matricule = text(body.matricule, 50);
+      const returnDate = text(body.returnDate, 10);
+      const returnTime = text(body.returnTime, 5);
+      const returnerLastName = text(body.returnerLastName, 100);
+      const returnerFirstName = text(body.returnerFirstName, 100);
+      const returnerMatricule = text(body.returnerMatricule, 50);
+      const observations = text(body.observations, 20000);
+      const notReturned = body.notReturned === true;
       const keyType = text(body.keyType, 100);
       const departureTime = text(body.departureTime, 5);
       const lieu = text(body.lieu, 255);
@@ -130,6 +140,7 @@ export async function handleAccessControl(request, response, pathname) {
       const siteId = account.siteId || text(body.siteId, 36);
       if (!validDate(date) || (employeeId && !uuidPattern.test(employeeId)) || (!employeeId && !lastName)
         || !keyType || !timePattern.test(departureTime) || !lieu
+        || (returnDate && !validDate(returnDate)) || (returnTime && !timePattern.test(returnTime))
         || !Number.isInteger(quantity) || quantity < 1 || quantity > 10000
         || !uuidPattern.test(siteId)) {
         json(response, 400, { error: "Vérifiez la date, l’employé, le site, le type de clé, le lieu, la quantité et l’heure de sortie." }); return;
@@ -157,15 +168,17 @@ export async function handleAccessControl(request, response, pathname) {
           person = { nom: lastName, prenom: firstName, matricule };
         }
         const result = await client.query(
-          `INSERT INTO suivi_cle (date_suivi, nom_personne, prenom_personne, matricule_personne, type_cle, nombre_cles, heure_sortie, lieu, site_id, utilisateur_id)
-           VALUES ($1,$2,$3,$4,$5,$6,$7::time,$8,$9,$10)
+          `INSERT INTO suivi_cle (date_suivi, nom_personne, prenom_personne, matricule_personne, type_cle, nombre_cles, heure_sortie, lieu, observations, heure_retour, date_retour, nom_retourneur, prenom_retourneur, matricule_retourneur, non_rendu, site_id, utilisateur_id)
+           VALUES ($1,$2,$3,$4,$5,$6,$7::time,$8,$9,$10::time,$11::date,$12,$13,$14,$15,$16,$17)
            RETURNING id, cree_le AS "createdAt"`,
-          [date, person.nom, person.prenom, person.matricule || null, keyType, quantity, departureTime, lieu, siteId, account.sub],
+          [date, person.nom, person.prenom, person.matricule || null, keyType, quantity, departureTime, lieu, observations || null, returnTime || null, returnDate || null, returnerLastName || null, returnerFirstName || null, returnerMatricule || null, notReturned, siteId, account.sub],
         );
         await client.query("COMMIT");
         json(response, 201, { entry: {
           id: result.rows[0].id, date, lastName: person.nom, firstName: person.prenom,
-          matricule: person.matricule || "", keyType, quantity, departureTime, returnTime: null,
+          matricule: person.matricule || "", keyType, quantity, departureTime, returnTime: returnTime || null,
+          returnDate: returnDate || null, returnerLastName: returnerLastName || null, returnerFirstName: returnerFirstName || null,
+          returnerMatricule: returnerMatricule || null, notReturned, observations: observations || null,
           lieu, siteName: account.siteNom, createdAt: result.rows[0].createdAt,
         } });
       } catch (error) {

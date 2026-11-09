@@ -70,7 +70,66 @@ export async function handleShiftRoutes(request, response, pool, pathname, jwtSe
       const newShift = await createShift(data, pool, user.id);
       json(response, 201, newShift);
     } catch (error) {
-      json(response, error.status || 400, { error: error.message || "Erreur lors de la création de la prise de poste." });
+      if (error.code) console.error("Erreur POST /api/shifts:", error.code, error.message || "");
+      json(response, error.status || (error.code === "23505" ? 409 : 500), { error: error.message || "Erreur lors de la création de la prise de poste." });
+    }
+    return true;
+  }
+
+  const shiftDelete = method === "DELETE" && /^\/api\/shifts\/([0-9a-f-]{36})$/i.exec(pathname);
+  if (shiftDelete) {
+    const shiftId = shiftDelete[1];
+    let client;
+    try {
+      const { account } = await requireAccount();
+      if (![1, 2].includes(Number(account.role))) throw Object.assign(new Error("Seul un chef de poste ou un administrateur peut supprimer une prise de service."), { status: 403 });
+      client = await pool.connect();
+      await client.query("BEGIN");
+      const directService = await client.query(`SELECT id,site_id AS "siteId" FROM service_poste WHERE id=$1::uuid FOR UPDATE`, [shiftId]);
+      const found = directService.rows[0] ? directService : await client.query(
+        `SELECT COALESCE(p.service_id,p.id) AS id,sp.site_id AS "siteId"
+         FROM prise_de_poste p
+         LEFT JOIN service_poste sp ON sp.id=COALESCE(p.service_id,p.id)
+         WHERE p.id=$1::uuid OR p.service_id=$1::uuid
+         LIMIT 1 FOR UPDATE OF p`,
+        [shiftId],
+      );
+      const service = found.rows[0];
+      if (!service) {
+        await client.query("COMMIT");
+        json(response, 200, { deleted: false, serviceId: shiftId, deletedFluxCount: 0 });
+        return true;
+      }
+      if (Number(account.role) !== 1 && (!account.siteId || account.siteId !== service.siteId)) throw Object.assign(new Error("Vous ne pouvez supprimer que les prises de service de votre site."), { status: 403 });
+
+      const linkedFlux = await client.query(
+        `SELECT f.id FROM flux_logistique f
+         WHERE f.service_poste_id=$1::uuid
+            OR f.prise_de_poste_id IN (SELECT p.id FROM prise_de_poste p WHERE p.service_id=$1::uuid OR p.id=$1::uuid)
+         FOR UPDATE OF f`,
+        [service.id],
+      );
+      const fluxIds = linkedFlux.rows.map((row) => row.id);
+      if (fluxIds.length) {
+        await client.query(`DELETE FROM audit_flux_logistique WHERE flux_id=ANY($1::uuid[])`, [fluxIds]);
+        await client.query(`DELETE FROM flux_logistique_document WHERE flux_id=ANY($1::uuid[])`, [fluxIds]);
+        await client.query(`DELETE FROM flux_logistique WHERE id=ANY($1::uuid[])`, [fluxIds]);
+      }
+
+      await client.query(`DELETE FROM prise_de_poste WHERE service_id=$1::uuid OR id=$1::uuid`, [service.id]);
+      await client.query(`DELETE FROM service_poste WHERE id=$1::uuid`, [service.id]);
+      await client.query("COMMIT");
+      json(response, 200, { deleted: true, serviceId: service.id, deletedFluxCount: fluxIds.length });
+    } catch (error) {
+      if (client) await client.query("ROLLBACK").catch(() => {});
+      if (error.code) console.error("Erreur DELETE /api/shifts:", error.code, error.message || "");
+      const status = error.status || (error.code === "23514" ? 409 : 500);
+      const message = error.code === "23514"
+        ? "Suppression bloquée par une contrainte sur des données associées. Aucune ligne n’a été supprimée."
+        : error.message || "Erreur lors de la suppression de la prise de service.";
+      json(response, status, { error: message });
+    } finally {
+      client?.release();
     }
     return true;
   }
