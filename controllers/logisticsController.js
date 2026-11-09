@@ -94,15 +94,20 @@ async function resolveOpenPostShift(client, siteId, requestedId = null, posteId 
     throw Object.assign(new Error("Le poste sélectionné est invalide."), { status: 400 });
   }
   const result = await client.query(
-    `SELECT DISTINCT ON (sp.id) p.id
+    `SELECT DISTINCT ON (COALESCE(sp.id,p.service_id,p.id)) p.id
      FROM prise_de_poste p
-     JOIN service_poste sp ON sp.id=p.service_id
-     JOIN site s ON LOWER(BTRIM(s.nom)) = LOWER(BTRIM(p.site_de_travail))
-     WHERE s.id=$1::uuid AND s.actif=true
-       AND ($2::uuid IS NULL OR p.id=$2::uuid OR sp.id=$2::uuid)
-       AND ($3::uuid IS NULL OR sp.poste_id=$3::uuid)
+     LEFT JOIN service_poste sp ON sp.id=COALESCE(p.service_id,p.id)
+     LEFT JOIN poste po ON po.id=COALESCE(sp.poste_id,p.poste_id)
+     JOIN site s ON s.id=$1::uuid AND s.actif=true
+     WHERE (sp.site_id=s.id OR po.site_id=s.id OR EXISTS (
+       SELECT 1 FROM site legacy_site
+       WHERE legacy_site.id=s.id
+         AND LOWER(BTRIM(legacy_site.nom))=LOWER(BTRIM(p.site_de_travail))
+     ))
+       AND ($2::uuid IS NULL OR p.id=$2::uuid OR sp.id=$2::uuid OR p.service_id=$2::uuid)
+       AND ($3::uuid IS NULL OR COALESCE(sp.poste_id,p.poste_id)=$3::uuid)
        AND p.ended_at IS NULL AND sp.ended_at IS NULL
-     ORDER BY sp.id, CASE WHEN p.fonction_service='CHEF' THEN 0 ELSE 1 END, p.started_at DESC LIMIT 2`,
+     ORDER BY COALESCE(sp.id,p.service_id,p.id), CASE WHEN p.fonction_service='CHEF' THEN 0 ELSE 1 END, p.started_at DESC LIMIT 2`,
     [siteId, requestedId, posteId],
   );
   if (!requestedId && !posteId && result.rows.length > 1) {
@@ -121,21 +126,6 @@ async function querySiteForRead(pool, account, request) {
   if (!siteId) return null;
   const result = await pool.query("SELECT id FROM site WHERE id = $1::uuid AND actif = true LIMIT 1", [siteId]);
   return result.rows[0]?.id || null;
-}
-
-async function requireRegisteredDriverVehicle(pool, siteId, vehicule) {
-  const result = await pool.query(
-    `SELECT 1 FROM chauffeur
-     WHERE site_id = $1::uuid AND LOWER(BTRIM(vehicule)) = LOWER($2)
-     LIMIT 1`,
-    [siteId, vehicule],
-  );
-  if (!result.rows[0]) {
-    throw Object.assign(
-      new Error("Ce véhicule n’est pas enregistré dans le module Chauffeurs pour ce site."),
-      { status: 400 },
-    );
-  }
 }
 
 export async function getLogisticsEntries(request, response, pool, userId) {
@@ -635,7 +625,6 @@ export async function createLogisticsEntry(request, response, pool, userId) {
       if (!["LEVURE", "DRECHE"].includes(typeDechet) || !timePattern.test(time) || !numeroPesage || !Number.isFinite(poids) || poids <= 0 || poids > 9999999999.99 || !destinataire || !vehicule || !transporteur) {
         throw Object.assign(new Error("Choisissez le type de sortie et renseignez l’heure, le pesage, un poids positif, le destinataire, le véhicule et le transporteur."), { status: 400 });
       }
-      await requireRegisteredDriverVehicle(client, siteId, vehicule);
       const result = await client.query(
         `INSERT INTO flux_logistique
            (date_operation, type_flux, type_dechet, heure_sortie, numero_pesage, facture, plomb, poids, destinataire, vehicule, transporteur, site_id, utilisateur_id)
@@ -1099,7 +1088,6 @@ export async function updateWasteEntry(request, response, pool, userId, entryId)
       await client.query("ROLLBACK");
       return json(response, 404, { error: "Sortie de déchets introuvable sur ce site." });
     }
-    await requireRegisteredDriverVehicle(client, siteId, vehicule);
     const result = await client.query(
       `UPDATE flux_logistique
        SET date_operation = $2::date, type_dechet = $3, heure_sortie = $4::time, numero_pesage = $5,

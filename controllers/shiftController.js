@@ -9,15 +9,21 @@ export async function getShifts(request, response, pool, siteId = null) {
              p.ended_at AT TIME ZONE 'UTC' AS ended_at, p.poste_id AS "posteId",
              p.shift_type AS "shiftType", p.fonction_service AS "fonctionService",
              COALESCE(sp.id, p.service_id, p.id) AS "serviceId", po.nom AS "posteNom",
-             COALESCE(sp.site_id, s.id) AS "siteId",
+             COALESCE($1::uuid, sp.site_id, po.site_id, s.id) AS "siteId",
              sp.started_at AT TIME ZONE 'UTC' AS "serviceStartedAt",
              sp.ended_at AT TIME ZONE 'UTC' AS "serviceEndedAt",
              sp.notes AS "serviceNotes"
       FROM prise_de_poste p
       LEFT JOIN service_poste sp ON sp.id=COALESCE(p.service_id,p.id)
-      LEFT JOIN site s ON LOWER(BTRIM(s.nom))=LOWER(BTRIM(p.site_de_travail))
-      LEFT JOIN poste po ON po.id=p.poste_id
-      WHERE ($1::uuid IS NULL OR s.id=$1::uuid)
+      LEFT JOIN poste po ON po.id=COALESCE(sp.poste_id,p.poste_id)
+      LEFT JOIN site s ON s.id=COALESCE(
+        sp.site_id,
+        po.site_id,
+        (SELECT legacy_site.id FROM site legacy_site
+         WHERE LOWER(BTRIM(legacy_site.nom))=LOWER(BTRIM(p.site_de_travail))
+         LIMIT 1)
+      )
+      WHERE ($1::uuid IS NULL OR sp.site_id=$1::uuid OR po.site_id=$1::uuid OR s.id=$1::uuid)
       ORDER BY p.started_at DESC;
     `;
     const result = await pool.query(query, [siteId]);
