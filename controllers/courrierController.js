@@ -93,7 +93,7 @@ export async function createCourrierMovement(request, response, pool, userId) {
     const siteId = await resolveSite(client, account, body.siteId);
     if (clientRequestId) {
       const replay = await client.query(
-        `SELECT id, date_operation::text AS date, to_char(heure_entree, 'HH24:MI') AS "heureEntree",
+        `SELECT m.id, date_operation::text AS date, to_char(heure_entree, 'HH24:MI') AS "heureEntree",
                 prenom, designation, nombre, to_char(heure_sortie, 'HH24:MI') AS "heureSortie",
                 annule_le AS "annuleLe", modifie_le AS "updatedAt", m.site_id AS "siteId",
                 service_poste_id AS "servicePosteId", s.nom AS "siteName"
@@ -119,7 +119,7 @@ export async function createCourrierMovement(request, response, pool, userId) {
     );
     if (!result.rows[0] && clientRequestId) {
       const replay = await client.query(
-        `SELECT id, date_operation::text AS date, to_char(heure_entree, 'HH24:MI') AS "heureEntree",
+        `SELECT m.id, date_operation::text AS date, to_char(heure_entree, 'HH24:MI') AS "heureEntree",
                 prenom, designation, nombre, to_char(heure_sortie, 'HH24:MI') AS "heureSortie",
                 annule_le AS "annuleLe", modifie_le AS "updatedAt", site_id AS "siteId",
                 service_poste_id AS "servicePosteId", s.nom AS "siteName"
@@ -219,7 +219,7 @@ export async function updateCourrierMovement(request, response, pool, userId, en
     const siteId = await resolveSite(client, account, body.siteId);
     if (clientRequestId) {
       const replay = await client.query(
-        `SELECT id, date_operation::text AS date, to_char(heure_entree, 'HH24:MI') AS "heureEntree",
+        `SELECT m.id, date_operation::text AS date, to_char(heure_entree, 'HH24:MI') AS "heureEntree",
                 prenom, designation, nombre, to_char(heure_sortie, 'HH24:MI') AS "heureSortie",
                 annule_le AS "annuleLe", modifie_le AS "updatedAt", site_id AS "siteId",
                 s.nom AS "siteName", service_poste_id AS "servicePosteId"
