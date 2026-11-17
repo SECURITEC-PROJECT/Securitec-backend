@@ -1,3 +1,0 @@
-ALTER TABLE "chauffeur"
-  ADD COLUMN IF NOT EXISTS "vehicule" VARCHAR(160),
-  ADD COLUMN IF NOT EXISTS "matricule" VARCHAR(40);
