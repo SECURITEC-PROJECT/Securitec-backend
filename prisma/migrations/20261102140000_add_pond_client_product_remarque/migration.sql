@@ -1,4 +1,0 @@
-ALTER TABLE "pond_brut"
-  ADD COLUMN "client_fournisseur" VARCHAR(255) NOT NULL DEFAULT '',
-  ADD COLUMN "produit" VARCHAR(255) NOT NULL DEFAULT '',
-  ADD COLUMN "remarque" TEXT NOT NULL DEFAULT '';

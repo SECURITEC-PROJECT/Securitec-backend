@@ -1,2 +1,0 @@
-ALTER TABLE "site"
-  ADD COLUMN "actif" BOOLEAN NOT NULL DEFAULT true;

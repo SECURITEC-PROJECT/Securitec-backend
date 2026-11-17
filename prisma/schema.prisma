@@ -7,1405 +7,375 @@ datasource db {
   provider = "postgresql"
 }
 
-enum TypeSite {
+enum SiteType {
   USINE
   AGENCE
 
-  @@map("type_site")
-}
-
-enum ShiftAgent {
-  JOUR
-  NUIT
-
-  @@map("shift_agent")
+  @@map("site_type")
 }
 
 model Site {
-  id                      String                  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  nom                     String                  @db.VarChar(255)
-  adresse                 String                  @db.Text
-  actif                   Boolean                 @default(true)
-  horairesOuverture       String?                 @map("horaires_ouverture") @db.VarChar(255)
-  typeSite                TypeSite                @default(USINE) @map("type_site")
-  utilisateurs            Utilisateur[]
-  visiteurs               Visiteur[]
-  zones                   Zone[]
-  postes                  Poste[]
-  servicesSite            ServiceSite[]
-  servicesPoste           ServicePoste[]
-  contactsUrgence        ContactUrgence[]
-  employes                Employe[]
-  comptesRendus           CompteRendu[]
-  vacations               Vacation[]
-  passations              Passation[]
-  mouvementsVehicule      PassageVehicule[]
-  suivisCles              SuiviCle[]
-  controlesAlcoolemie     ControleAlcoolemie[]
-  fluxLogistiques         FluxLogistique[]
-  pondBrut                PondBrut[]
-  signalementsLogistiques SignalementLogistique[]
-  rondes                  Ronde[]
-  pointsVigilance         PointVigilance[]
-  journalMainCourante     MainCourante[]
-  mouvementsCourrier     MouvementCourrier[]
-  materielsSousTraitant  MaterielSousTraitant[]
-  materielsStar          MaterielStar[]
-  questionnairesVisiteurs QuestionnaireVisiteur[]
-  declarationsObjets      DeclarationObjet[]
-  documentsSite           DocumentSite[]
-  pointagesApsJour        PointageApsJour[]
-  pointagesApsNuit        PointageApsNuit[]
-  configurationsPostesAps ConfigurationPostesAps[]
-  consignesJournal        ConsigneJournal[]
-  chauffeurs              Chauffeur[]
-  transporteurs           Transporteur[]
-  truckChecklists         TruckChecklist[]
-  registreOrdures         RegistreOrdure[]
-  registreFerrailles      RegistreFerraille[]
-  mouvementsVelos         MouvementVelo[]
-  mouvementsMoto          MouvementMoto[]
-  mouvementsAps           MouvementAps[]
-  mouvementsEvenementsAps MouvementApsEvenement[]
-  passationsServiceAps     PassationServiceAps[]
-  configurationsPostesMouvementAps ConfigurationPostesMouvementAps[]
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name      String   @unique @db.VarChar(255)
+  type      SiteType
+  address   String   @default("") @db.Text
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  users     User[]
+  posts     Post[]
+  shifts    Shift[]
+  minutes   Minutes[]
+  logo      SiteLogo?
+
   @@map("site")
 }
 
-model Utilisateur {
-  id                      String                  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  nom                     String                  @db.VarChar(255)
-  identifiant             String                  @unique @db.VarChar(100)
-  role                    Int
-  pinHache                String                  @map("pin_hache") @db.VarChar(255)
-  siteId                  String?                 @map("site_id") @db.Uuid
-  site                    Site?                   @relation(fields: [siteId], references: [id], onDelete: SetNull, map: "fk_utilisateur_site")
-  contactsUrgenceModifies ContactUrgence[] @relation("ContactUrgenceModifiePar")
-  consignes               Consigne[]
-  badges                  Badge[]
-  vacations               Vacation[]
-  passations              Passation[]
-  servicesPosteOuverts    ServicePoste[] @relation("ServicePosteOuvertPar")
-  audits                  AuditCompteRendu[]
-  suivisCles              SuiviCle[]
-  controlesAlcoolemie     ControleAlcoolemie[]
-  fluxLogistiques         FluxLogistique[]
-  pondBrut                PondBrut[]
-  signalementsLogistiques SignalementLogistique[]
-  rondes                  Ronde[]
-  pointsVigilance         PointVigilance[]
-  journalMainCourante     MainCourante[]
-  mouvementsCourrier     MouvementCourrier[]
-  materielsSousTraitant  MaterielSousTraitant[]
-  materielsStar          MaterielStar[]
-  questionnairesVisiteurs QuestionnaireVisiteur[]
-  declarationsObjets      DeclarationObjet[]
-  documentsSite           DocumentSite[]
-  pointagesApsJour        PointageApsJour[]
-  pointagesApsNuit        PointageApsNuit[]
-  configurationsPostesAps ConfigurationPostesAps[]
-  consignesJournal        ConsigneJournal[]
-  chauffeurs              Chauffeur[]
-  transporteurs           Transporteur[]
-  truckChecklists         TruckChecklist[]
-  registreOrdures         RegistreOrdure[]
-  registreFerrailles      RegistreFerraille[]
-  mouvementsVelos         MouvementVelo[]
-  mouvementsMoto          MouvementMoto[]
-  mouvementsAps           MouvementAps[]
-  mouvementsEvenementsAps MouvementApsEvenement[]
-  passationsServiceAps     PassationServiceAps[]
-  configurationsPostesMouvementAps ConfigurationPostesMouvementAps[]
+/// Compte de connexion (identifiant + PIN). Un administrateur (profile = 1) n'est rattaché à aucun site : il les voit tous.
+model User {
+  id         String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name       String           @db.VarChar(255)
+  identifier String           @unique @db.VarChar(100)
+  /// Matricule propre à chaque utilisateur : sert aussi d'identifiant de connexion.
+  matricule  String           @unique @db.VarChar(50)
+  pinHash    String           @map("pin_hash") @db.VarChar(255)
+  /// Profil de base du rôle (1 = administrateur, 2 = chef de poste, ...), recopié depuis le rôle.
+  profile    Int
+  active     Boolean          @default(true)
+  siteId     String?          @map("site_id") @db.Uuid
+  site       Site?            @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  roleId     String           @map("role_id") @db.Uuid
+  role       AccessRole       @relation(fields: [roleId], references: [id])
+  overrides  UserPermission[]
+  details    UserProfile?
+  documents  UserDocument[]
+  photo      UserPhoto?
+  postAssignments PostUser[]
+  reportsMade     SheetReport[] @relation("ReportAuthor")
+  reportsResolved SheetReport[] @relation("ReportResolver")
+  notifications   Notification[]
+  shifts          Shift[]
+  sheetRows  SheetRow[]
+  createdAt  DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt  DateTime         @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  @@index([siteId], map: "idx_utilisateur_site")
-  @@map("utilisateur")
+  @@index([siteId])
+  @@index([roleId])
+  @@map("app_user")
 }
 
-model Consigne {
-  id            String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  message       String      @db.Text
-  cible         String      @db.VarChar(255)
-  urgence       Int
-  validite      DateTime    @db.Timestamp(6)
-  utilisateurId String      @map("utilisateur_id") @db.Uuid
-  utilisateur   Utilisateur @relation(fields: [utilisateurId], references: [id], onDelete: Cascade, map: "fk_consigne_utilisateur")
+/// Rôle : un ensemble de permissions « module.action » (voir src/permissions/catalog.js).
+model AccessRole {
+  id          String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  code        String           @unique @db.VarChar(80)
+  name        String           @db.VarChar(120)
+  description String?          @db.Text
+  baseProfile Int              @default(5) @map("base_profile")
+  system      Boolean          @default(false)
+  active      Boolean          @default(true)
+  permissions RolePermission[]
+  users       User[]
+  createdAt   DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime         @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  @@index([utilisateurId], map: "idx_consigne_utilisateur")
-  @@map("consigne")
+  @@map("access_role")
 }
 
-model ConsigneJournal {
-  id            String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  siteId        String      @map("site_id") @db.Uuid
-  dateConsigne  DateTime    @map("date_consigne") @db.Date
-  heure         DateTime    @db.Time(0)
-  consigne      String      @db.Text
-  emetteur      String      @db.VarChar(255)
-  destinataire  String      @db.VarChar(255)
-  dateFin       DateTime?   @map("date_fin") @db.Date
-  jusquauNouvelOrdre Boolean @default(false) @map("jusquau_nouvel_ordre")
-  posteId       String?     @map("poste_id") @db.Uuid
-  priseDePosteId String?    @map("prise_de_poste_id") @db.Uuid
-  servicePosteId String?   @map("service_poste_id") @db.Uuid
-  utilisateurId String      @map("utilisateur_id") @db.Uuid
-  creeLe        DateTime    @default(now()) @map("cree_le") @db.Timestamp(6)
-  site          Site        @relation(fields: [siteId], references: [id], onDelete: Restrict, map: "fk_consigne_journal_site")
-  servicePoste  ServicePoste? @relation(fields: [servicePosteId], references: [id], onDelete: SetNull, map: "fk_consigne_journal_service_poste")
-  utilisateur   Utilisateur @relation(fields: [utilisateurId], references: [id], onDelete: Restrict, map: "fk_consigne_journal_utilisateur")
+model RolePermission {
+  roleId     String     @map("role_id") @db.Uuid
+  permission String     @db.VarChar(100)
+  role       AccessRole @relation(fields: [roleId], references: [id], onDelete: Cascade)
 
-  @@index([siteId, dateConsigne, heure], map: "idx_consigne_journal_site_date")
-  @@index([siteId, posteId, dateFin], map: "idx_consigne_journal_site_poste_active")
-  @@index([servicePosteId, dateConsigne(sort: Desc)], map: "idx_consigne_journal_service_poste")
-  @@map("consigne_journal")
+  @@id([roleId, permission])
+  @@map("role_permission")
 }
 
-model Badge {
-  id            String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  uidNfc        String         @unique @map("uid_nfc") @db.VarChar(255)
-  couleur       String?        @db.VarChar(50)
-  statut        Int
-  validite      DateTime       @db.Timestamp(6)
-  utilisateurId String?        @map("utilisateur_id") @db.Uuid
-  utilisateur   Utilisateur?   @relation(fields: [utilisateurId], references: [id], onDelete: SetNull, map: "fk_badge_utilisateur")
-  visiteur      Visiteur?
-  passages      Passage[]
-  lectures      LectureBadge[]
+/// Ajustement individuel : permission accordée ou retirée en plus du rôle.
+model UserPermission {
+  userId     String   @map("user_id") @db.Uuid
+  permission String   @db.VarChar(100)
+  granted    Boolean
+  updatedAt  DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  @@index([utilisateurId], map: "idx_badge_utilisateur")
-  @@map("badge")
+  @@id([userId, permission])
+  @@map("user_permission")
 }
 
-model Visiteur {
-  id         String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  identite   String    @db.VarChar(255)
-  societe    String?   @db.VarChar(255)
-  listeNoire Boolean   @default(false) @map("liste_noire")
-  siteId     String?   @map("site_id") @db.Uuid
-  badgeId    String?   @unique @map("badge_id") @db.Uuid
-  site       Site?     @relation(fields: [siteId], references: [id], onDelete: SetNull, map: "fk_visiteur_site")
-  badge      Badge?    @relation(fields: [badgeId], references: [id], onDelete: SetNull, map: "fk_visiteur_badge")
-  passages   Passage[]
+/// Fiche d'un utilisateur : prénom et coordonnées.
+model UserProfile {
+  userId     String   @id @map("user_id") @db.Uuid
+  firstName  String?  @map("first_name") @db.VarChar(255)
+  email      String?  @db.VarChar(255)
+  phone      String?  @db.VarChar(60)
+  street     String?  @db.VarChar(255)
+  street2    String?  @db.VarChar(255)
+  postalCode String?  @map("postal_code") @db.VarChar(30)
+  city       String?  @db.VarChar(160)
+  country    String?  @db.VarChar(120)
+  updatedAt  DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  @@index([siteId], map: "idx_visiteur_site")
-  @@map("visiteur")
+  @@map("user_profile")
 }
 
-model Passage {
-  id              String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  clientRequestId String?   @unique @map("client_request_id") @db.Uuid
-  exitClientRequestId String? @unique @map("exit_client_request_id") @db.Uuid
-  entree          DateTime  @db.Timestamp(6)
-  sortie          DateTime? @db.Timestamp(6)
-  motif           String?   @db.Text
-  typePiece       String?   @map("type_piece") @db.VarChar(80)
-  pieceFin        String?   @map("piece_fin") @db.VarChar(4)
-  hote            String?   @db.VarChar(255)
-  zone            String?   @db.VarChar(255)
-  materiel        String?   @db.Text
-  immatriculation String?   @db.VarChar(50)
-  notesSortie     String?   @map("notes_sortie") @db.Text
-  badgeNumero     String?   @map("badge_numero") @db.VarChar(80)
-  saisiParId      String?   @map("saisi_par_id") @db.Uuid
-  servicePosteId  String?   @map("service_poste_id") @db.Uuid
-  sortieParId     String?   @map("sortie_par_id") @db.Uuid
-  badgeId         String    @map("badge_id") @db.Uuid
-  visiteurId      String?   @map("visiteur_id") @db.Uuid
-  badge           Badge     @relation(fields: [badgeId], references: [id], onDelete: Cascade, map: "fk_passage_badge")
-  visiteur        Visiteur? @relation(fields: [visiteurId], references: [id], onDelete: SetNull, map: "fk_passage_visiteur")
-  servicePoste    ServicePoste? @relation(fields: [servicePosteId], references: [id], onDelete: SetNull, map: "fk_passage_service_poste")
+/// Poste de garde d'un site.
+model Post {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name      String   @db.VarChar(160)
+  active    Boolean  @default(true)
+  siteId    String   @map("site_id") @db.Uuid
+  site      Site     @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  /// Utilisateurs affectés au poste (des comptes du même site) : seuls à voir les feuilles de saisie du poste.
+  assignees PostUser[]
+  shifts    Shift[]
+  sheets    PostSheet[]
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  @@index([badgeId], map: "idx_passage_badge")
-  @@index([servicePosteId, entree(sort: Desc)], map: "idx_passage_service_poste")
-  @@map("passage")
+  @@unique([siteId, name])
+  @@map("post")
 }
 
-model Vacation {
-  id               String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  ouverture        DateTime          @db.Timestamp(6)
-  cloture          DateTime?         @db.Timestamp(6)
-  passation        String?           @db.Text
-  agentNom         String?           @map("agent_nom") @db.VarChar(255)
-  matricule        String?           @db.VarChar(50)
-  prestataireNom   String?           @map("prestataire_nom") @db.VarChar(160)
-  siteId           String?           @map("site_id") @db.Uuid
-  posteNom         String?           @map("poste_nom") @db.VarChar(160)
-  shiftType        ShiftAgent?       @map("shift_type")
-  checklist        Json              @default("{}") @db.JsonB
-  observations     String?           @db.Text
-  utilisateurId    String            @map("utilisateur_id") @db.Uuid
-  utilisateur      Utilisateur       @relation(fields: [utilisateurId], references: [id], onDelete: Cascade, map: "fk_vacation_utilisateur")
-  site             Site?             @relation(fields: [siteId], references: [id], onDelete: SetNull, map: "fk_vacation_site")
-  compteRendu      CompteRendu?
-  evenements       Evenement[]
-  passagesVehicule PassageVehicule[]
-  passations       Passation[]
+/// Logo d'un site (image PNG, JPEG ou WebP de 1 Mo maximum).
+model SiteLogo {
+  siteId    String   @id @map("site_id") @db.Uuid
+  mimeType  String   @map("mime_type") @db.VarChar(100)
+  content   Bytes    @db.ByteA
+  size      Int
+  userId    String?  @map("user_id") @db.Uuid
+  updatedAt DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
+  site      Site     @relation(fields: [siteId], references: [id], onDelete: Cascade)
 
-  @@index([utilisateurId], map: "idx_vacation_utilisateur")
-  @@map("vacation")
+  @@map("site_logo")
 }
 
-model CompteRendu {
-  id               String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  observations     String?            @db.Text
-  signature        String?            @db.VarChar(255)
-  pdf              String?            @db.Text
-  statutValidation String             @map("statut_validation") @db.VarChar(100)
-  vacationId       String             @unique @map("vacation_id") @db.Uuid
-  siteId           String             @map("site_id") @db.Uuid
-  prestataireId    String             @map("prestataire_id") @db.Uuid
-  posteId          String             @map("poste_id") @db.Uuid
-  dateRapport      DateTime           @map("date_rapport") @db.Date
-  debutService     DateTime           @map("debut_service") @db.Time(0)
-  finService       DateTime           @map("fin_service") @db.Time(0)
-  details          Json               @default("{}") @db.JsonB
-  vacation         Vacation           @relation(fields: [vacationId], references: [id], onDelete: Cascade, map: "fk_compterendu_vacation")
-  site             Site               @relation(fields: [siteId], references: [id], onDelete: Restrict, map: "fk_compterendu_site")
-  prestataire      Prestataire        @relation(fields: [prestataireId], references: [id], onDelete: Restrict, map: "fk_compterendu_prestataire")
-  poste            Poste              @relation(fields: [posteId], references: [id], onDelete: Restrict, map: "fk_compterendu_poste")
-  agents           CompteRenduAgent[]
-  evenements       Evenement[]
-  audit            AuditCompteRendu[]
+/// Document joint à un compte (contrat, pièce d'identité, diplôme...).
+model UserDocument {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  name      String   @db.VarChar(240)
+  extension String   @db.VarChar(12)
+  mimeType  String   @map("mime_type") @db.VarChar(160)
+  size      Int
+  category  String   @default("Autre") @db.VarChar(80)
+  content   Bytes    @db.ByteA
+  addedBy   String?  @map("added_by") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  @@unique([siteId, dateRapport], map: "uq_compte_rendu_site_date")
-  @@map("compte_rendu")
+  @@index([userId])
+  @@map("user_document")
 }
 
-model Evenement {
-  id            String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  type          String       @db.VarChar(100)
-  gravite       Int
-  description   String?      @db.Text
-  lienOrigine   String?      @map("lien_origine") @db.VarChar(255)
-  vacationId    String       @map("vacation_id") @db.Uuid
-  compteRenduId String?      @map("compte_rendu_id") @db.Uuid
-  vacation      Vacation     @relation(fields: [vacationId], references: [id], onDelete: Cascade, map: "fk_evenement_vacation")
-  compteRendu   CompteRendu? @relation(fields: [compteRenduId], references: [id], onDelete: SetNull, map: "fk_evenement_compte_rendu")
+enum ColumnType {
+  TEXT
+  NUMBER
+  DATE
+  TIME
+  SELECT
+  CHECKBOX
+  /// Colonne qui déclenche une action (voir ColumnAction) au lieu de recevoir une valeur.
+  ACTION
 
-  @@index([vacationId], map: "idx_evenement_vacation")
-  @@map("evenement")
+  @@map("column_type")
 }
 
-model Zone {
-  id                String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  nom               String    @db.VarChar(255)
-  niveauAccesRequis Int       @map("niveau_acces_requis")
-  siteId            String    @map("site_id") @db.Uuid
-  site              Site      @relation(fields: [siteId], references: [id], onDelete: Cascade, map: "fk_zone_site")
-  lecteurs          Lecteur[]
-  cameras           Camera[]
+enum ColumnAction {
+  /// Joindre des fichiers à la ligne.
+  ATTACH_FILES
 
-  @@index([siteId], map: "idx_zone_site")
-  @@map("zone")
+  @@map("column_action")
 }
 
-model Lecteur {
+/// Feuille de saisie d'un poste : un « onglet » avec ses propres colonnes, que les utilisateurs remplissent.
+model PostSheet {
+  id        String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  postId    String        @map("post_id") @db.Uuid
+  post      Post          @relation(fields: [postId], references: [id], onDelete: Cascade)
+  name      String        @db.VarChar(160)
+  position  Int           @default(0)
+  active    Boolean       @default(true)
+  /// Droits propres à la feuille, appliqués en plus des permissions du rôle (le plus restrictif l'emporte).
+  /// Tout false = lecture seule. Ex. une « Main courante » : ajout seul (pas de modification ni de suppression).
+  allowCreate Boolean     @default(true) @map("allow_create")
+  allowUpdate Boolean     @default(true) @map("allow_update")
+  allowDelete Boolean     @default(false) @map("allow_delete")
+  columns   SheetColumn[]
+  rows      SheetRow[]
+  reports   SheetReport[]
+  createdAt DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime      @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@unique([postId, name])
+  @@map("post_sheet")
+}
+
+/// En-tête de colonne d'une feuille. L'identifiant de la colonne est la clé de sa valeur dans chaque ligne.
+model SheetColumn {
+  id       String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  sheetId  String     @map("sheet_id") @db.Uuid
+  sheet    PostSheet  @relation(fields: [sheetId], references: [id], onDelete: Cascade)
+  label    String     @db.VarChar(120)
+  type     ColumnType @default(TEXT)
+  /// Renseigné quand le type est ACTION.
+  action   ColumnAction?
+  /// Action ATTACH_FILES : autorise l'envoi de fichiers depuis l'appareil.
+  allowUpload Boolean @default(true) @map("allow_upload")
+  /// Action ATTACH_FILES : autorise la prise de photo avec la caméra.
+  allowPhoto  Boolean @default(false) @map("allow_photo")
+  required Boolean    @default(false)
+  /// Choix proposés pour une colonne de type SELECT (tableau de textes).
+  options  Json       @default("[]")
+  position Int        @default(0)
+
+  @@index([sheetId])
+  @@map("sheet_column")
+}
+
+/// Ligne saisie dans une feuille : valeurs indexées par identifiant de colonne, avec horodatage et auteur automatiques.
+model SheetRow {
+  id        String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  sheetId   String    @map("sheet_id") @db.Uuid
+  sheet     PostSheet @relation(fields: [sheetId], references: [id], onDelete: Cascade)
+  values    Json      @default("{}")
+  createdBy String?   @map("created_by") @db.Uuid
+  author    User?     @relation(fields: [createdBy], references: [id], onDelete: SetNull)
+  files     SheetFile[]
+  reports   SheetReport[]
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@index([sheetId, createdAt])
+  @@map("sheet_row")
+}
+
+/// Fichier joint à une ligne par une colonne de type ACTION / ATTACH_FILES. columnId n'a pas de clé étrangère : les fichiers survivent au retrait de la colonne.
+model SheetFile {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  rowId     String   @map("row_id") @db.Uuid
+  row       SheetRow @relation(fields: [rowId], references: [id], onDelete: Cascade)
+  columnId  String   @map("column_id") @db.Uuid
+  name      String   @db.VarChar(240)
+  extension String   @db.VarChar(12)
+  mimeType  String   @map("mime_type") @db.VarChar(160)
+  size      Int
+  content   Bytes    @db.ByteA
+  addedBy   String?  @map("added_by") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([rowId, columnId])
+  @@map("sheet_file")
+}
+
+/// Affectation d'un utilisateur à un poste de garde (un poste a plusieurs utilisateurs, un utilisateur peut avoir plusieurs postes).
+model PostUser {
+  postId    String   @map("post_id") @db.Uuid
+  post      Post     @relation(fields: [postId], references: [id], onDelete: Cascade)
+  userId    String   @map("user_id") @db.Uuid
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@id([postId, userId])
+  @@index([userId])
+  @@map("post_user")
+}
+
+/// Photo d'identité d'un utilisateur (image PNG, JPEG ou WebP de 2 Mo maximum).
+model UserPhoto {
+  userId    String   @id @map("user_id") @db.Uuid
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  mimeType  String   @map("mime_type") @db.VarChar(100)
+  content   Bytes    @db.ByteA
+  size      Int
+  updatedBy String?  @map("updated_by") @db.Uuid
+  updatedAt DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  @@map("user_photo")
+}
+
+/// Signalement d'un problème à un supérieur, depuis une feuille de saisie (éventuellement à propos d'une ligne).
+/// Chaîne hiérarchique : Agent APS → Chef de poste → Responsable sécurité. Un signalement transmis garde un lien (parentId) vers l'original.
+model SheetReport {
   id          String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  uidNfc      String         @unique @map("uid_nfc") @db.VarChar(255)
-  emplacement String         @db.VarChar(255)
-  zoneId      String         @map("zone_id") @db.Uuid
-  zone        Zone           @relation(fields: [zoneId], references: [id], onDelete: Cascade, map: "fk_lecteur_zone")
-  lectures    LectureBadge[]
+  sheetId     String         @map("sheet_id") @db.Uuid
+  sheet       PostSheet      @relation(fields: [sheetId], references: [id], onDelete: Cascade)
+  rowId       String?        @map("row_id") @db.Uuid
+  row         SheetRow?      @relation(fields: [rowId], references: [id], onDelete: SetNull)
+  postId      String         @map("post_id") @db.Uuid
+  siteId      String         @map("site_id") @db.Uuid
+  reporterId  String         @map("reporter_id") @db.Uuid
+  reporter    User           @relation("ReportAuthor", fields: [reporterId], references: [id], onDelete: Cascade)
+  /// Profil de base de l'auteur et du destinataire (2 = chef de poste, 3 = responsable sécurité, 5 = agent APS).
+  fromProfile Int            @map("from_profile")
+  toProfile   Int            @map("to_profile")
+  message     String         @db.Text
+  parentId    String?        @map("parent_id") @db.Uuid
+  parent      SheetReport?   @relation("ReportChain", fields: [parentId], references: [id], onDelete: SetNull)
+  children    SheetReport[]  @relation("ReportChain")
+  notifications Notification[]
+  /// Renseignés quand un destinataire marque le signalement comme traité.
+  resolvedAt  DateTime?      @map("resolved_at") @db.Timestamptz(6)
+  resolvedById String?       @map("resolved_by") @db.Uuid
+  resolver    User?          @relation("ReportResolver", fields: [resolvedById], references: [id], onDelete: SetNull)
+  createdAt   DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
 
-  @@index([zoneId], map: "idx_lecteur_zone")
-  @@map("lecteur")
+  @@index([sheetId])
+  @@index([parentId])
+  @@map("sheet_report")
 }
 
-model LectureBadge {
-  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  horodatage DateTime @db.Timestamp(6)
-  decision   String   @db.VarChar(100)
-  autoriser  Boolean
-  badgeId    String   @map("badge_id") @db.Uuid
-  lecteurId  String   @map("lecteur_id") @db.Uuid
-  badge      Badge    @relation(fields: [badgeId], references: [id], onDelete: Cascade, map: "fk_lecture_badge")
-  lecteur    Lecteur  @relation(fields: [lecteurId], references: [id], onDelete: Cascade, map: "fk_lecture_lecteur")
+/// Notification destinée à un utilisateur (signalement reçu, transmis...).
+model Notification {
+  id        String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId    String       @map("user_id") @db.Uuid
+  user      User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type      String       @default("REPORT") @db.VarChar(40)
+  title     String       @db.VarChar(200)
+  body      String       @default("") @db.Text
+  reportId  String?      @map("report_id") @db.Uuid
+  report    SheetReport? @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  readAt    DateTime?    @map("read_at") @db.Timestamptz(6)
+  createdAt DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
 
-  @@index([badgeId], map: "idx_lecture_badge_badge")
-  @@index([lecteurId], map: "idx_lecture_badge_lecteur")
-  @@map("lecture_badge")
+  @@index([userId, readAt, createdAt])
+  @@map("notification")
 }
 
-model Camera {
-  id      String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  clientRequestId String? @unique(map: "camera_client_request_id_key") @map("client_request_id") @db.Uuid
-  nom     String @db.VarChar(255)
-  urlFlux String @map("url_flux") @db.Text
-  etat    String @db.VarChar(100)
-  zoneId  String @map("zone_id") @db.Uuid
-  zone    Zone   @relation(fields: [zoneId], references: [id], onDelete: Cascade, map: "fk_camera_zone")
+/// Vacation du planning : un utilisateur est en service sur un site (et éventuellement un poste) entre deux dates.
+/// Un utilisateur ne peut pas avoir deux vacations qui se chevauchent ; changer de site = une vacation sur un autre site.
+model Shift {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  siteId    String   @map("site_id") @db.Uuid
+  site      Site     @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  postId    String?  @map("post_id") @db.Uuid
+  post      Post?    @relation(fields: [postId], references: [id], onDelete: SetNull)
+  startsAt  DateTime @map("starts_at") @db.Timestamptz(6)
+  endsAt    DateTime @map("ends_at") @db.Timestamptz(6)
+  note      String   @default("") @db.Text
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  @@index([zoneId], map: "idx_camera_zone")
-  @@map("camera")
+  @@index([startsAt, endsAt])
+  @@index([userId, startsAt])
+  @@index([siteId])
+  @@map("shift")
 }
 
-model Vehicule {
-  id              String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  immatriculation String            @unique @db.VarChar(50)
-  type            String            @db.VarChar(100)
-  listeNoire      Boolean           @default(false) @map("liste_noire")
-  passages        PassageVehicule[]
-
-  @@map("vehicule")
-}
-
-model PassageVehicule {
-  id               String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  clientRequestId  String?   @unique @map("client_request_id") @db.Uuid
-  exitClientRequestId String? @unique @map("exit_client_request_id") @db.Uuid
-  entree           DateTime  @db.Timestamp(6)
-  sortie           DateTime? @db.Timestamp(6)
-  photos           String?   @db.Text
-  transporteur     String?   @db.VarChar(255)
-  conducteur       String?   @db.VarChar(255)
-  passagers        String?   @db.VarChar(255)
-  passagersSortie  Int?      @map("passagers_sortie")
-  motif            String?   @db.Text
-  zone             String?   @db.VarChar(255)
-  operation        String?   @db.VarChar(40)
-  reference        String?   @db.VarChar(100)
-  plomb            String?   @db.VarChar(100)
-  etatChargement   String?   @map("etat_chargement") @db.VarChar(40)
-  controleConforme Boolean   @default(false) @map("controle_conforme")
-  saisiParId       String?   @map("saisi_par_id") @db.Uuid
-  sortieParId      String?   @map("sortie_par_id") @db.Uuid
-  annuleLe         DateTime? @map("annule_le") @db.Timestamptz(6)
-  annulePar        String?   @map("annule_par") @db.Uuid
-  modifiePar       String?   @map("modifie_par") @db.Uuid
-  siteId           String?   @map("site_id") @db.Uuid
-  vehiculeId       String    @map("vehicule_id") @db.Uuid
-  vacationId       String?   @map("vacation_id") @db.Uuid
-  servicePosteId   String?   @map("service_poste_id") @db.Uuid
-  vehicule         Vehicule  @relation(fields: [vehiculeId], references: [id], onDelete: Cascade, map: "fk_passagevehicule_vehicule")
-  vacation         Vacation? @relation(fields: [vacationId], references: [id], onDelete: SetNull, map: "fk_passagevehicule_vacation")
-  site             Site?     @relation(fields: [siteId], references: [id], onDelete: SetNull, map: "fk_passagevehicule_site")
-  servicePoste     ServicePoste? @relation(fields: [servicePosteId], references: [id], onDelete: SetNull, map: "fk_passagevehicule_service_poste")
-
-  @@index([vehiculeId], map: "idx_passage_vehicule_vehicule")
-  @@index([servicePosteId, entree(sort: Desc)], map: "idx_passage_vehicule_service_poste")
-  @@map("passage_vehicule")
-}
-
-model Passation {
-  id                  String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  clientRequestId     String?     @unique(map: "passation_client_request_id_key") @map("client_request_id") @db.Uuid
-  creeLe              DateTime    @default(now()) @map("cree_le") @db.Timestamp(6)
-  sortantNom          String      @map("sortant_nom") @db.VarChar(255)
-  sortantMatricule    String      @map("sortant_matricule") @db.VarChar(50)
-  entrantNom          String      @map("entrant_nom") @db.VarChar(255)
-  entrantMatricule    String      @map("entrant_matricule") @db.VarChar(50)
-  posteNom            String      @map("poste_nom") @db.VarChar(160)
-  materiel            String?     @db.Text
-  evenements          String?     @db.Text
-  consignes           String?     @db.Text
-  inventaire          Json        @default("[]") @db.JsonB
-  documentsRetenus    Json        @default("[]") @map("documents_retenus") @db.JsonB
-  confirmationSortant Boolean     @default(false) @map("confirmation_sortant")
-  confirmationEntrant Boolean     @default(false) @map("confirmation_entrant")
-  confirmationSortantLe DateTime? @map("confirmation_sortant_le") @db.Timestamp(6)
-  confirmationEntrantLe DateTime? @map("confirmation_entrant_le") @db.Timestamp(6)
-  utilisateurId       String      @map("utilisateur_id") @db.Uuid
-  siteId              String?     @map("site_id") @db.Uuid
-  vacationId          String?     @map("vacation_id") @db.Uuid
-  priseDePosteServiceId String?    @map("prise_de_poste_service_id") @db.Uuid
-  utilisateur         Utilisateur @relation(fields: [utilisateurId], references: [id], onDelete: Restrict, map: "fk_passation_utilisateur")
-  site                Site?       @relation(fields: [siteId], references: [id], onDelete: SetNull, map: "fk_passation_site")
-  vacation            Vacation?   @relation(fields: [vacationId], references: [id], onDelete: SetNull, map: "fk_passation_vacation")
-  servicePoste        ServicePoste? @relation(fields: [priseDePosteServiceId], references: [id], onDelete: SetNull, map: "fk_passation_prise_de_poste_service")
-
-  @@index([siteId, creeLe], map: "idx_passation_site_date")
-  @@map("passation")
-}
-
-model AuditRegistre {
-  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  entite        String   @db.VarChar(80)
-  entiteId      String   @map("entite_id") @db.Text
-  siteId        String?  @map("site_id") @db.Uuid
-  action        String   @db.VarChar(20)
-  avant         Json?    @db.JsonB
-  apres         Json?    @db.JsonB
-  utilisateurId String?  @map("utilisateur_id") @db.Uuid
-  creeLe        DateTime @default(now()) @map("cree_le") @db.Timestamptz(6)
-
-  @@index([entite, entiteId, creeLe(sort: Desc)], map: "idx_audit_registre_entity_date")
-  @@index([siteId, creeLe(sort: Desc)], map: "idx_audit_registre_site_date")
-  @@map("audit_registre")
-}
-
-model DocumentRegistre {
-  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  entite        String   @db.VarChar(80)
-  entiteId      String   @map("entite_id") @db.Uuid
-  siteId        String   @map("site_id") @db.Uuid
-  documentId    String   @map("document_id") @db.Uuid
-  utilisateurId String   @map("utilisateur_id") @db.Uuid
-  creeLe        DateTime @default(now()) @map("cree_le") @db.Timestamptz(6)
-
-  @@unique([entite, entiteId, documentId], map: "uq_document_registre_link")
-  @@index([entite, entiteId, creeLe(sort: Desc)], map: "idx_document_registre_entry")
-  @@map("document_registre")
-}
-
-model Prestataire {
-  id            String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  nom           String        @unique @db.VarChar(160)
-  actif         Boolean       @default(true)
-  modifiePar    String?       @map("modifie_par") @db.Uuid
-  employes      Employe[]
-  comptesRendus CompteRendu[]
-  materielsSousTraitant MaterielSousTraitant[]
-  materielsStar MaterielStar[]
-  chauffeurs    Chauffeur[]
-
-  @@map("prestataire")
-}
-
-model ContactUrgence {
-  id          String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  siteId      String      @map("site_id") @db.Uuid
-  nom         String      @db.VarChar(160)
-  fonction    String      @default("") @db.VarChar(120)
-  telephone   String      @db.VarChar(40)
-  email       String?     @db.VarChar(255)
-  instructions String?    @db.Text
-  actif       Boolean     @default(true)
-  ordre       Int         @default(0)
-  creeLe      DateTime    @default(now()) @map("cree_le") @db.Timestamptz(6)
-  modifieLe   DateTime    @default(now()) @map("modifie_le") @db.Timestamptz(6)
-  modifiePar  String?     @map("modifie_par") @db.Uuid
-  site        Site        @relation(fields: [siteId], references: [id], onDelete: Cascade, map: "fk_contact_urgence_site")
-  modificateur Utilisateur? @relation("ContactUrgenceModifiePar", fields: [modifiePar], references: [id], onDelete: SetNull, map: "fk_contact_urgence_modifie_par")
-
-  @@index([siteId, actif, ordre, nom], map: "idx_contact_urgence_site_actif")
-  @@map("contact_urgence")
-}
-
-model Poste {
-  id            String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  nom           String             @db.VarChar(160)
-  actif         Boolean            @default(true)
-  siteId        String             @map("site_id") @db.Uuid
-  site          Site               @relation(fields: [siteId], references: [id], onDelete: Cascade, map: "fk_poste_site")
-  comptesRendus CompteRendu[]
-  agents        CompteRenduAgent[]
-  services      ServicePoste[]
-
-  @@unique([siteId, nom], map: "uq_poste_site_nom")
-  @@map("poste")
-}
-
-model ServiceSite {
-  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  siteId      String   @map("site_id") @db.Uuid
-  nom         String   @db.VarChar(160)
-  departement String   @default("") @db.VarChar(160)
-  responsable String   @default("") @db.VarChar(160)
-  actif       Boolean  @default(true)
-  creeLe      DateTime @default(now()) @map("cree_le") @db.Timestamptz(6)
-  modifieLe   DateTime @default(now()) @map("modifie_le") @db.Timestamptz(6)
-  site        Site     @relation(fields: [siteId], references: [id], onDelete: Cascade, map: "fk_service_site_site")
-
-  @@unique([siteId, nom], map: "uq_service_site_site_nom")
-  @@index([siteId, actif, nom], map: "idx_service_site_site_actif")
-  @@map("service_site")
-}
-
-model Employe {
-  id            String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  prenom        String             @db.VarChar(100)
-  nom           String             @db.VarChar(100)
-  matricule     String             @unique @db.VarChar(50)
-  role          String             @default("Agent") @db.VarChar(100)
-  actif         Boolean            @default(true)
-  prestataireId String             @map("prestataire_id") @db.Uuid
-  siteId        String?            @map("site_id") @db.Uuid
-  prestataire   Prestataire        @relation(fields: [prestataireId], references: [id], onDelete: Restrict, map: "fk_agent_prestataire")
-  site          Site?              @relation(fields: [siteId], references: [id], onDelete: SetNull, map: "fk_agent_site")
-  comptesRendus CompteRenduAgent[]
-
-  @@map("employe")
-}
-
-model CompteRenduAgent {
-  compteRenduId String      @map("compte_rendu_id") @db.Uuid
-  agentId       String      @map("agent_id") @db.Uuid
-  posteId       String      @map("poste_id") @db.Uuid
-  shift         ShiftAgent
-  compteRendu   CompteRendu @relation(fields: [compteRenduId], references: [id], onDelete: Cascade, map: "fk_cr_agent_compte_rendu")
-  agent         Employe     @relation(fields: [agentId], references: [id], onDelete: Restrict, map: "fk_cr_agent_agent")
-  poste         Poste       @relation(fields: [posteId], references: [id], onDelete: Restrict, map: "fk_cr_agent_poste")
-
-  @@id([compteRenduId, agentId, shift])
-  @@map("compte_rendu_agent")
-}
-
-model AuditCompteRendu {
-  id            String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  compteRenduId String      @map("compte_rendu_id") @db.Uuid
-  utilisateurId String      @map("utilisateur_id") @db.Uuid
-  action        String      @db.VarChar(40)
-  avant         Json?       @db.JsonB
-  apres         Json        @db.JsonB
-  creeLe        DateTime    @default(now()) @map("cree_le") @db.Timestamp(6)
-  compteRendu   CompteRendu @relation(fields: [compteRenduId], references: [id], onDelete: Restrict, map: "fk_audit_cr")
-  utilisateur   Utilisateur @relation(fields: [utilisateurId], references: [id], onDelete: Restrict, map: "fk_audit_utilisateur")
-
-  @@index([compteRenduId, creeLe], map: "idx_audit_cr_date")
-  @@map("audit_compte_rendu")
-}
-
-model SuiviCle {
-  id                                Int         @id @default(autoincrement())
-  creeLe                            DateTime    @default(now()) @map("cree_le") @db.Timestamp(6)
-  dateSuivi                         DateTime    @map("date_suivi") @db.Date
-  lieu                              String?     @db.VarChar(255)
-  nomPersonne                       String?     @map("nom_personne") @db.VarChar(100)
-  prenomPersonne                    String?     @map("prenom_personne") @db.VarChar(100)
-  matriculePersonne                 String?     @map("matricule_personne") @db.VarChar(50)
-  typeCle                           String?     @map("type_cle") @db.VarChar(100)
-  nombreCles                        Int?        @map("nombre_cles")
-  heureSortie                       DateTime?   @map("heure_sortie") @db.Time(0)
-  heureRetour                       DateTime?   @map("heure_retour") @db.Time(0)
-  nonRendu                           Boolean     @default(false) @map("non_rendu")
-  dateRetour                        DateTime?   @map("date_retour") @db.Date
-  nomRetourneur                     String?     @map("nom_retourneur") @db.VarChar(100)
-  prenomRetourneur                  String?     @map("prenom_retourneur") @db.VarChar(100)
-  matriculeRetourneur               String?     @map("matricule_retourneur") @db.VarChar(50)
-  perceptionMatin                   DateTime?   @map("perception_matin") @db.Time(0)
-  responsablePerceptionMatin        String?     @map("responsable_perception_matin") @db.VarChar(255)
-  reintegrationMatin                DateTime?   @map("reintegration_matin") @db.Time(0)
-  responsableReintegrationMatin     String?     @map("responsable_reintegration_matin") @db.VarChar(255)
-  perceptionApresMidi               DateTime?   @map("perception_apres_midi") @db.Time(0)
-  responsablePerceptionApresMidi    String?     @map("responsable_perception_apres_midi") @db.VarChar(255)
-  reintegrationApresMidi            DateTime?   @map("reintegration_apres_midi") @db.Time(0)
-  responsableReintegrationApresMidi String?     @map("responsable_reintegration_apres_midi") @db.VarChar(255)
-  observations                      String?     @db.Text
-  clientRequestId                   String?     @unique @map("client_request_id") @db.Uuid
-  returnRequestId                   String?     @unique @map("return_request_id") @db.Uuid
-  notReturnedRequestId              String?     @unique @map("not_returned_request_id") @db.Uuid
-  siteId                            String?     @map("site_id") @db.Uuid
-  utilisateurId                     String?     @map("utilisateur_id") @db.Uuid
-  servicePosteId                    String?     @map("service_poste_id") @db.Uuid
-  site                              Site?       @relation(fields: [siteId], references: [id], onDelete: Restrict, map: "fk_suivi_cle_site")
-  utilisateur                      Utilisateur? @relation(fields: [utilisateurId], references: [id], onDelete: Restrict, map: "fk_suivi_cle_utilisateur")
-  servicePoste                     ServicePoste? @relation(fields: [servicePosteId], references: [id], onDelete: SetNull, map: "fk_suivi_cle_service_poste")
-
-  @@index([siteId, dateSuivi], map: "idx_suivi_cle_site_date")
-  @@index([servicePosteId, dateSuivi(sort: Desc)], map: "idx_suivi_cle_service_poste")
-  @@map("suivi_cle")
-}
-
-model ControleAlcoolemie {
-  id            String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  creeLe        DateTime    @default(now()) @map("cree_le") @db.Timestamp(6)
-  dateControle  DateTime    @map("date_controle") @db.Date
-  heure         DateTime    @db.Time(0)
-  personne      String      @db.VarChar(255)
-  matricule     String?     @db.VarChar(100)
-  fonction      String?     @db.VarChar(40)
-  appartenance  String      @db.VarChar(40)
-  demandeur     String?     @db.VarChar(255)
-  typeDemande   String      @map("type_demande") @db.VarChar(80)
-  resultat      String      @db.VarChar(20)
-  tauxMesure    Decimal?    @map("taux_mesure") @db.Decimal(5, 2)
-  civilite      String      @default("Monsieur") @db.VarChar(10)
-  typeAppareil  String      @default("Electronique") @map("type_appareil") @db.VarChar(20)
-  testeurNom    String?     @map("testeur_nom") @db.VarChar(255)
-  testeurMatricule String?  @map("testeur_matricule") @db.VarChar(100)
-  testeurFonction String?   @map("testeur_fonction") @db.VarChar(100)
-  temoinNom     String?     @map("temoin_nom") @db.VarChar(255)
-  temoinMatricule String?   @map("temoin_matricule") @db.VarChar(100)
-  temoinFonction String?    @map("temoin_fonction") @db.VarChar(100)
-  temoin2Nom    String?     @map("temoin2_nom") @db.VarChar(255)
-  temoin2Matricule String?  @map("temoin2_matricule") @db.VarChar(100)
-  temoin2Fonction String?   @map("temoin2_fonction") @db.VarChar(100)
-  clientRequestId String?   @unique @map("client_request_id") @db.Uuid
-  siteId        String      @map("site_id") @db.Uuid
-  utilisateurId String      @map("utilisateur_id") @db.Uuid
-  servicePosteId String?    @map("service_poste_id") @db.Uuid
-  annuleLe      DateTime?   @map("annule_le") @db.Timestamptz(6)
-  annulePar     String?     @map("annule_par") @db.Uuid
-  modifiePar    String?     @map("modifie_par") @db.Uuid
-  site          Site        @relation(fields: [siteId], references: [id], onDelete: Restrict, map: "fk_controle_alcoolemie_site")
-  servicePoste  ServicePoste? @relation(fields: [servicePosteId], references: [id], onDelete: SetNull, map: "fk_controle_alcoolemie_service_poste")
-  utilisateur   Utilisateur @relation(fields: [utilisateurId], references: [id], onDelete: Restrict, map: "fk_controle_alcoolemie_utilisateur")
-
-  @@index([siteId, dateControle, heure], map: "idx_alcoolemie_site_date")
-  @@index([servicePosteId, dateControle(sort: Desc)], map: "idx_alcoolemie_service_poste")
-  @@map("controle_alcoolemie")
-}
-
-model FluxLogistique {
-  id             String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  creeLe         DateTime    @default(now()) @map("cree_le") @db.Timestamp(6)
-  dateOperation  DateTime    @map("date_operation") @db.Date
-  typeFlux       String      @map("type_flux") @db.VarChar(20)
-  camion         String?     @db.VarChar(160)
-  transporteur   String?     @db.VarChar(255)
-  document       String?     @db.VarChar(160)
-  plomb          String?     @db.VarChar(100)
-  categorieStock String?     @map("categorie_stock") @db.VarChar(40)
-  article        String?     @db.VarChar(100)
-  quantite       Decimal?    @db.Decimal(12, 2)
-  heureSortie    DateTime?   @map("heure_sortie") @db.Time(0)
-  heureArrivee   DateTime?   @map("heure_arrivee") @db.Time(0)
-  numeroPesage   String?     @map("numero_pesage") @db.VarChar(100)
-  typeDechet     String?     @map("type_dechet") @db.VarChar(20)
-  facture        String?     @db.VarChar(160)
-  poids          Decimal?    @db.Decimal(12, 2)
-  destinataire   String?     @db.VarChar(255)
-  vehicule       String?     @db.VarChar(160)
-  immatriculationVehicule String? @map("immatriculation_vehicule") @db.VarChar(100)
-  nomChauffeur   String?     @map("nom_chauffeur") @db.VarChar(255)
-  numeroTitre    String?     @map("numero_titre") @db.VarChar(100)
-  provenance     String?     @db.Text
-  detailsBouteilles Json     @default("[]") @map("details_bouteilles")
-  heurePointe    DateTime?   @map("heure_pointe") @db.Time(0)
-  designation    String?     @db.Text
-  nbr            String?     @db.VarChar(255)
-  titre          String?     @db.VarChar(160)
-  typeChargement String?     @map("type_chargement") @db.VarChar(20)
-  proprietaire   String?     @db.VarChar(255)
-  quantiteTexte  String?     @map("quantite_texte") @db.Text
-  lp             String?     @db.VarChar(6)
-  cree           String?     @db.VarChar(160)
-  chauffeur      String?     @db.VarChar(160)
-  magasinier     String?     @db.VarChar(160)
-  typeDocument   String?     @map("type_document") @db.VarChar(30)
-  emetteur       String?     @db.VarChar(255)
-  verification   String?     @db.Text
-  visaAgent      String?     @map("visa_agent") @db.VarChar(255)
-  priseDePosteId String?     @map("prise_de_poste_id") @db.Uuid
-  servicePosteId String?     @map("service_poste_id") @db.Uuid
-  modifiePar     String?     @map("modifie_par") @db.Uuid
-  annuleLe       DateTime?   @map("annule_le") @db.Timestamptz(6)
-  clientRequestId String?    @map("client_request_id") @db.Uuid
-  siteId         String      @map("site_id") @db.Uuid
-  utilisateurId  String      @map("utilisateur_id") @db.Uuid
-  site           Site        @relation(fields: [siteId], references: [id], onDelete: Restrict, map: "fk_flux_logistique_site")
-  utilisateur    Utilisateur @relation(fields: [utilisateurId], references: [id], onDelete: Restrict, map: "fk_flux_logistique_utilisateur")
-  servicePoste   ServicePoste? @relation(fields: [servicePosteId], references: [id], onDelete: SetNull, map: "fk_flux_logistique_service_poste")
-  audit           FluxLogistiqueAudit[]
-  piecesJointes   FluxLogistiqueDocument[]
-  pondBrut        PondBrut?
-
-  @@index([siteId, dateOperation, typeFlux], map: "idx_flux_logistique_site_date")
-  @@index([servicePosteId, dateOperation(sort: Desc)], map: "idx_flux_logistique_service_poste")
-  @@map("flux_logistique")
-}
-
-model PondBrut {
-  id            String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  fluxId        String         @unique @map("flux_id") @db.Uuid
-  siteId        String         @map("site_id") @db.Uuid
-  utilisateurId String         @map("utilisateur_id") @db.Uuid
-  dateOperation DateTime       @map("date_operation") @db.Date
-  brut          Decimal        @db.Decimal(12, 2)
-  tare          Decimal        @db.Decimal(12, 2)
-  net           Decimal        @db.Decimal(12, 2)
-  observation   String         @default("") @db.Text
-  clientFournisseur String     @default("") @map("client_fournisseur") @db.VarChar(255)
-  produit       String         @default("") @db.VarChar(255)
-  remarque      String         @default("") @db.Text
-  creeLe        DateTime       @default(now()) @map("cree_le") @db.Timestamptz(6)
-  flux          FluxLogistique @relation(fields: [fluxId], references: [id], onDelete: Cascade, map: "fk_pond_brut_flux")
-  site          Site           @relation(fields: [siteId], references: [id], onDelete: Restrict, map: "fk_pond_brut_site")
-  utilisateur   Utilisateur    @relation(fields: [utilisateurId], references: [id], onDelete: Restrict, map: "fk_pond_brut_utilisateur")
-
-  @@index([siteId, dateOperation(sort: Desc)], map: "idx_pond_brut_site_date")
-  @@map("pond_brut")
-}
-
-model FluxLogistiqueAudit {
-  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  fluxId        String   @map("flux_id") @db.Uuid
-  utilisateurId String?  @map("utilisateur_id") @db.Uuid
-  action        String   @db.VarChar(20)
-  avant         Json     @db.JsonB
-  apres         Json     @db.JsonB
-  creeLe        DateTime @default(now()) @map("cree_le") @db.Timestamptz(6)
-  flux          FluxLogistique @relation(fields: [fluxId], references: [id], onDelete: Restrict, map: "fk_audit_flux_logistique_entry")
-
-  @@index([fluxId, creeLe(sort: Desc)], map: "idx_audit_flux_logistique_entry_date")
-  @@map("audit_flux_logistique")
-}
-
-model FluxLogistiqueDocument {
-  id            String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  fluxId        String       @map("flux_id") @db.Uuid
-  documentId    String       @map("document_id") @db.Uuid
-  utilisateurId String       @map("utilisateur_id") @db.Uuid
-  creeLe        DateTime     @default(now()) @map("cree_le") @db.Timestamptz(6)
-  flux          FluxLogistique @relation(fields: [fluxId], references: [id], onDelete: Restrict, map: "fk_flux_logistique_document_flux")
-  document      DocumentSite @relation(fields: [documentId], references: [id], onDelete: Restrict, map: "fk_flux_logistique_document_document")
-
-  @@unique([fluxId, documentId], map: "flux_logistique_document_flux_id_document_id_key")
-  @@index([fluxId, creeLe], map: "idx_flux_logistique_document_flux")
-  @@map("flux_logistique_document")
-}
-
-model TruckChecklist {
-  id            String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  dateOperation DateTime    @map("date_operation") @db.Date
-  rows          Json        @db.JsonB
-  siteId        String      @map("site_id") @db.Uuid
-  utilisateurId String      @map("utilisateur_id") @db.Uuid
-  creeLe        DateTime    @default(now()) @map("cree_le") @db.Timestamp(6)
-  modifieLe     DateTime    @default(now()) @map("modifie_le") @db.Timestamp(6)
-  site          Site        @relation(fields: [siteId], references: [id], onDelete: Restrict, map: "fk_truck_checklist_site")
-  utilisateur   Utilisateur @relation(fields: [utilisateurId], references: [id], onDelete: Restrict, map: "fk_truck_checklist_utilisateur")
-
-  @@unique([siteId, dateOperation], map: "uq_truck_checklist_site_date")
-  @@map("truck_checklist")
-}
-
-model RegistreOrdure {
-  id            String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  creeLe        DateTime    @default(now()) @map("cree_le") @db.Timestamp(6)
-  dateOperation DateTime    @map("date_operation") @db.Date
-  heure         DateTime    @db.Time(0)
-  prenom        String      @db.VarChar(100)
-  matricule     String      @db.VarChar(50)
-  section       String      @db.VarChar(100)
-  designation   String      @db.Text
-  observation   String      @db.Text
-  siteId        String      @map("site_id") @db.Uuid
-  utilisateurId String      @map("utilisateur_id") @db.Uuid
-  servicePosteId String?    @map("service_poste_id") @db.Uuid
-  site          Site        @relation(fields: [siteId], references: [id], onDelete: Restrict, map: "fk_registre_ordures_site")
-  utilisateur   Utilisateur @relation(fields: [utilisateurId], references: [id], onDelete: Restrict, map: "fk_registre_ordures_utilisateur")
-  servicePoste  ServicePoste? @relation(fields: [servicePosteId], references: [id], onDelete: SetNull, map: "fk_registre_ordures_service_poste")
-
-  @@index([siteId, dateOperation, heure], map: "idx_registre_ordures_site_date")
-  @@index([servicePosteId, dateOperation(sort: Desc)], map: "idx_registre_ordures_service_poste")
-  @@map("registre_ordures")
-}
-
-model RegistreFerraille {
-  id            String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  creeLe        DateTime    @default(now()) @map("cree_le") @db.Timestamp(6)
-  dateOperation DateTime    @map("date_operation") @db.Date
-  heure         DateTime    @db.Time(0)
-  prenom        String      @db.VarChar(100)
-  matricule     String      @db.VarChar(50)
-  section       String      @db.VarChar(100)
-  designation   String      @db.Text
-  nombre        Int
-  motif         String      @db.Text
-  siteId        String      @map("site_id") @db.Uuid
-  utilisateurId String      @map("utilisateur_id") @db.Uuid
-  servicePosteId String?    @map("service_poste_id") @db.Uuid
-  site          Site        @relation(fields: [siteId], references: [id], onDelete: Restrict, map: "fk_registre_ferrailles_site")
-  utilisateur   Utilisateur @relation(fields: [utilisateurId], references: [id], onDelete: Restrict, map: "fk_registre_ferrailles_utilisateur")
-  servicePoste  ServicePoste? @relation(fields: [servicePosteId], references: [id], onDelete: SetNull, map: "fk_registre_ferrailles_service_poste")
-
-  @@index([siteId, dateOperation, heure], map: "idx_registre_ferrailles_site_date")
-  @@index([servicePosteId, dateOperation(sort: Desc)], map: "idx_registre_ferrailles_service_poste")
-  @@map("registre_ferrailles")
-}
-
-model MouvementVelo {
-  id            String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  creeLe        DateTime    @default(now()) @map("cree_le") @db.Timestamp(6)
-  dateOperation DateTime    @map("date_operation") @db.Date
-  heureEntree   DateTime    @map("heure_entree") @db.Time(0)
-  heureSortie   DateTime?   @map("heure_sortie") @db.Time(0)
-  matricule     String      @db.VarChar(50)
-  prenom        String      @db.VarChar(100)
-  section       String      @db.VarChar(100)
-  marqueVelo    String      @map("marque_velo") @db.VarChar(255)
-  siteId        String      @map("site_id") @db.Uuid
-  utilisateurId String      @map("utilisateur_id") @db.Uuid
-  servicePosteId String?    @map("service_poste_id") @db.Uuid
-  annuleLe      DateTime?   @map("annule_le") @db.Timestamptz(6)
-  annulePar     String?     @map("annule_par") @db.Uuid
-  modifiePar    String?     @map("modifie_par") @db.Uuid
-  updatedAt     DateTime    @default(now()) @map("modifie_le") @db.Timestamptz(6)
-  clientRequestId String?   @unique @map("client_request_id") @db.Uuid
-  updateRequestId String?   @unique @map("update_request_id") @db.Uuid
-  exitRequestId String?     @unique @map("exit_request_id") @db.Uuid
-  deleteRequestId String?   @unique @map("delete_request_id") @db.Uuid
-  site          Site        @relation(fields: [siteId], references: [id], onDelete: Restrict, map: "fk_mouvement_velo_site")
-  utilisateur   Utilisateur @relation(fields: [utilisateurId], references: [id], onDelete: Restrict, map: "fk_mouvement_velo_utilisateur")
-  servicePoste  ServicePoste? @relation(fields: [servicePosteId], references: [id], onDelete: SetNull, map: "fk_mouvement_velo_service_poste")
-
-  @@index([siteId, dateOperation, heureEntree], map: "idx_mouvement_velo_site_date")
-  @@index([servicePosteId, dateOperation(sort: Desc)], map: "idx_mouvement_velo_service_poste")
-  @@map("mouvement_velo")
-}
-
-model MouvementMoto {
-  id            String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  creeLe        DateTime    @default(now()) @map("cree_le") @db.Timestamp(6)
-  dateOperation DateTime    @map("date_operation") @db.Date
-  heureEntree   DateTime    @map("heure_entree") @db.Time(0)
-  moto          String      @db.VarChar(255)
-  observation   String      @db.Text
-  heureSortie   DateTime?   @map("heure_sortie") @db.Time(0)
-  siteId        String      @map("site_id") @db.Uuid
-  utilisateurId String      @map("utilisateur_id") @db.Uuid
-  servicePosteId String?    @map("service_poste_id") @db.Uuid
-  annuleLe      DateTime?   @map("annule_le") @db.Timestamptz(6)
-  annulePar     String?     @map("annule_par") @db.Uuid
-  modifiePar    String?     @map("modifie_par") @db.Uuid
-  updatedAt     DateTime    @default(now()) @map("modifie_le") @db.Timestamptz(6)
-  clientRequestId String?   @unique @map("client_request_id") @db.Uuid
-  updateRequestId String?   @unique @map("update_request_id") @db.Uuid
-  exitRequestId String?     @unique @map("exit_request_id") @db.Uuid
-  deleteRequestId String?   @unique @map("delete_request_id") @db.Uuid
-  site          Site        @relation(fields: [siteId], references: [id], onDelete: Restrict, map: "fk_mouvement_moto_site")
-  utilisateur   Utilisateur @relation(fields: [utilisateurId], references: [id], onDelete: Restrict, map: "fk_mouvement_moto_utilisateur")
-  servicePoste  ServicePoste? @relation(fields: [servicePosteId], references: [id], onDelete: SetNull, map: "fk_mouvement_moto_service_poste")
-
-  @@index([siteId, dateOperation, heureEntree], map: "idx_mouvement_moto_site_date")
-  @@index([servicePosteId, dateOperation(sort: Desc)], map: "idx_mouvement_moto_service_poste")
-  @@map("mouvement_moto")
-}
-
-model MouvementAps {
-  id            String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  siteId        String      @map("site_id") @db.Uuid
-  datePointage  DateTime    @map("date_pointage") @db.Date
-  service       String      @db.VarChar(10)
-  data          Json        @db.JsonB
-  utilisateurId String      @map("utilisateur_id") @db.Uuid
-  updatedAt     DateTime    @default(now()) @map("updated_at") @db.Timestamp(6)
-  site          Site        @relation(fields: [siteId], references: [id], onDelete: Restrict, map: "fk_mouvement_aps_site")
-  utilisateur   Utilisateur @relation(fields: [utilisateurId], references: [id], onDelete: Restrict, map: "fk_mouvement_aps_utilisateur")
-  servicesPoste MouvementApsServicePoste[]
-
-  @@unique([siteId, datePointage, service], map: "uq_mouvement_aps_site_date_service")
-  @@index([siteId, datePointage], map: "idx_mouvement_aps_site_date")
-  @@map("mouvement_aps")
-}
-
-model MouvementApsEvenement {
-  id            String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  clientRequestId String?    @unique(map: "mouvement_aps_evenement_client_request_id_key") @map("client_request_id") @db.Uuid
-  creeLe        DateTime    @default(now()) @map("cree_le") @db.Timestamp(6)
-  dateOperation DateTime    @map("date_operation") @db.Date
-  heureEntree   DateTime    @map("heure_entree") @db.Time(0)
-  mouvement     String      @db.VarChar(500)
-  observation   String      @db.VarChar(1000)
-  heureSortie   DateTime?   @map("heure_sortie") @db.Time(0)
-  siteId        String      @map("site_id") @db.Uuid
-  utilisateurId String      @map("utilisateur_id") @db.Uuid
-  updatedAt     DateTime    @default(now()) @map("updated_at") @db.Timestamp(6)
-  site          Site        @relation(fields: [siteId], references: [id], onDelete: Restrict, map: "fk_mouvement_aps_evenement_site")
-  utilisateur   Utilisateur @relation(fields: [utilisateurId], references: [id], onDelete: Restrict, map: "fk_mouvement_aps_evenement_utilisateur")
-  servicesPoste MouvementApsEvenementServicePoste[]
-
-  @@index([siteId, dateOperation, heureEntree], map: "idx_mouvement_aps_evenement_site_date")
-  @@map("mouvement_aps_evenement")
-}
-
-model PassationServiceAps {
-  id            String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  clientRequestId String?   @unique(map: "mouvement_aps_passation_client_request_id_key") @map("client_request_id") @db.Uuid
-  creeLe        DateTime    @default(now()) @map("cree_le") @db.Timestamp(6)
-  dateOperation DateTime    @map("date_operation") @db.Date
-  materiel      String      @db.VarChar(3000)
-  chaineEst     String      @map("chaine_est") @db.VarChar(100)
-  chaineOuest   String      @map("chaine_ouest") @db.VarChar(100)
-  clesRendus    String      @map("cles_rendus") @db.VarChar(5000)
-  clesNonRendus String      @map("cles_non_rendus") @db.VarChar(5000)
-  etatDesLieux  String      @map("etat_des_lieux") @db.VarChar(5000)
-  consigne      String      @db.VarChar(5000)
-  evenement     String      @db.VarChar(5000)
-  remarque      String      @db.VarChar(5000)
-  cpDescendantMatricule String @map("cp_descendant_matricule") @db.VarChar(50)
-  cpMontantMatricule    String @map("cp_montant_matricule") @db.VarChar(50)
-  siteId        String      @map("site_id") @db.Uuid
-  utilisateurId String      @map("utilisateur_id") @db.Uuid
-  updatedAt     DateTime    @default(now()) @map("updated_at") @db.Timestamp(6)
-  site          Site        @relation(fields: [siteId], references: [id], onDelete: Restrict, map: "fk_passation_service_aps_site")
-  utilisateur   Utilisateur @relation(fields: [utilisateurId], references: [id], onDelete: Restrict, map: "fk_passation_service_aps_utilisateur")
-  servicesPoste PassationApsServicePoste[]
-
-  @@index([siteId, dateOperation], map: "idx_passation_service_aps_site_date")
-  @@map("mouvement_aps_passation")
-}
-
-model MouvementApsServicePoste {
-  mouvementApsId String @map("mouvement_aps_id") @db.Uuid
-  servicePosteId String @map("service_poste_id") @db.Uuid
-  mouvementAps   MouvementAps @relation(fields: [mouvementApsId], references: [id], onDelete: Cascade, map: "fk_mouvement_aps_service_poste_movement")
-  servicePoste   ServicePoste @relation(fields: [servicePosteId], references: [id], onDelete: Cascade, map: "fk_mouvement_aps_service_poste_service")
-
-  @@id([mouvementApsId, servicePosteId], map: "mouvement_aps_service_poste_pkey")
-  @@index([servicePosteId], map: "idx_mouvement_aps_service_poste_service")
-  @@map("mouvement_aps_service_poste")
-}
-
-model PassationApsServicePoste {
-  passationApsId String @map("passation_aps_id") @db.Uuid
-  servicePosteId String @map("service_poste_id") @db.Uuid
-  passationAps   PassationServiceAps @relation(fields: [passationApsId], references: [id], onDelete: Cascade, map: "fk_passation_aps_service_poste_handover")
-  servicePoste   ServicePoste @relation(fields: [servicePosteId], references: [id], onDelete: Cascade, map: "fk_passation_aps_service_poste_service")
-
-  @@id([passationApsId, servicePosteId], map: "passation_aps_service_poste_pkey")
-  @@index([servicePosteId], map: "idx_passation_aps_service_poste_service")
-  @@map("passation_aps_service_poste")
-}
-
-model MouvementApsEvenementServicePoste {
-  mouvementApsEvenementId String @map("mouvement_aps_evenement_id") @db.Uuid
-  servicePosteId          String @map("service_poste_id") @db.Uuid
-  mouvementApsEvenement   MouvementApsEvenement @relation(fields: [mouvementApsEvenementId], references: [id], onDelete: Cascade, map: "fk_mouvement_aps_evenement_service_poste_event")
-  servicePoste            ServicePoste @relation(fields: [servicePosteId], references: [id], onDelete: Cascade, map: "fk_mouvement_aps_evenement_service_poste_service")
-
-  @@id([mouvementApsEvenementId, servicePosteId], map: "mouvement_aps_evenement_service_poste_pkey")
-  @@index([servicePosteId], map: "idx_mouvement_aps_evenement_service_poste_service")
-  @@map("mouvement_aps_evenement_service_poste")
-}
-
-model ConfigurationPostesMouvementAps {
-  id            String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  siteId        String      @map("site_id") @db.Uuid
-  postes        Json        @db.JsonB
-  utilisateurId String      @map("utilisateur_id") @db.Uuid
-  updatedAt     DateTime    @default(now()) @map("updated_at") @db.Timestamp(6)
-  site          Site        @relation(fields: [siteId], references: [id], onDelete: Restrict, map: "fk_configuration_postes_mouvement_aps_site")
-  utilisateur   Utilisateur @relation(fields: [utilisateurId], references: [id], onDelete: Restrict, map: "fk_configuration_postes_mouvement_aps_utilisateur")
-
-  @@unique([siteId], map: "uq_configuration_postes_mouvement_aps_site")
-  @@map("configuration_postes_mouvement_aps")
-}
-
-model SignalementLogistique {
-  id               String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  creeLe           DateTime    @default(now()) @map("cree_le") @db.Timestamp(6)
-  dateOperation    DateTime    @map("date_operation") @db.Date
-  heure            DateTime    @db.Time(0)
-  typeSignalement  String      @map("type_signalement") @db.VarChar(30)
-  camion           String?     @db.VarChar(160)
-  transporteur     String?     @db.VarChar(255)
-  document         String?     @db.VarChar(160)
-  casse            String?     @db.Text
-  manquant         String?     @db.Text
-  vides            String?     @db.Text
-  phn              String?     @db.Text
-  descriptionFaits String?     @map("description_faits") @db.Text
-  personne         String?     @db.VarChar(255)
-  observations     String?     @db.Text
-  mesuresPrises    String?     @map("mesures_prises") @db.Text
-  siteId           String      @map("site_id") @db.Uuid
-  utilisateurId    String      @map("utilisateur_id") @db.Uuid
-  priseDePosteId    String?     @map("prise_de_poste_id") @db.Uuid
-  servicePosteId    String?     @map("service_poste_id") @db.Uuid
-  site             Site        @relation(fields: [siteId], references: [id], onDelete: Restrict, map: "fk_signalement_logistique_site")
-  utilisateur      Utilisateur @relation(fields: [utilisateurId], references: [id], onDelete: Restrict, map: "fk_signalement_logistique_utilisateur")
-  servicePoste     ServicePoste? @relation(fields: [servicePosteId], references: [id], onDelete: SetNull, map: "fk_signalement_logistique_service_poste")
-
-  @@index([siteId, dateOperation, heure], map: "idx_signalement_logistique_site_date")
-  @@index([servicePosteId, dateOperation(sort: Desc)], map: "idx_signalement_logistique_service_poste")
-  @@map("signalement_logistique")
-}
-
-model Ronde {
-  id            String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  clientRequestId String?    @unique(map: "ronde_client_request_id_key") @map("client_request_id") @db.Uuid
-  creeLe        DateTime    @default(now()) @map("cree_le") @db.Timestamp(6)
-  nomParcours   String      @map("nom_parcours") @db.VarChar(160)
-  debut         DateTime    @default(now()) @db.Timestamp(6)
-  fin           DateTime?   @db.Timestamp(6)
-  points        Json        @default("[]")
-  observations  String?     @db.Text
-  siteId        String      @map("site_id") @db.Uuid
-  utilisateurId String      @map("utilisateur_id") @db.Uuid
-  priseDePosteId String?    @map("prise_de_poste_id") @db.Uuid
-  servicePosteId String?   @map("service_poste_id") @db.Uuid
-  site          Site        @relation(fields: [siteId], references: [id], onDelete: Restrict, map: "fk_ronde_site")
-  utilisateur   Utilisateur @relation(fields: [utilisateurId], references: [id], onDelete: Restrict, map: "fk_ronde_utilisateur")
-  servicePoste  ServicePoste? @relation(fields: [servicePosteId], references: [id], onDelete: SetNull, map: "fk_ronde_service_poste")
-
-  @@index([siteId, debut], map: "idx_ronde_site_debut")
-  @@index([servicePosteId, debut(sort: Desc)], map: "idx_ronde_service_poste")
-  @@map("ronde")
-}
-
-model PointVigilance {
-  id             String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  creeLe         DateTime    @default(now()) @map("cree_le") @db.Timestamp(6)
-  typePoint      String      @map("type_point") @db.VarChar(160)
-  elementVerifie String      @map("element_verifie") @db.VarChar(255)
-  statut         String      @db.VarChar(40)
-  observations   String?     @db.Text
-  heure          DateTime    @db.Time(0)
-  agentNom       String      @map("agent_nom") @db.VarChar(255)
-  clientRequestId String?    @unique @map("client_request_id") @db.Uuid
-  siteId         String      @map("site_id") @db.Uuid
-  utilisateurId  String      @map("utilisateur_id") @db.Uuid
-  servicePosteId String?     @map("service_poste_id") @db.Uuid
-  site           Site        @relation(fields: [siteId], references: [id], onDelete: Restrict, map: "fk_point_vigilance_site")
-  utilisateur    Utilisateur @relation(fields: [utilisateurId], references: [id], onDelete: Restrict, map: "fk_point_vigilance_utilisateur")
-  servicePoste   ServicePoste? @relation(fields: [servicePosteId], references: [id], onDelete: SetNull, map: "fk_point_vigilance_service_poste")
-
-  @@index([siteId, creeLe], map: "idx_point_vigilance_site_date")
-  @@index([servicePosteId, creeLe(sort: Desc)], map: "idx_point_vigilance_service_poste")
-  @@map("point_vigilance")
-}
-
-model MainCourante {
-  id              String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  creeLe          DateTime    @default(now()) @map("cree_le") @db.Timestamp(6)
-  typeEntree      String      @map("type_entree") @db.VarChar(40)
-  category        String      @db.VarChar(80)
-  severity        String      @db.VarChar(20)
-  zone            String?     @db.VarChar(255)
-  people          String?     @db.VarChar(255)
-  statutAuteur    String?     @map("statut_auteur") @db.VarChar(80)
-  natureViolation String?     @map("nature_violation") @db.VarChar(160)
-  description     String      @db.Text
-  mesuresPrises   String?     @map("mesures_prises") @db.Text
-  heure           DateTime    @db.Time(0)
-  siteId          String      @map("site_id") @db.Uuid
-  utilisateurId   String      @map("utilisateur_id") @db.Uuid
-  priseDePosteId  String?     @map("prise_de_poste_id") @db.Uuid
-  servicePosteId  String?     @map("service_poste_id") @db.Uuid
-  clientRequestId String?     @unique @map("client_request_id") @db.Uuid
-  site            Site        @relation(fields: [siteId], references: [id], onDelete: Restrict, map: "fk_main_courante_site")
-  utilisateur     Utilisateur @relation(fields: [utilisateurId], references: [id], onDelete: Restrict, map: "fk_main_courante_utilisateur")
-  servicePoste    ServicePoste? @relation(fields: [servicePosteId], references: [id], onDelete: SetNull, map: "fk_main_courante_service_poste")
-
-  @@index([siteId, creeLe], map: "idx_main_courante_site_date")
-  @@index([servicePosteId, creeLe(sort: Desc)], map: "idx_main_courante_service_poste")
-  @@map("main_courante")
-}
-
-model NotificationInterne {
-  id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  utilisateurId String   @map("utilisateur_id") @db.Uuid
-  siteId       String    @map("site_id") @db.Uuid
-  titre        String    @db.VarChar(200)
-  message      String    @db.Text
-  type         String    @db.VarChar(40)
-  entiteId     String?   @map("entite_id") @db.Uuid
-  lueLe        DateTime? @map("lue_le") @db.Timestamptz(6)
-  creeLe       DateTime  @default(now()) @map("cree_le") @db.Timestamptz(6)
-
-  @@index([utilisateurId, creeLe(sort: Desc)], map: "idx_notification_interne_user_unread")
-  @@map("notification_interne")
-}
-
-model ConsigneJournalPoste {
-  consigneId String   @map("consigne_id") @db.Uuid
-  posteId    String   @map("poste_id") @db.Uuid
-  creeLe     DateTime @default(now()) @map("cree_le") @db.Timestamptz(6)
-
-  @@id([consigneId, posteId])
-  @@map("consigne_journal_poste")
-}
-
-model ConsigneLecture {
-  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  consigneId   String   @map("consigne_id") @db.Uuid
-  posteId      String   @map("poste_id") @db.Uuid
-  utilisateurId String  @map("utilisateur_id") @db.Uuid
-  luLe         DateTime @default(now()) @map("lu_le") @db.Timestamptz(6)
-
-  @@unique([consigneId, posteId, utilisateurId], map: "uq_consigne_lecture_user_post")
-  @@index([consigneId, posteId, luLe(sort: Desc)], map: "idx_consigne_lecture_poste_read")
-  @@map("consigne_lecture")
-}
-
-model MouvementCourrier {
-  id              String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  creeLe          DateTime    @default(now()) @map("cree_le") @db.Timestamp(6)
-  dateOperation   DateTime    @map("date_operation") @db.Date
-  heureEntree     DateTime    @map("heure_entree") @db.Time(0)
-  prenom          String      @db.VarChar(255)
-  designation     String      @db.Text
-  nombre          Int
-  heureSortie     DateTime?   @map("heure_sortie") @db.Time(0)
-  siteId          String      @map("site_id") @db.Uuid
-  utilisateurId   String      @map("utilisateur_id") @db.Uuid
-  servicePosteId  String?     @map("service_poste_id") @db.Uuid
-  annuleLe        DateTime?   @map("annule_le") @db.Timestamptz(6)
-  annulePar       String?     @map("annule_par") @db.Uuid
-  modifiePar      String?     @map("modifie_par") @db.Uuid
-  updatedAt       DateTime    @default(now()) @map("modifie_le") @db.Timestamptz(6)
-  clientRequestId String?     @unique @map("client_request_id") @db.Uuid
-  updateRequestId String?     @unique @map("update_request_id") @db.Uuid
-  exitRequestId   String?     @unique @map("exit_request_id") @db.Uuid
-  deleteRequestId String?     @unique @map("delete_request_id") @db.Uuid
-  site            Site        @relation(fields: [siteId], references: [id], onDelete: Restrict, map: "fk_mouvement_courrier_site")
-  utilisateur     Utilisateur @relation(fields: [utilisateurId], references: [id], onDelete: Restrict, map: "fk_mouvement_courrier_utilisateur")
-  servicePoste    ServicePoste? @relation(fields: [servicePosteId], references: [id], onDelete: SetNull, map: "fk_mouvement_courrier_service_poste")
-
-  @@index([siteId, dateOperation, heureEntree], map: "idx_mouvement_courrier_site_date")
-  @@index([servicePosteId, dateOperation(sort: Desc)], map: "idx_mouvement_courrier_service_poste")
-  @@map("mouvement_courrier")
-}
-
-model MaterielSousTraitant {
-  id            String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  clientRequestId String?    @unique @map("client_request_id") @db.Uuid
-  updateRequestId String?    @unique @map("update_request_id") @db.Uuid
-  exitRequestId   String?    @unique @map("exit_request_id") @db.Uuid
-  cancelRequestId String?    @unique @map("cancel_request_id") @db.Uuid
-  creeLe        DateTime    @default(now()) @map("cree_le") @db.Timestamp(6)
-  dateOperation DateTime    @map("date_operation") @db.Date
-  heureEntree   DateTime    @map("heure_entree") @db.Time(0)
-  materiels     String      @db.Text
-  nombre        Int
-  annuleLe      DateTime?   @map("annule_le") @db.Timestamptz(6)
-  annulePar     String?     @map("annule_par") @db.Uuid
-  modifiePar    String?     @map("modifie_par") @db.Uuid
-  entreprise    String      @db.VarChar(255)
-  prestataireId String     @map("prestataire_id") @db.Uuid
-  heureSortie   DateTime?   @map("heure_sortie") @db.Time(0)
-  siteId        String      @map("site_id") @db.Uuid
-  utilisateurId String      @map("utilisateur_id") @db.Uuid
-  servicePosteId String?    @map("service_poste_id") @db.Uuid
-  site          Site        @relation(fields: [siteId], references: [id], onDelete: Restrict, map: "fk_materiel_sous_traitant_site")
-  utilisateur   Utilisateur @relation(fields: [utilisateurId], references: [id], onDelete: Restrict, map: "fk_materiel_sous_traitant_utilisateur")
-  prestataire   Prestataire @relation(fields: [prestataireId], references: [id], onDelete: Restrict, map: "fk_materiel_sous_traitant_prestataire")
-  servicePoste  ServicePoste? @relation(fields: [servicePosteId], references: [id], onDelete: SetNull, map: "fk_materiel_sous_traitant_service_poste")
-
-  @@index([siteId, dateOperation, heureEntree], map: "idx_materiel_sous_traitant_site_date")
-  @@index([prestataireId], map: "idx_materiel_sous_traitant_prestataire")
-  @@index([servicePosteId, dateOperation(sort: Desc)], map: "idx_materiel_sous_traitant_service_poste")
-  @@map("materiel_sous_traitant")
-}
-
-model MaterielStar {
-  id            String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  clientRequestId String?    @unique @map("client_request_id") @db.Uuid
-  updateRequestId String?    @unique @map("update_request_id") @db.Uuid
-  exitRequestId   String?    @unique @map("exit_request_id") @db.Uuid
-  cancelRequestId String?    @unique @map("cancel_request_id") @db.Uuid
-  creeLe        DateTime    @default(now()) @map("cree_le") @db.Timestamp(6)
-  dateOperation DateTime    @map("date_operation") @db.Date
-  heureEntree   DateTime    @map("heure_entree") @db.Time(0)
-  prenom        String      @db.VarChar(255)
-  matricule     String      @db.VarChar(100)
-  materiels     Json        @db.JsonB
-  annuleLe      DateTime?   @map("annule_le") @db.Timestamptz(6)
-  annulePar     String?     @map("annule_par") @db.Uuid
-  modifiePar    String?     @map("modifie_par") @db.Uuid
-  prestataireId String     @map("prestataire_id") @db.Uuid
-  heureSortie   DateTime?   @map("heure_sortie") @db.Time(0)
-  siteId        String      @map("site_id") @db.Uuid
-  utilisateurId String      @map("utilisateur_id") @db.Uuid
-  servicePosteId String?    @map("service_poste_id") @db.Uuid
-  site          Site        @relation(fields: [siteId], references: [id], onDelete: Restrict, map: "fk_materiel_star_site")
-  utilisateur   Utilisateur @relation(fields: [utilisateurId], references: [id], onDelete: Restrict, map: "fk_materiel_star_utilisateur")
-  prestataire   Prestataire @relation(fields: [prestataireId], references: [id], onDelete: Restrict, map: "fk_materiel_star_prestataire")
-  servicePoste  ServicePoste? @relation(fields: [servicePosteId], references: [id], onDelete: SetNull, map: "fk_materiel_star_service_poste")
-
-  @@index([siteId, dateOperation, heureEntree], map: "idx_materiel_star_site_date")
-  @@index([prestataireId], map: "idx_materiel_star_prestataire")
-  @@index([servicePosteId, dateOperation(sort: Desc)], map: "idx_materiel_star_service_poste")
-  @@map("materiel_star")
-}
-
-model QuestionnaireVisiteur {
-  id            String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  creeLe        DateTime    @default(now()) @map("cree_le") @db.Timestamp(6)
-  modifieLe     DateTime    @default(now()) @updatedAt @map("modifie_le") @db.Timestamp(6)
-  dateOperation DateTime    @map("date_operation") @db.Date
-  donnees       Json        @db.JsonB
-  siteId        String      @map("site_id") @db.Uuid
-  utilisateurId String      @map("utilisateur_id") @db.Uuid
-  servicePosteId String?     @map("service_poste_id") @db.Uuid
-  deletedAt     DateTime?   @map("deleted_at") @db.Timestamptz(6)
-  clientRequestId String?   @unique @map("client_request_id") @db.Uuid
-  updateRequestId String?   @unique @map("update_request_id") @db.Uuid
-  deleteRequestId String?   @unique @map("delete_request_id") @db.Uuid
-  site          Site        @relation(fields: [siteId], references: [id], onDelete: Restrict, map: "fk_questionnaire_visiteur_site")
-  utilisateur   Utilisateur @relation(fields: [utilisateurId], references: [id], onDelete: Restrict, map: "fk_questionnaire_visiteur_utilisateur")
-  servicePoste  ServicePoste? @relation(fields: [servicePosteId], references: [id], onDelete: SetNull, map: "fk_questionnaire_visiteur_service_poste")
-
-  @@index([siteId, dateOperation, creeLe], map: "idx_questionnaire_visiteur_site_date")
-  @@index([servicePosteId, dateOperation(sort: Desc)], map: "idx_questionnaire_visiteur_service_poste")
-  @@map("questionnaire_visiteur")
-}
-
-model DeclarationObjet {
-  id            String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  creeLe        DateTime    @default(now()) @map("cree_le") @db.Timestamp(6)
-  modifieLe     DateTime    @default(now()) @updatedAt @map("modifie_le") @db.Timestamp(6)
-  dateOperation DateTime    @map("date_operation") @db.Date
-  donnees       Json        @db.JsonB
-  siteId        String      @map("site_id") @db.Uuid
-  utilisateurId String      @map("utilisateur_id") @db.Uuid
-  servicePosteId String?     @map("service_poste_id") @db.Uuid
-  site          Site        @relation(fields: [siteId], references: [id], onDelete: Restrict, map: "fk_declaration_objet_site")
-  utilisateur   Utilisateur @relation(fields: [utilisateurId], references: [id], onDelete: Restrict, map: "fk_declaration_objet_utilisateur")
-  servicePoste  ServicePoste? @relation(fields: [servicePosteId], references: [id], onDelete: SetNull, map: "fk_declaration_objet_service_poste")
-
-  @@index([siteId, dateOperation, creeLe], map: "idx_declaration_objet_site_date")
-  @@index([servicePosteId, dateOperation(sort: Desc)], map: "idx_declaration_objet_service_poste")
-  @@map("declaration_objet")
-}
-
-model PointageApsJour {
-  id            String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  siteId        String      @map("site_id") @db.Uuid
-  datePointage  DateTime    @map("date_pointage") @db.Date
-  data          Json        @db.JsonB
-  utilisateurId String      @map("utilisateur_id") @db.Uuid
-  updatedAt     DateTime    @default(now()) @map("updated_at") @db.Timestamp(6)
-  site          Site        @relation(fields: [siteId], references: [id], onDelete: Restrict, map: "fk_pointage_aps_jour_site")
-  utilisateur   Utilisateur @relation(fields: [utilisateurId], references: [id], onDelete: Restrict, map: "fk_pointage_aps_jour_utilisateur")
-
-  @@unique([siteId, datePointage], map: "uq_pointage_aps_jour_site_date")
-  @@index([siteId, datePointage], map: "idx_pointage_aps_jour_site_date")
-  @@map("pointage_aps_jour")
-}
-
-model PointageApsNuit {
-  id            String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  siteId        String      @map("site_id") @db.Uuid
-  datePointage  DateTime    @map("date_pointage") @db.Date
-  data          Json        @db.JsonB
-  utilisateurId String      @map("utilisateur_id") @db.Uuid
-  updatedAt     DateTime    @default(now()) @map("updated_at") @db.Timestamp(6)
-  site          Site        @relation(fields: [siteId], references: [id], onDelete: Restrict, map: "fk_pointage_aps_nuit_site")
-  utilisateur   Utilisateur @relation(fields: [utilisateurId], references: [id], onDelete: Restrict, map: "fk_pointage_aps_nuit_utilisateur")
-
-  @@unique([siteId, datePointage], map: "uq_pointage_aps_nuit_site_date")
-  @@index([siteId, datePointage], map: "idx_pointage_aps_nuit_site_date")
-  @@map("pointage_aps_nuit")
-}
-
-model ConfigurationPostesAps {
-  id            String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  siteId        String      @map("site_id") @db.Uuid
-  service       String      @db.VarChar(10)
-  postes        Json        @db.JsonB
-  utilisateurId String      @map("utilisateur_id") @db.Uuid
-  updatedAt     DateTime    @default(now()) @map("updated_at") @db.Timestamp(6)
-  site          Site        @relation(fields: [siteId], references: [id], onDelete: Restrict, map: "fk_configuration_postes_aps_site")
-  utilisateur   Utilisateur @relation(fields: [utilisateurId], references: [id], onDelete: Restrict, map: "fk_configuration_postes_aps_utilisateur")
-
-  @@unique([siteId, service], map: "uq_configuration_postes_aps_site_service")
-  @@map("configuration_postes_aps")
-}
-
-model DocumentSite {
-  id            String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  siteId        String      @map("site_id") @db.Uuid
-  utilisateurId String      @map("utilisateur_id") @db.Uuid
-  nom           String      @db.VarChar(240)
-  extension     String      @db.VarChar(12)
-  mimeType      String      @map("mime_type") @db.VarChar(160)
-  taille        Int
-  categorie     String      @default("Autre") @db.VarChar(80)
-  contenu       Bytes       @db.ByteA
-  creeLe        DateTime    @default(now()) @map("cree_le") @db.Timestamptz(6)
-  site          Site        @relation(fields: [siteId], references: [id], onDelete: Cascade, map: "document_site_site_id_fkey")
-  utilisateur   Utilisateur @relation(fields: [utilisateurId], references: [id], onDelete: Restrict, map: "document_site_utilisateur_id_fkey")
-  liensLogistiques FluxLogistiqueDocument[]
-
-  @@index([siteId, creeLe(sort: Desc)], map: "document_site_site_id_cree_le_idx")
-  @@map("document_site")
-}
-
-model ServicePoste {
-  id          String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  siteId      String?     @map("site_id") @db.Uuid
-  posteId     String?     @map("poste_id") @db.Uuid
-  shiftType   ShiftAgent? @map("shift_type")
-  clientRequestId String? @unique(map: "service_poste_client_request_id_key") @map("client_request_id") @db.Uuid
-  endRequestId String? @unique(map: "service_poste_end_request_id_key") @map("end_request_id") @db.Uuid
-  startedAt   DateTime    @default(now()) @map("started_at") @db.Timestamp(6)
-  endedAt     DateTime?   @map("ended_at") @db.Timestamp(6)
-  openedBy    String?     @map("ouvert_par") @db.Uuid
-  notes       String?     @db.Text
-  site        Site?       @relation(fields: [siteId], references: [id], onDelete: SetNull, map: "fk_service_poste_site")
-  poste       Poste?      @relation(fields: [posteId], references: [id], onDelete: Restrict, map: "fk_service_poste_poste")
-  utilisateur Utilisateur? @relation("ServicePosteOuvertPar", fields: [openedBy], references: [id], onDelete: SetNull, map: "fk_service_poste_ouvert_par")
-  agents      PriseDePoste[]
-  passagesVehicule PassageVehicule[]
-  passations Passation[]
-  suivisCles SuiviCle[]
-  apsMovements MouvementApsServicePoste[]
-  apsEvents MouvementApsEvenementServicePoste[]
-  apsHandovers PassationApsServicePoste[]
-  visitorPassages Passage[]
-  wasteRegisters RegistreOrdure[]
-  scrapRegisters RegistreFerraille[]
-  bicycleMovements MouvementVelo[]
-  motorcycleMovements MouvementMoto[]
-  controlesAlcoolemie ControleAlcoolemie[]
-  mouvementsCourrier MouvementCourrier[]
-  materielsSousTraitant MaterielSousTraitant[]
-  materielsStar MaterielStar[]
-  fluxLogistiques FluxLogistique[]
-  signalementsLogistiques SignalementLogistique[]
-  mainCourante MainCourante[]
-  rondes       Ronde[]
-  consignesJournal ConsigneJournal[]
-  pointsVigilance PointVigilance[]
-  questionnairesVisiteurs QuestionnaireVisiteur[]
-  declarationsObjets DeclarationObjet[]
-
-  @@index([siteId, startedAt(sort: Desc)], map: "idx_service_poste_site_started")
-  @@index([posteId, shiftType, endedAt], map: "idx_service_poste_poste_status")
-  @@map("service_poste")
-}
-
-model PriseDePoste {
-  id               String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  matricule        String     @db.VarChar(50)
-  nom              String     @db.VarChar(100)
-  prenom           String     @db.VarChar(100)
-  prestataire      String     @db.VarChar(160)
-  siteDeTravail    String     @map("site_de_travail") @db.VarChar(255)
-  notes            String?    @db.Text
-  startedAt        DateTime   @default(now()) @map("started_at") @db.Timestamp(6)
-  endedAt          DateTime?  @map("ended_at") @db.Timestamp(6)
-  posteId          String?    @map("poste_id") @db.Uuid
-  serviceId        String?    @map("service_id") @db.Uuid
-  shiftType        ShiftAgent? @map("shift_type")
-  fonctionService  String?    @map("fonction_service") @db.VarChar(20)
-  ouvertPar        String?    @map("ouvert_par") @db.Uuid
-  service          ServicePoste? @relation(fields: [serviceId], references: [id], onDelete: SetNull, map: "fk_prise_de_poste_service")
-
-  @@index([serviceId, startedAt], map: "idx_prise_de_poste_service")
-  @@map("prise_de_poste")
-}
-
-model Chauffeur {
-  id                    String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  nomPrenom             String      @map("nom_prenom") @db.VarChar(255)
-  telephone             String?     @db.VarChar(40)
-  cin                   String?     @db.VarChar(80)
-  numeroPermis          String?     @map("numero_permis") @db.VarChar(100)
-  expirationPermis      DateTime?   @map("expiration_permis") @db.Date
-  vehicule              String?     @db.VarChar(160)
-  matricule             String?     @db.VarChar(40)
-  prestataireId         String?     @map("prestataire_id") @db.Uuid
-  siteId                String      @map("site_id") @db.Uuid
-  utilisateurId         String      @map("utilisateur_id") @db.Uuid
-  creeLe                DateTime    @default(now()) @map("cree_le") @db.Timestamptz(6)
-  modifieLe             DateTime    @default(now()) @map("modifie_le") @db.Timestamptz(6)
-  site                  Site        @relation(fields: [siteId], references: [id], onDelete: Cascade, map: "chauffeur_site_id_fkey")
-  utilisateur           Utilisateur @relation(fields: [utilisateurId], references: [id], onDelete: Restrict, map: "chauffeur_utilisateur_id_fkey")
-  prestataire           Prestataire? @relation(fields: [prestataireId], references: [id], onDelete: SetNull, map: "fk_chauffeur_prestataire")
-
-  @@index([siteId, nomPrenom], map: "chauffeur_site_nom_idx")
-  @@index([prestataireId, siteId], map: "idx_chauffeur_prestataire_site")
-  @@map("chauffeur")
-}
-
-model Transporteur {
-  id              String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  nomTransporteur String      @map("nom_transporteur") @db.VarChar(255)
-  vehicule        String      @db.VarChar(160)
-  matricule       String?     @db.VarChar(40)
-  telephone       String?     @db.VarChar(40)
-  chauffeur       String?     @db.VarChar(255)
-  observation     String?     @db.Text
-  siteId          String      @map("site_id") @db.Uuid
-  utilisateurId   String      @map("utilisateur_id") @db.Uuid
-  creeLe          DateTime    @default(now()) @map("cree_le") @db.Timestamptz(6)
-  modifieLe       DateTime    @default(now()) @map("modifie_le") @db.Timestamptz(6)
-  site            Site        @relation(fields: [siteId], references: [id], onDelete: Cascade, map: "transporteur_site_id_fkey")
-  utilisateur     Utilisateur @relation(fields: [utilisateurId], references: [id], onDelete: Restrict, map: "transporteur_utilisateur_id_fkey")
-
-  @@index([siteId, nomTransporteur, vehicule], map: "transporteur_site_nom_vehicule_idx")
-  @@map("transporteur")
+/// Compte rendu d'un site : une page libre dont la mise en page (blocs de texte et tableaux liés aux feuilles de saisie,
+/// avec leur position, leur plage de dates et leurs colonnes ajoutées à la main) est enregistrée telle quelle dans `layout`.
+model Minutes {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  siteId    String   @map("site_id") @db.Uuid
+  site      Site     @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  name      String   @db.VarChar(160)
+  layout    Json     @default("{}")
+  createdBy String?  @map("created_by") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@index([siteId])
+  @@map("minutes")
 }
